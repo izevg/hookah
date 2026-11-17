@@ -29,8 +29,8 @@ Keeps the tree shallow enough to read and deep enough to mean something.
 - Counted: tracked, non-hidden files. Dotfiles and dot-directories (`.gitignore`, `.github/`,
   `.hookah.toml`) are not counted.
 - Only exception: the repository root may also hold files that the ecosystem requires to live
-  there: `LICENSE`, `README.md`, `AGENTS.md`, `CLAUDE.md`, `Cargo.toml`, `Cargo.lock`,
-  `rust-toolchain.toml`. No other root files.
+  there: `LICENSE`, `README.md`, `AGENTS.md`, `CLAUDE.md`, `Cargo.toml`, `Cargo.lock`.
+  No other root files.
 - If a change would break a limit, split by meaning: extract a submodule, a sub-aggregate, or a
   sibling crate. Don't merge files to save slots, don't name things `misc`/`utils`/`common`, and
   don't add a meaningless nesting level.
@@ -40,6 +40,9 @@ Keeps the tree shallow enough to read and deep enough to mean something.
 ## Stack
 
 - **Rust** (stable, edition 2024), Cargo workspace, a single static binary.
+- Development tools are pinned in `.mise.toml` and installed with [mise](https://mise.jdx.dev)
+  into the user's `~/.local`. Run tools through mise (`mise exec -- cargo ...`, or with mise
+  activated in the shell). Don't install toolchains system-wide or with `sudo`.
   It starts fast (every hook call is a cold start) and needs no runtime on the user's machine.
 - Keep dependencies few and justified. Add a crate only when writing the code yourself would be
   worse.
@@ -101,6 +104,7 @@ Name things with the domain's own words, the same way in code, docs, and CLI out
 Before every commit:
 
 ```sh
+mise install
 cargo fmt --all --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace

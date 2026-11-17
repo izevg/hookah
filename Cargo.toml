@@ -1,0 +1,33 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.0.0"
+edition = "2024"
+license = "Apache-2.0"
+repository = "https://github.com/izevg/hookah"
+publish = false
+
+[workspace.dependencies]
+hookah-domain = { path = "crates/domain" }
+hookah-application = { path = "crates/application" }
+hookah-adapters = { path = "crates/adapters" }
+hookah-harness = { path = "crates/harness" }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.cargo]
+# Temporary: the stubs declare the layer dependencies before any code uses them.
+# Remove once the layers are wired.
+unused_dependencies = "allow"
+
+[workspace.lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true

@@ -1,0 +1,15 @@
+[package]
+name = "hookah-harness"
+description = "Driving adapters of hookah: one per AI coding agent harness."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+hookah-domain.workspace = true
+hookah-application.workspace = true
+
+[lints]
+workspace = true

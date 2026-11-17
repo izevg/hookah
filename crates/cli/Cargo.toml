@@ -1,0 +1,21 @@
+[package]
+name = "hookah"
+description = "Run lint, format, and related tests on every file an AI coding agent edits, and feed failures back to the agent."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "hookah"
+path = "src/main.rs"
+
+[dependencies]
+hookah-domain.workspace = true
+hookah-application.workspace = true
+hookah-adapters.workspace = true
+hookah-harness.workspace = true
+
+[lints]
+workspace = true

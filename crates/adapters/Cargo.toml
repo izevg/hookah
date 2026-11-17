@@ -1,0 +1,15 @@
+[package]
+name = "hookah-adapters"
+description = "Driven adapters of hookah: filesystem, processes, storage, config, ecosystems."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+hookah-domain.workspace = true
+hookah-application.workspace = true
+
+[lints]
+workspace = true

@@ -37,8 +37,10 @@ pub(crate) mod fakes {
 
     use hookah_domain::finding::Finding;
     use hookah_domain::project::{Manifest, Project};
-    use hookah_domain::session::ChangedLines;
-    use hookah_domain::toolchain::{Arg, CheckKind, CommandSpec, TestSelection, Tool, Toolchain};
+    use hookah_domain::session::{ChangedLines, FileRole};
+    use hookah_domain::toolchain::{
+        Arg, CheckKind, CommandSpec, MutationSelection, TestSelection, Tool, Toolchain,
+    };
 
     use super::*;
     use crate::error::PortError;
@@ -50,6 +52,11 @@ pub(crate) mod fakes {
         pub detect_fails: bool,
         pub selection: TestSelection,
         pub select_fails: bool,
+        pub mutants: MutationSelection,
+        /// Files (absolute) classified as tests; every other file is a source.
+        pub test_files: Vec<PathBuf>,
+        /// Arguments of every `select_mutants` call: (tests, sources).
+        pub mutant_calls: RefCell<Vec<(Vec<PathBuf>, Vec<PathBuf>)>>,
         /// Findings returned by `parse`, keyed by tool name.
         pub findings: HashMap<String, Vec<Finding>>,
         pub run_fails: Vec<String>,
@@ -72,6 +79,9 @@ pub(crate) mod fakes {
                 detect_fails: false,
                 selection: TestSelection::None,
                 select_fails: false,
+                mutants: MutationSelection::None,
+                test_files: vec![],
+                mutant_calls: RefCell::new(vec![]),
                 findings: HashMap::new(),
                 run_fails: vec![],
                 timeouts: vec![],
@@ -124,6 +134,26 @@ pub(crate) mod fakes {
                 return Err(PortError::new("detect failed"));
             }
             Ok(self.toolchain.clone())
+        }
+
+        fn classify(&self, _: &Project, file: &Path, _: &ChangedLines) -> FileRole {
+            if self.test_files.iter().any(|t| t == file) {
+                FileRole::Test
+            } else {
+                FileRole::Source
+            }
+        }
+
+        fn select_mutants(
+            &self,
+            _: &Project,
+            tests: &[PathBuf],
+            sources: &[PathBuf],
+        ) -> MutationSelection {
+            self.mutant_calls
+                .borrow_mut()
+                .push((tests.to_vec(), sources.to_vec()));
+            self.mutants.clone()
         }
 
         fn select_tests(&self, _: &Project, _: &[PathBuf]) -> Result<TestSelection, PortError> {

@@ -8,19 +8,35 @@ pub mod selection;
 pub mod tool;
 
 pub use check::CheckKind;
-pub use selection::TestSelection;
-pub use tool::{Arg, CommandSpec, Tool};
+pub use selection::{MutationSelection, TestSelection};
+pub use tool::{Arg, CommandSpec, MissingTool, Tool};
 
 /// The tools configured for a project.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Toolchain {
     tools: Vec<Tool>,
+    missing: Vec<MissingTool>,
 }
 
 impl Toolchain {
     /// Creates a toolchain; tools of one kind run in the given order.
     pub fn new(tools: Vec<Tool>) -> Self {
-        Self { tools }
+        Self {
+            tools,
+            missing: vec![],
+        }
+    }
+
+    /// Sets the tools the project should have but does not.
+    pub fn with_missing(mut self, missing: Vec<MissingTool>) -> Self {
+        self.missing = missing;
+        self
+    }
+
+    /// Tools the project should have but does not. Use cases turn each into a non-blocking
+    /// notice; they never fail a check and nothing is installed.
+    pub fn missing(&self) -> &[MissingTool] {
+        &self.missing
     }
 
     /// All tools.
@@ -33,8 +49,8 @@ impl Toolchain {
         self.tools.iter().filter(move |t| t.kind == kind)
     }
 
-    /// Whether no tool is configured.
+    /// Whether no tool is configured and none is missing.
     pub fn is_empty(&self) -> bool {
-        self.tools.is_empty()
+        self.tools.is_empty() && self.missing.is_empty()
     }
 }

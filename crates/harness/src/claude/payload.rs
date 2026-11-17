@@ -42,7 +42,7 @@ pub fn parse(stdin: &str) -> Result<Invocation, PayloadError> {
                 .filter(|c| c.is_absolute())
                 .ok_or_else(|| PayloadError("stop event without an absolute cwd".into()))?;
             Ok(Invocation::Stop {
-                request: StopRequest { root },
+                request: StopRequest::new(root),
                 already_continuing: p.stop_hook_active.unwrap_or(false),
             })
         }
@@ -62,9 +62,12 @@ fn edit(p: &Payload) -> Result<Invocation, PayloadError> {
     let Some(path) = path else {
         return Ok(Invocation::Ignore);
     };
-    Ok(Invocation::Edit(EditRequest {
-        file: resolve(path, p.cwd.as_deref())?,
-    }))
+    let file = resolve(path, p.cwd.as_deref())?;
+    let display_root = match p.cwd.as_deref().filter(|c| c.is_absolute()) {
+        Some(cwd) => cwd.to_path_buf(),
+        None => file.parent().map(Path::to_path_buf).unwrap_or_default(),
+    };
+    Ok(Invocation::Edit(EditRequest::new(file, display_root)))
 }
 
 fn resolve(path: &Path, cwd: Option<&Path>) -> Result<PathBuf, PayloadError> {
@@ -111,6 +114,14 @@ mod tests {
             edit_of(parse(WRITE).unwrap()),
             PathBuf::from("/work/app/src/main.rs")
         );
+    }
+
+    #[test]
+    fn edit_display_root_is_the_cwd() {
+        let Invocation::Edit(r) = parse(WRITE).unwrap() else {
+            panic!("expected edit");
+        };
+        assert_eq!(r.display_root, PathBuf::from("/work/app"));
     }
 
     #[test]
@@ -167,9 +178,7 @@ mod tests {
             assert_eq!(
                 parse(&json).unwrap(),
                 Invocation::Stop {
-                    request: StopRequest {
-                        root: PathBuf::from("/w/app")
-                    },
+                    request: StopRequest::new("/w/app"),
                     already_continuing: active,
                 }
             );

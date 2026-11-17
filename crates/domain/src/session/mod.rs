@@ -5,6 +5,8 @@
 
 pub mod changes;
 pub mod phase;
+pub mod role;
 
 pub use changes::{ChangeSet, ChangedLines, LineRange, ProjectChanges};
 pub use phase::Phase;
+pub use role::{FileRole, mutation_applies};

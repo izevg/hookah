@@ -77,7 +77,15 @@ pub fn detection(style: Style, project: Option<(&Project, &Toolchain)>) -> Strin
         project.root.display(),
         project.ecosystem.name()
     );
-    if toolchain.is_empty() {
+    for m in toolchain.missing() {
+        out.push_str(&format!(
+            "missing: {} {}: {}\n",
+            m.kind.name(),
+            m.name,
+            m.hint
+        ));
+    }
+    if toolchain.tools().is_empty() {
         out.push_str("tools: none detected\n");
         return out;
     }

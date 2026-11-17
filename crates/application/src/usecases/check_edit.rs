@@ -2,7 +2,8 @@
 //!
 //! Locate the project, detect the toolchain, then format and lint the changed file. A formatter
 //! that rewrites the file yields a `FileRewritten` notice. Changed lines are read after
-//! formatting so they match the final text. Errors anywhere never fail the verdict.
+//! formatting so they match the final text. Errors anywhere never fail the verdict. Tools the
+//! project lacks become non-blocking `MissingTool` notices.
 
 use hookah_domain::project::locate_project;
 use hookah_domain::session::{ChangedLines, Phase};
@@ -11,7 +12,6 @@ use hookah_domain::verdict::{Notice, ReportingFilter};
 
 use super::request::{EditRequest, Outcome, RunLog};
 use crate::ports::Ports;
-use std::path::Path;
 
 /// Runs format and lint on one changed file.
 pub struct CheckEdit<'a> {
@@ -52,6 +52,7 @@ impl<'a> CheckEdit<'a> {
         let targets = [rel.to_string_lossy().into_owned()];
 
         let mut log = RunLog::default();
+        log.report_missing(&toolchain, |k| Phase::Edit.check_kinds().contains(&k));
         for &kind in Phase::Edit.check_kinds() {
             for tool in toolchain.of_kind(kind) {
                 let before = self.ports.hasher.content_hash(file).ok();
@@ -79,7 +80,7 @@ impl<'a> CheckEdit<'a> {
                 filter.track(rel, ChangedLines::Ranges(vec![]));
             }
         }
-        log.filter(&filter, Path::new(""));
+        log.filter(&filter, &project.root, &request.display_root);
         log.finish(self.report_limit)
     }
 }
@@ -89,6 +90,7 @@ impl<'a> CheckEdit<'a> {
 mod tests {
     use hookah_domain::finding::{Finding, Location, Severity};
     use hookah_domain::session::LineRange;
+    use hookah_domain::toolchain::MissingTool;
     use hookah_domain::verdict::Verdict;
 
     use super::*;
@@ -106,10 +108,11 @@ mod tests {
     }
 
     fn run(w: &World) -> Outcome {
-        let req = EditRequest {
-            file: "/r/src/a.rs".into(),
-        };
-        CheckEdit::new(w.ports(), 20).run(&req)
+        run_with(w, "/r/src/a.rs", "/r")
+    }
+
+    fn run_with(w: &World, file: &str, root: &str) -> Outcome {
+        CheckEdit::new(w.ports(), 20).run(&EditRequest::new(file, root))
     }
 
     fn lint(sev: Severity, path: &str, line: u32) -> Finding {
@@ -127,13 +130,9 @@ mod tests {
     #[test]
     fn skips_unsupported_files_and_missing_projects() {
         let w = world();
-        let out = CheckEdit::new(w.ports(), 20).run(&EditRequest {
-            file: "/r/README.md".into(),
-        });
+        let out = run_with(&w, "/r/README.md", "/r");
         assert_eq!(out, Outcome::pass());
-        let out = CheckEdit::new(w.ports(), 20).run(&EditRequest {
-            file: "/elsewhere/a.rs".into(),
-        });
+        let out = run_with(&w, "/elsewhere/a.rs", "/r");
         assert_eq!(out, Outcome::pass());
         assert!(w.calls().is_empty());
     }
@@ -156,6 +155,84 @@ mod tests {
         assert_eq!(
             report.lines(),
             ["src/other.rs:1: msg", "src/a.rs:5: warning: msg"]
+        );
+    }
+
+    #[test]
+    fn runs_typecheck_and_architecture_after_lint_in_order() {
+        let w = World::new(
+            "/r/Cargo.toml",
+            vec![
+                tool("arch", CheckKind::Architecture),
+                tool("types", CheckKind::Typecheck),
+                tool("lint", CheckKind::Lint),
+                tool("fmt", CheckKind::Format),
+                tool("mut", CheckKind::Mutation),
+            ],
+        );
+        run(&w);
+        assert_eq!(
+            w.calls(),
+            [
+                "fmt src/a.rs",
+                "lint src/a.rs",
+                "types src/a.rs",
+                "arch src/a.rs"
+            ]
+        );
+    }
+
+    #[test]
+    fn typecheck_findings_show_their_kind() {
+        let mut w = World::new("/r/Cargo.toml", vec![tool("types", CheckKind::Typecheck)]);
+        w.findings.insert(
+            "types".into(),
+            vec![Finding::new(
+                CheckKind::Typecheck,
+                Severity::Error,
+                Location::line("src/a.rs", 2),
+                "bad type",
+            )],
+        );
+        let Verdict::Fail(report) = run(&w).verdict else {
+            panic!("expected fail");
+        };
+        assert_eq!(report.lines(), ["src/a.rs:2: [typecheck] bad type"]);
+    }
+
+    #[test]
+    fn paths_are_relative_to_the_display_root_or_absolute() {
+        let mut w = world();
+        w.findings
+            .insert("lint".into(), vec![lint(Severity::Error, "src/a.rs", 3)]);
+        let lines = |root| {
+            let Verdict::Fail(r) = run_with(&w, "/r/src/a.rs", root).verdict else {
+                panic!("expected fail");
+            };
+            r.lines()
+        };
+        assert_eq!(lines("/r"), ["src/a.rs:3: msg"]);
+        assert_eq!(lines("/"), ["r/src/a.rs:3: msg"]);
+        assert_eq!(lines("/r/src"), ["a.rs:3: msg"]);
+        assert_eq!(lines("/elsewhere"), ["/r/src/a.rs:3: msg"]);
+    }
+
+    #[test]
+    fn missing_tools_become_notices_but_only_for_edit_kinds() {
+        let mut w = world();
+        w.toolchain = w.toolchain.clone().with_missing(vec![
+            MissingTool::new("tsc", CheckKind::Typecheck, "npm i -D typescript"),
+            MissingTool::new("cargo-mutants", CheckKind::Mutation, "cargo install"),
+        ]);
+        let out = run(&w);
+        assert_eq!(out.verdict, Verdict::Pass);
+        assert_eq!(
+            out.notices,
+            [Notice::MissingTool(MissingTool::new(
+                "tsc",
+                CheckKind::Typecheck,
+                "npm i -D typescript"
+            ))]
         );
     }
 

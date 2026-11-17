@@ -6,6 +6,7 @@
 use std::fmt;
 
 use crate::finding::{Finding, Severity};
+use crate::toolchain::CheckKind;
 
 /// Default cap on rendered findings.
 pub const DEFAULT_LIMIT: usize = 20;
@@ -59,14 +60,20 @@ impl Report {
 }
 
 fn render(f: &Finding) -> String {
+    let kind = match f.kind {
+        CheckKind::Typecheck | CheckKind::Architecture | CheckKind::Mutation => {
+            format!("[{}] ", f.kind.name())
+        }
+        _ => String::new(),
+    };
     let tag = if f.severity == Severity::Warning {
         "warning: "
     } else {
         ""
     };
     match &f.rule {
-        Some(rule) => format!("{}: {tag}{} [{rule}]", f.location, f.message),
-        None => format!("{}: {tag}{}", f.location, f.message),
+        Some(rule) => format!("{}: {kind}{tag}{} [{rule}]", f.location, f.message),
+        None => format!("{}: {kind}{tag}{}", f.location, f.message),
     }
 }
 
@@ -81,7 +88,6 @@ impl fmt::Display for Report {
 mod tests {
     use super::*;
     use crate::finding::Location;
-    use crate::toolchain::CheckKind;
 
     fn f(sev: Severity, path: &str, line: u32, msg: &str) -> Finding {
         Finding::new(CheckKind::Lint, sev, Location::line(path, line), msg)
@@ -124,6 +130,17 @@ mod tests {
         assert_eq!(r.lines().len(), 4);
         assert_eq!(r.lines()[3], "+2 more");
         assert_eq!(r.hidden(), 2);
+    }
+
+    #[test]
+    fn shows_kind_for_typecheck_architecture_and_mutation_only() {
+        let mk = |kind| Finding::new(kind, Severity::Error, Location::line("a.rs", 1), "m");
+        let r = Report::new(vec![mk(CheckKind::Typecheck)], 5).unwrap();
+        assert_eq!(r.lines(), ["a.rs:1: [typecheck] m"]);
+        let r = Report::new(vec![mk(CheckKind::Mutation)], 5).unwrap();
+        assert_eq!(r.lines(), ["a.rs:1: [mutation] m"]);
+        let r = Report::new(vec![mk(CheckKind::Lint)], 5).unwrap();
+        assert_eq!(r.lines(), ["a.rs:1: m"]);
     }
 
     #[test]

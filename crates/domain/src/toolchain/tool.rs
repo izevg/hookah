@@ -1,6 +1,6 @@
 //! `Tool` and `CommandSpec` value objects.
 //!
-//! A `Tool` is one configured program (`biome`, `ruff`, `clippy`, `pytest`, ...): its name, the
+//! `MissingTool` names a tool the project lacks. A `Tool` is one configured program (`biome`, `ruff`, `clippy`, `pytest`, ...): its name, the
 //! check it serves, and a `CommandSpec` (program, arguments, working directory, timeout). A
 //! `CommandSpec` only describes a command; the `CheckRunner` port executes it.
 
@@ -72,6 +72,29 @@ pub struct Tool {
     pub kind: CheckKind,
     /// How to run it.
     pub command: CommandSpec,
+}
+
+/// A tool the project should have for a check but does not. `hookah` reports it and never
+/// installs anything.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MissingTool {
+    /// Tool name, such as `cargo-mutants`.
+    pub name: String,
+    /// The check it would serve.
+    pub kind: CheckKind,
+    /// How the user can get it, such as `cargo install cargo-mutants`.
+    pub hint: String,
+}
+
+impl MissingTool {
+    /// Builds a missing-tool entry.
+    pub fn new(name: impl Into<String>, kind: CheckKind, hint: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            kind,
+            hint: hint.into(),
+        }
+    }
 }
 
 #[cfg(test)]

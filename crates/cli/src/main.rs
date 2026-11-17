@@ -58,7 +58,9 @@ fn check(paths: &[PathBuf], limit: usize) -> i32 {
     let mut failed = false;
     for path in paths {
         let file = std::path::absolute(path).unwrap_or_else(|_| path.clone());
-        let outcome = use_case.run(&EditRequest { file });
+        let display_root = std::env::current_dir()
+            .unwrap_or_else(|_| file.parent().map(Path::to_path_buf).unwrap_or_default());
+        let outcome = use_case.run(&EditRequest::new(file, display_root));
         failed |= matches!(outcome.verdict, hookah_domain::verdict::Verdict::Fail(_));
         print_out(&render::outcome(style, path, &outcome));
     }

@@ -9,13 +9,14 @@ pub mod node;
 pub mod python;
 pub mod rust;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use hookah_application::error::PortError;
 use hookah_application::ports::{ProcessOutput, ToolchainDetector};
 use hookah_domain::finding::Finding;
 use hookah_domain::project::{Ecosystem, Project};
-use hookah_domain::toolchain::{TestSelection, Tool, Toolchain};
+use hookah_domain::session::{ChangedLines, FileRole};
+use hookah_domain::toolchain::{MutationSelection, TestSelection, Tool, Toolchain};
 
 use rust::RustEcosystem;
 
@@ -37,6 +38,27 @@ impl ToolchainDetector for Ecosystems {
         match project.ecosystem {
             Ecosystem::Rust => self.rust.detect(project),
             Ecosystem::Node | Ecosystem::Python => Ok(Toolchain::default()),
+        }
+    }
+
+    fn classify(&self, project: &Project, file: &Path, changed: &ChangedLines) -> FileRole {
+        match project.ecosystem {
+            Ecosystem::Rust => self.rust.classify(project, file, changed),
+            Ecosystem::Node | Ecosystem::Python => FileRole::Source,
+        }
+    }
+
+    fn select_mutants(
+        &self,
+        project: &Project,
+        changed_tests: &[PathBuf],
+        changed_sources: &[PathBuf],
+    ) -> MutationSelection {
+        match project.ecosystem {
+            Ecosystem::Rust => self
+                .rust
+                .select_mutants(project, changed_tests, changed_sources),
+            Ecosystem::Node | Ecosystem::Python => MutationSelection::None,
         }
     }
 

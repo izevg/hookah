@@ -11,7 +11,7 @@
 //! - [`finding`]: problems reported by checks.
 //! - [`verdict`]: the decision and compact report handed back to the agent, and the rule that
 //!   decides which findings are reported.
-//! - [`session`]: phases of an agent run and the files changed in it.
+//! - [`session`]: phases of an agent run, the files changed in it, and their roles.
 
 pub mod error;
 pub mod finding;

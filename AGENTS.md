@@ -70,11 +70,14 @@ cli ──► harness ──► application ──► domain
  └────► adapters ──► application
 ```
 
-- **domain**: entities and value objects such as `Project`, `Toolchain`, `Check`
-  (format/lint/test), `Finding`, `Baseline`, `Verdict`. Rules such as "only new findings count",
-  "nearest manifest wins", and "no related test means no test run" live here.
+- **domain**: entities and value objects such as `Project`, `Toolchain`, `CheckKind`
+  (format/lint/typecheck/architecture/test/mutation), `FileRole` (source/test), `Finding`,
+  `Baseline`, `Verdict`. Rules such as "only new findings count", "nearest manifest wins",
+  "no related test means no test run", and "mutation runs only if a changed file is a test" live
+  here.
 - **application**: use cases such as `CheckEdit` and `CheckSession`, plus port traits:
-  `ProjectLocator`, `ToolchainDetector`, `CommandRunner`, `BaselineStore`, `SessionStore`,
+  `ProjectLocator`, `ToolchainDetector` (detect, classify, select tests and mutants, parse),
+  `CommandRunner`, `BaselineStore`, `SessionStore`,
   `Clock`.
 - **adapters**: implement the ports. Each ecosystem detector (`node`, `python`, `rust`) is its
   own module behind `ToolchainDetector`.

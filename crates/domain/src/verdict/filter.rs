@@ -1,6 +1,7 @@
 //! `ReportingFilter`: which findings are worth the agent's attention.
 //!
 //! Replaces the baseline in the MVP. Rules:
+//! - `Test` and `Mutation` findings are always reported: their scope is already narrow.
 //! - `Error` findings are always reported, in any file (a change can break callers elsewhere).
 //! - `Warning` findings are reported only in a changed file and on a changed line. A warning
 //!   without a line in a changed file counts as on a changed line.
@@ -10,6 +11,7 @@ use std::path::{Path, PathBuf};
 
 use crate::finding::{Finding, Severity};
 use crate::session::ChangedLines;
+use crate::toolchain::CheckKind;
 
 /// Decides which findings to report, given the changed files of one project.
 #[derive(Debug, Clone, Default)]
@@ -35,6 +37,9 @@ impl ReportingFilter {
 
     /// Whether `finding` should be reported.
     pub fn keeps(&self, finding: &Finding) -> bool {
+        if matches!(finding.kind, CheckKind::Test | CheckKind::Mutation) {
+            return true;
+        }
         match finding.severity {
             Severity::Error => true,
             Severity::Warning => match self.changed.get(&finding.location.path) {
@@ -56,7 +61,6 @@ mod tests {
     use super::*;
     use crate::finding::Location;
     use crate::session::LineRange;
-    use crate::toolchain::CheckKind;
 
     fn finding(sev: Severity, loc: Location) -> Finding {
         Finding::new(CheckKind::Lint, sev, loc, "m")
@@ -99,6 +103,20 @@ mod tests {
         let f = filter();
         assert!(f.keeps(&finding(Severity::Warning, Location::file("src/a.rs"))));
         assert!(!f.keeps(&finding(Severity::Warning, Location::file("src/other.rs"))));
+    }
+
+    #[test]
+    fn test_and_mutation_findings_are_never_filtered() {
+        let f = filter();
+        for kind in [CheckKind::Test, CheckKind::Mutation] {
+            let w = Finding::new(
+                kind,
+                Severity::Warning,
+                Location::line("src/other.rs", 1),
+                "m",
+            );
+            assert!(f.keeps(&w));
+        }
     }
 
     #[test]

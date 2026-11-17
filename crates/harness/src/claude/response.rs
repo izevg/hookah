@@ -15,6 +15,7 @@
 //! - Anything else: exit 0, no output.
 
 use hookah_application::Outcome;
+use hookah_domain::toolchain::MissingTool;
 use hookah_domain::verdict::{Notice, Report, Verdict};
 use serde_json::{Value, json};
 
@@ -87,17 +88,39 @@ fn allow(outcome: &Outcome, edit_phase: bool) -> Response {
         .iter()
         .filter_map(|n| match n {
             Notice::FileRewritten(p) => Some(p.display().to_string()),
-            Notice::Degraded(_) => None,
+            Notice::Degraded(_) | Notice::MissingTool(_) => None,
         })
         .collect();
+    let missing: Vec<&MissingTool> = outcome
+        .notices
+        .iter()
+        .filter_map(|n| match n {
+            Notice::MissingTool(t) => Some(t),
+            _ => None,
+        })
+        .collect();
+    let mut context = Vec::new();
     if edit_phase && !rewritten.is_empty() {
-        let context = format!(
+        context.push(format!(
             "hookah reformatted {}. Re-read the file before editing it again.",
             rewritten.join(", ")
-        );
+        ));
+    }
+    // Only PostToolUse can feed the model; the stop phase tells the user alone.
+    if edit_phase && !missing.is_empty() {
+        let lines: Vec<String> = missing
+            .iter()
+            .map(|t| Notice::MissingTool((*t).clone()).to_string())
+            .collect();
+        context.push(format!(
+            "hookah skipped some checks: {}. hookah never installs tools; tell the user.",
+            lines.join("; ")
+        ));
+    }
+    if !context.is_empty() {
         out.insert(
             "hookSpecificOutput".into(),
-            json!({"hookEventName": "PostToolUse", "additionalContext": context}),
+            json!({"hookEventName": "PostToolUse", "additionalContext": context.join(" ")}),
         );
     }
     let mut warnings: Vec<String> = outcome
@@ -106,6 +129,13 @@ fn allow(outcome: &Outcome, edit_phase: bool) -> Response {
         .filter(|n| matches!(n, Notice::Degraded(_)))
         .map(ToString::to_string)
         .collect();
+    if !missing.is_empty() {
+        let names: Vec<String> = missing
+            .iter()
+            .map(|t| format!("{} ({})", t.name, t.kind.name()))
+            .collect();
+        warnings.push(format!("hookah: tools not installed: {}", names.join(", ")));
+    }
     if let Verdict::Degraded(reason) = &outcome.verdict {
         warnings.push(format!("hookah: checks incomplete: {reason}"));
     }
@@ -130,25 +160,27 @@ fn json_response(value: Value) -> Response {
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
-    use std::path::PathBuf;
-
     use hookah_application::{EditRequest, StopRequest};
     use hookah_domain::finding::{Finding, Location, Severity};
     use hookah_domain::toolchain::CheckKind;
 
     use super::*;
 
+    fn missing_notice() -> Notice {
+        Notice::MissingTool(MissingTool::new(
+            "cargo-mutants",
+            CheckKind::Mutation,
+            "cargo install cargo-mutants",
+        ))
+    }
+
     fn edit() -> Invocation {
-        Invocation::Edit(EditRequest {
-            file: PathBuf::from("/w/a.rs"),
-        })
+        Invocation::Edit(EditRequest::new("/w/a.rs", "/w"))
     }
 
     fn stop(already_continuing: bool) -> Invocation {
         Invocation::Stop {
-            request: StopRequest {
-                root: PathBuf::from("/w"),
-            },
+            request: StopRequest::new("/w"),
             already_continuing,
         }
     }
@@ -199,6 +231,49 @@ mod tests {
             .as_str()
             .unwrap();
         assert!(ctx.contains("/w/a.rs") && ctx.contains("Re-read"));
+    }
+
+    #[test]
+    fn edit_pass_with_missing_tool_tells_the_model_and_the_user() {
+        let o = Outcome {
+            verdict: Verdict::Pass,
+            notices: vec![missing_notice()],
+        };
+        let r = render(&edit(), &o);
+        assert_eq!(r.exit_code, 0);
+        let v = stdout_json(&r);
+        let ctx = v["hookSpecificOutput"]["additionalContext"]
+            .as_str()
+            .unwrap();
+        assert!(ctx.contains("mutation testing tool cargo-mutants not installed"));
+        assert!(ctx.contains("cargo install cargo-mutants") && ctx.contains("tell the user"));
+        let msg = v["systemMessage"].as_str().unwrap();
+        assert_eq!(msg, "hookah: tools not installed: cargo-mutants (mutation)");
+    }
+
+    #[test]
+    fn stop_pass_with_missing_tool_warns_the_user_only() {
+        let o = Outcome {
+            verdict: Verdict::Pass,
+            notices: vec![missing_notice()],
+        };
+        let r = render(&stop(false), &o);
+        assert_eq!(r.exit_code, 0);
+        let v = stdout_json(&r);
+        assert!(v.get("hookSpecificOutput").is_none());
+        assert!(
+            v["systemMessage"]
+                .as_str()
+                .unwrap()
+                .contains("cargo-mutants")
+        );
+    }
+
+    #[test]
+    fn edit_fail_lists_missing_tools_in_stderr() {
+        let r = render(&edit(), &failing(vec![missing_notice()]));
+        assert_eq!(r.exit_code, 2);
+        assert!(r.stderr.contains("cargo-mutants not installed"));
     }
 
     #[test]

@@ -1,16 +1,100 @@
 # Codex CLI
 
-> Stub. Written when this harness adapter is built, and checked against the harness's current
-> docs.
-
 ## Mechanism
 
-Command hooks in `config.toml` `[hooks]` or `hooks.json`: `PostToolUse` for `apply_patch` runs the edit phase, and `Stop` runs the stop phase.
+Command hooks, stable since Codex CLI v0.124. Codex runs `hookah hook codex` and sends one JSON
+object on stdin. Hooks live in `hooks.json` or inline under `[hooks]` in `config.toml`.
+
+- `PostToolUse` with matcher `^apply_patch$` runs the edit phase. One patch can touch several
+  files; `hookah` reads the `*** Add File:`, `*** Update File:`, and `*** Move to:` headers from
+  the patch text (`tool_input.command`), checks each file, and merges the results into one
+  response. Deleted files are skipped.
+- `Stop` runs the stop phase (checks over the files changed in the session, including related
+  tests).
+
+| Situation | Response |
+| --- | --- |
+| Edit phase finds problems | exit 0, `{"decision":"block","reason":...}`; Codex replaces the tool result with the report |
+| Formatter rewrote a file | exit 0, `hookSpecificOutput.additionalContext` asking the model to re-read it |
+| Stop phase finds problems | exit 0, `{"decision":"block","reason":...}`; Codex continues with the report as a new prompt |
+| Stop phase finds problems and `stop_hook_active` is `true` | exit 0, `systemMessage` for the user; never blocks twice in a row |
+| `hookah` cannot finish (timeout, missing tool, internal error, bad payload) | exit 0, warning only (fail open) |
+
+Codex requires JSON on stdout for `Stop` hooks when they print anything; `hookah` only prints JSON
+there, and prints nothing when there is nothing to say.
 
 ## Setup
 
-Config file location, the snippet to add, and how to confirm the hook fires.
+Put `hookah` at `$HOME/.local/bin/hookah`. Add this to `.codex/config.toml` in the project (or
+`~/.codex/config.toml`):
+
+```toml
+[[hooks.PostToolUse]]
+matcher = "^apply_patch$"
+
+[[hooks.PostToolUse.hooks]]
+type = "command"
+command = '$HOME/.local/bin/hookah hook codex'
+timeout = 30
+
+[[hooks.Stop]]
+
+[[hooks.Stop.hooks]]
+type = "command"
+command = '$HOME/.local/bin/hookah hook codex'
+timeout = 120
+```
+
+The same thing as `hooks.json`:
+
+```json
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "^apply_patch$",
+        "hooks": [
+          { "type": "command", "command": "$HOME/.local/bin/hookah hook codex", "timeout": 30 }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          { "type": "command", "command": "$HOME/.local/bin/hookah hook codex", "timeout": 120 }
+        ]
+      }
+    ]
+  }
+}
+```
+
+Timeouts are in seconds. The project's own toolchain (cargo, node, python, ...) must be on
+`PATH` in the hook's environment. A project that pins its tools with mise can use
+`$HOME/.local/bin/mise exec -- $HOME/.local/bin/hookah hook codex` as the command.
+
+To check by hand:
+
+```sh
+echo '{"cwd":"'"$PWD"'","hook_event_name":"PostToolUse","tool_name":"apply_patch","tool_input":{"command":"*** Begin Patch\n*** Update File: src/main.rs\n*** End Patch"}}' \
+  | $HOME/.local/bin/hookah hook codex; echo "exit $?"
+```
 
 ## Limitations
 
-What this harness lets `hookah` do and what it doesn't.
+- The tool already ran; a block only feeds the report back. It cannot undo the patch.
+- Only `apply_patch` is checked. Files changed through shell commands are picked up by the stop
+  phase only.
+- The docs say `apply_patch` input is in `tool_input.command` but do not show the patch format
+  or how paths appear. The header parsing follows the public `apply_patch` grammar; `hookah` also
+  accepts `tool_input.patch`. Neither was verified against a live Codex session.
+- Community reports say `apply_patch` hook coverage has been intermittent in some versions
+  (upstream issue #16732); if edits are not checked, the stop phase still catches them.
+- Hosted tools and hooks with `async: true` are not supported here.
+
+## Verified against
+
+<https://developers.openai.com/codex/hooks> (redirects to <https://learn.chatgpt.com/docs/hooks>),
+read on 2026-11-17: event names, matcher syntax, stdin fields (`cwd`, `tool_name`,
+`tool_input.command`, `stop_hook_active`), `decision`/`reason` JSON, `additionalContext`,
+`systemMessage`, exit codes. Not verified: the patch text format and live behavior.

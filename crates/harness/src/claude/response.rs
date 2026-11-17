@@ -24,7 +24,7 @@ use crate::protocol::{Invocation, Response, blocking_report};
 /// Renders `outcome` for Claude Code.
 pub fn render(invocation: &Invocation, outcome: &Outcome) -> Response {
     match invocation {
-        Invocation::Ignore => Response::silent(),
+        Invocation::Ignore | Invocation::EditBatch(_) => Response::silent(),
         Invocation::Edit(request) => match blocking_report(outcome) {
             Some(report) => block(
                 format!(

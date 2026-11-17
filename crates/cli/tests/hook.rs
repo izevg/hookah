@@ -46,6 +46,42 @@ fn garbage_payload_fails_open_with_a_warning() {
 }
 
 #[test]
+fn codex_garbage_fails_open_and_unrelated_tool_is_ignored() {
+    let out = run(&["hook", "codex"], "not json at all");
+    assert_eq!(out.status.code(), Some(0));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("hookah: warning"));
+    let bash = r#"{"cwd":"/nonexistent","hook_event_name":"PostToolUse","tool_name":"Bash",
+        "tool_input":{"command":"ls"}}"#;
+    let out = run(&["hook", "codex"], bash);
+    assert_eq!(out.status.code(), Some(0));
+    assert!(out.stdout.is_empty() && out.stderr.is_empty());
+}
+
+#[test]
+fn qoder_garbage_fails_open_and_unrelated_tool_is_ignored() {
+    let out = run(&["hook", "qoder"], "not json at all");
+    assert_eq!(out.status.code(), Some(0));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("hookah: warning"));
+    let bash = r#"{"cwd":"/nonexistent","hook_event_name":"PostToolUse","tool_name":"Bash",
+        "tool_input":{"command":"ls"}}"#;
+    let out = run(&["hook", "qoder"], bash);
+    assert_eq!(out.status.code(), Some(0));
+    assert!(out.stdout.is_empty() && out.stderr.is_empty());
+}
+
+#[test]
+fn kimi_garbage_fails_open_and_unrelated_tool_is_ignored() {
+    let out = run(&["hook", "kimi"], "not json at all");
+    assert_eq!(out.status.code(), Some(0));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("hookah: warning"));
+    let bash = r#"{"cwd":"/nonexistent","hook_event_name":"PostToolUse","tool_name":"Bash",
+        "tool_input":{"command":"ls"}}"#;
+    let out = run(&["hook", "kimi"], bash);
+    assert_eq!(out.status.code(), Some(0));
+    assert!(out.stdout.is_empty() && out.stderr.is_empty());
+}
+
+#[test]
 fn bad_hook_arguments_fail_open() {
     assert_eq!(run(&["hook", "nonsense"], "").status.code(), Some(0));
 }

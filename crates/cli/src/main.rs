@@ -18,7 +18,10 @@ use clap::Parser;
 use hookah_application::{CheckEdit, CheckSession, EditRequest, Outcome};
 use hookah_domain::project::locate_project;
 use hookah_harness::claude::Claude;
-use hookah_harness::protocol::{Harness, Invocation, Response};
+use hookah_harness::codex::Codex;
+use hookah_harness::kimi::Kimi;
+use hookah_harness::protocol::{Harness, Invocation, Response, merge_outcomes};
+use hookah_harness::qoder::Qoder;
 
 use crate::args::{Cli, Command, HarnessKind};
 use crate::render::Style;
@@ -118,6 +121,9 @@ fn hook(harness: HarnessKind, limit: usize) -> Response {
     }
     match harness {
         HarnessKind::Claude => run_harness(&Claude, &stdin, limit),
+        HarnessKind::Codex => run_harness(&Codex, &stdin, limit),
+        HarnessKind::Qoder => run_harness(&Qoder, &stdin, limit),
+        HarnessKind::Kimi => run_harness(&Kimi, &stdin, limit),
     }
 }
 
@@ -130,6 +136,10 @@ fn run_harness(harness: &dyn Harness, stdin: &str, limit: usize) -> Response {
     let ports = adapters.ports();
     let outcome: Outcome = match &invocation {
         Invocation::Edit(request) => CheckEdit::new(ports, limit).run(request),
+        Invocation::EditBatch(requests) => {
+            let use_case = CheckEdit::new(ports, limit);
+            merge_outcomes(requests.iter().map(|r| use_case.run(r)).collect(), limit)
+        }
         Invocation::Stop { request, .. } => CheckSession::new(ports, limit).run(request),
         Invocation::Ignore => Outcome::pass(),
     };

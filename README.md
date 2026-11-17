@@ -52,10 +52,10 @@ row will be checked against the harness's current docs when its adapter is built
 | Harness     | Integration point                                   | Feedback channel                         |
 |-------------|-----------------------------------------------------|------------------------------------------|
 | Claude Code | `PostToolUse` (`Edit\|Write\|MultiEdit`), `Stop`    | exit code 2 + stderr                     |
-| Codex CLI   | `PostToolUse` (`apply_patch`), `Stop` in `config.toml` / `hooks.json` | hook output              |
+| Codex CLI   | `PostToolUse` (`apply_patch`), `Stop` in `config.toml` / `hooks.json` | JSON `decision: block` + `reason` |
 | opencode    | plugin, `tool.execute.after`                        | appended tool output                     |
-| Kimi Code   | `PostToolUse` hook in `config.toml` (beta)          | hook output                              |
-| Qoder       | `PostToolUse` (`Write\|Edit`) in `.qoder/settings.json` | hook output                          |
+| Kimi Code   | `PostToolUse` (`Write\|Edit`) `[[hooks]]` in `config.toml` (beta); no stop phase | stdout (may reach the model) |
+| Qoder       | `PostToolUse` (`Write\|Edit`), `Stop` in `.qoder/settings.json` | `additionalContext` (edit), exit 2 + stderr (stop) |
 | Orca        | through the hooks of the agent it runs; Orca plugin for workspace-level events | per hosted agent |
 
 For the MVP, each harness is supported through written setup instructions. A setup wizard that

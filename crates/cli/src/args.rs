@@ -52,6 +52,12 @@ pub enum Command {
 pub enum HarnessKind {
     /// Claude Code command hooks.
     Claude,
+    /// Codex CLI command hooks.
+    Codex,
+    /// Qoder CLI command hooks.
+    Qoder,
+    /// Kimi Code command hooks.
+    Kimi,
 }
 
 #[cfg(test)]

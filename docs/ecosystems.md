@@ -120,7 +120,116 @@ shims are not resolved.
 
 ## Python
 
-Planned.
+Implemented. The project root is the directory of the nearest `pyproject.toml`. Tool
+configuration comes from `pyproject.toml`, `setup.cfg`, `tox.ini`, `ruff.toml`/`.ruff.toml`,
+`mypy.ini`/`.mypy.ini`, and `.importlinter`. Both the flat layout (`pkg/` at the root) and the src
+layout (`src/pkg/`) work, and every `pyproject.toml` in a monorepo is its own project.
+
+### Environment
+
+Tools run from the project's own environment, the first of:
+
+1. A virtual environment: `$UV_PROJECT_ENVIRONMENT` if set, else `.venv/` or `venv/` (a directory
+   with `pyvenv.cfg`) in the project, or in a parent directory up to the repository root (a
+   directory with `.git`) or the uv workspace root (`[tool.uv.workspace]`). Tools run as
+   `<venv>/bin/<tool>`. This is what `uv sync`, `python -m venv`, and Poetry with
+   `virtualenvs.in-project` produce. A member's own venv shadows the root venv.
+2. `poetry.lock` and `poetry` on `PATH`: tools run as `poetry run <tool>`. A tool is available when
+   its package is in the lock file. Poetry keeps its environments in its cache directory, so this
+   is the only way to reach them. If no environment exists yet, `poetry run` may create one there.
+3. The tools on `PATH`.
+
+A tool is **available** only if it resolves in that environment: its executable exists in the
+venv, its package is in `poetry.lock`, or its executable is on `PATH`. There is no fallback: a
+project whose `.venv` lacks `ruff` has no ruff, even if one is installed globally. Nothing is ever
+installed, synced, or created.
+
+`uv run --frozen --no-sync` is not used. It does not install, but with no `.venv` uv creates an
+empty one before running anything, and hookah must not create environments in the project. A uv
+project's environment is always a `.venv` (or `$UV_PROJECT_ENVIRONMENT`), which step 1 finds. An
+unsynced uv project (no `.venv`) falls through to `PATH`. `uv.lock` only decides the install hint.
+
+### Tools
+
+Paths are relative to the project root, which is the working directory. `{files}` are the changed
+files (edit hook) or all changed files of the project (stop hook).
+
+| Check        | Tool          | Command                                                                              | Timeout |
+|--------------|---------------|--------------------------------------------------------------------------------------|---------|
+| format       | `ruff`        | `ruff format --force-exclude {files}`                                                | 30 s    |
+| format       | `black`       | `black {files}`; only without ruff, and only if `[tool.black]` exists or black is a declared dependency | 30 s |
+| lint         | `ruff`        | `ruff check --output-format json --force-exclude --no-fix {files}`                   | 30 s    |
+| typecheck    | `mypy`        | `mypy [-O json] --show-column-numbers --show-error-codes --no-error-summary --no-color-output {files}` | 120 s |
+| architecture | `lint-imports`| `lint-imports` (project-wide; `env PYTHONPATH=src` is prepended in the src layout)   | 60 s    |
+| test         | `pytest`      | `pytest [--testmon] -rfE --tb=short -q --color=no --rootdir=. {tests}`               | 300 s   |
+| mutation     | `mutmut`      | `mutmut run {globs}` (mutmut 3 only)                                                 | 480 s   |
+
+- **ruff** is preferred for format and lint when available. `--no-fix` keeps a project's
+  `fix = true` from rewriting files during lint; `--force-exclude` makes ruff honor the project's
+  `exclude` for explicitly passed files. Ruff has no warnings, so every diagnostic is an `Error`
+  and its code (`F401`) is the rule. Syntax errors come through as findings.
+- **mypy** runs when it is available and configured (`[tool.mypy]`, `mypy.ini`, `.mypy.ini`,
+  `setup.cfg [mypy]`, `tox.ini [mypy]`, which gets `--config-file tox.ini`) or declared as a
+  dependency. `-O json` is used only when the installed mypy is known to be 1.11 or newer (read
+  from the venv's `dist-info`); otherwise the text output is parsed. mypy keeps its default
+  `.mypy_cache`. It checks imported modules too, so findings can come from other files; they are
+  reported on purpose.
+- **import-linter** runs when configured (`[tool.importlinter]`, `.importlinter`,
+  `setup.cfg [importlinter]`). Each illegal chain of a broken contract is one finding, such as
+  `src/shop/domain/cart.py:2: [architecture] shop.domain.cart -> shop.infra.db [Domain must not
+  import infra]`: located at the first importing module's file and line (`(l.N)`), message the
+  chain, rule the contract name. Module names map to files in the src or flat layout. The root
+  package must be importable; the src layout gets `PYTHONPATH=src` for that.
+- **pytest** runs `-rfE --tb=short -q`; no JUnit file is written. Failures come from the
+  `short test summary info` lines plus the short tracebacks: a failing test is located at the last
+  traceback frame inside its own test file, so an exception raised deep in the code under test is
+  reported at the test line that triggered it. Collection errors (import errors, syntax errors)
+  are located the same way. `--rootdir=.` keeps node ids relative to the project root.
+  pytest's default `.pytest_cache` stays.
+- **mutmut** is read from the `Mutant results` list that `mutmut run <globs>` prints, which covers
+  exactly the selected mutants, including those answered from mutmut's own cache in `mutants/`.
+  Each survivor is an `Error`: `mutant survived: shop.cart.x_total__mutmut_9 (`...else 0` ->
+  `...else 1`)`, located at the changed line of the original source. The line is found by
+  comparing the mutant with the original function in `mutants/<file>`. mutmut 2.x is not
+  supported.
+
+### Missing tools
+
+A `MissingTool` notice (never an install) is raised for: mutmut, when pytest is available but
+mutmut is not (or is older than 3); and ruff, mypy, or import-linter, when the project configures
+it but the environment lacks it. The hint matches the package manager, judged by lock files:
+`uv add --dev <pkg>`, `poetry add --group dev <pkg>`, or `pip install <pkg>`.
+
+### File roles and selection
+
+- **Roles.** `test_*.py`, `*_test.py`, `conftest.py`, and any file below a `tests/` or `test/`
+  directory (below the project root) are tests; everything else is source.
+- **Tests.** With `pytest-testmon` installed in the venv (or in `poetry.lock`), pytest runs with
+  `--testmon` and without file arguments: testmon selects the affected tests, and the targets are
+  just the changed Python files. Otherwise a changed test selects itself; a changed
+  `pkg/foo.py` selects every `test_foo.py` and `foo_test.py` in the project (`__init__.py` maps
+  to `test_<package>.py`); a changed `conftest.py` or test helper selects the test files in its own
+  directory. With no match nothing runs, and the whole suite never does.
+- **Mutants.** The sources are the changed sources plus the sources of the changed tests
+  (`test_foo.py` and `foo_test.py` map to `foo.py` anywhere in the project; among several
+  same-named files, those whose directories overlap most with the test's win). Each source becomes
+  one glob `<module>.x[_ǁ]*`, where the module is mutmut's name for the file (`src/shop/cart.py`
+  is `shop.cart`). Files that do not exist are dropped, and nothing selected means no run.
+
+### Caveats
+
+- The first `pytest --testmon` run executes the whole suite to build `.testmondata`. The first
+  `mutmut run` runs the suite once to collect stats and copies the project into `mutants/`. Both
+  are project-local caches; add them (and `.mypy_cache`, `.ruff_cache`, `.pytest_cache`,
+  `.import_linter_cache`) to `.gitignore`.
+- mutmut only mutates files under its configured `source_paths` (by default `src/`, `lib/`, or the
+  package named like the directory). A glob that matches nothing is a clean result, not an error.
+- mutmut aborts when the baseline test run fails (`failed to collect stats`); that is reported as
+  a degraded run, not as a finding.
+- `pytest` and `mypy` need the project's packages importable in the environment, as for the user
+  (editable install, `pythonpath`, or `mypy_path`). Only import-linter gets `PYTHONPATH=src`.
+- If pytest's `rootdir` was meant to be a parent directory, `--rootdir=.` changes what it
+  considers the root; keep a `pyproject.toml` per project.
 
 ## Rust
 

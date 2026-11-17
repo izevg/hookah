@@ -2,8 +2,7 @@
 //!
 //! [`Ecosystems`] is the registry: it sends each [`ToolchainDetector`] call to the module of the
 //! project's ecosystem. Each module implements toolchain detection, tool-output parsing into
-//! findings, and related-test selection. Rust and Node are implemented; Python is planned and
-//! currently yields an empty toolchain and no test selection.
+//! findings, and related-test selection. Rust, Node, and Python are implemented.
 
 pub mod node;
 pub mod python;
@@ -19,12 +18,14 @@ use hookah_domain::session::{ChangedLines, FileRole};
 use hookah_domain::toolchain::{MutationSelection, TestSelection, Tool, Toolchain};
 
 use node::NodeEcosystem;
+use python::PythonEcosystem;
 use rust::RustEcosystem;
 
 /// Registry of all ecosystem detectors.
 #[derive(Debug, Default)]
 pub struct Ecosystems {
     node: NodeEcosystem,
+    python: PythonEcosystem,
     rust: RustEcosystem,
 }
 
@@ -40,7 +41,7 @@ impl ToolchainDetector for Ecosystems {
         match project.ecosystem {
             Ecosystem::Rust => self.rust.detect(project),
             Ecosystem::Node => self.node.detect(project),
-            Ecosystem::Python => Ok(Toolchain::default()),
+            Ecosystem::Python => self.python.detect(project),
         }
     }
 
@@ -48,7 +49,7 @@ impl ToolchainDetector for Ecosystems {
         match project.ecosystem {
             Ecosystem::Rust => self.rust.classify(project, file, changed),
             Ecosystem::Node => self.node.classify(project, file, changed),
-            Ecosystem::Python => FileRole::Source,
+            Ecosystem::Python => self.python.classify(project, file, changed),
         }
     }
 
@@ -65,7 +66,10 @@ impl ToolchainDetector for Ecosystems {
             Ecosystem::Node => self
                 .node
                 .select_mutants(project, changed_tests, changed_sources),
-            Ecosystem::Python => MutationSelection::None,
+            Ecosystem::Python => {
+                self.python
+                    .select_mutants(project, changed_tests, changed_sources)
+            }
         }
     }
 
@@ -77,7 +81,7 @@ impl ToolchainDetector for Ecosystems {
         match project.ecosystem {
             Ecosystem::Rust => self.rust.select_tests(project, changed),
             Ecosystem::Node => self.node.select_tests(project, changed),
-            Ecosystem::Python => Ok(TestSelection::None),
+            Ecosystem::Python => self.python.select_tests(project, changed),
         }
     }
 
@@ -90,7 +94,7 @@ impl ToolchainDetector for Ecosystems {
         match project.ecosystem {
             Ecosystem::Rust => self.rust.parse(project, tool, output),
             Ecosystem::Node => self.node.parse(project, tool, output),
-            Ecosystem::Python => Ok(vec![]),
+            Ecosystem::Python => self.python.parse(project, tool, output),
         }
     }
 }
@@ -100,18 +104,26 @@ impl ToolchainDetector for Ecosystems {
 mod tests {
     use super::*;
 
-    #[test]
-    fn planned_ecosystems_are_empty() {
-        let reg = Ecosystems::new();
-        let p = Project {
+    fn project(ecosystem: Ecosystem) -> Project {
+        Project {
             root: "/r".into(),
-            ecosystem: Ecosystem::Python,
+            ecosystem,
             manifests: vec![],
-        };
-        assert!(reg.detect(&p).unwrap().is_empty());
+        }
+    }
+
+    #[test]
+    fn python_projects_go_to_the_python_adapter() {
+        let reg = Ecosystems::new();
+        let p = project(Ecosystem::Python);
+        let changed = ChangedLines::All;
         assert_eq!(
-            reg.select_tests(&p, &["/r/a".into()]).unwrap(),
-            TestSelection::None
+            reg.classify(&p, Path::new("/r/tests/test_a.py"), &changed),
+            FileRole::Test
+        );
+        assert_eq!(
+            reg.classify(&p, Path::new("/r/pkg/a.py"), &changed),
+            FileRole::Source
         );
     }
 }

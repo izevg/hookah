@@ -88,6 +88,8 @@ impl<'a> CheckEdit<'a> {
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
+    use std::path::Path;
+
     use hookah_domain::finding::{Finding, Location, Severity};
     use hookah_domain::session::LineRange;
     use hookah_domain::toolchain::MissingTool;
@@ -215,6 +217,21 @@ mod tests {
         assert_eq!(lines("/"), ["r/src/a.rs:3: msg"]);
         assert_eq!(lines("/r/src"), ["a.rs:3: msg"]);
         assert_eq!(lines("/elsewhere"), ["/r/src/a.rs:3: msg"]);
+    }
+
+    #[test]
+    fn display_root_is_normalized_and_the_edited_file_is_shown_the_same_way() {
+        let mut w = world();
+        w.findings
+            .insert("lint".into(), vec![lint(Severity::Error, "src/a.rs", 3)]);
+        let req = EditRequest::new("/r/src/a.rs", "/r/x/..");
+        assert_eq!(req.shown_file(), Path::new("src/a.rs"));
+        let Verdict::Fail(r) = CheckEdit::new(w.ports(), 20).run(&req).verdict else {
+            panic!("expected fail");
+        };
+        assert_eq!(r.lines(), ["src/a.rs:3: msg"]);
+        let outside = EditRequest::new("/r/src/../src/a.rs", "/elsewhere");
+        assert_eq!(outside.shown_file(), Path::new("/r/src/a.rs"));
     }
 
     #[test]

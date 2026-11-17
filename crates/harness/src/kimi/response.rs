@@ -23,7 +23,7 @@ pub fn render(invocation: &Invocation, outcome: &Outcome) -> Response {
         Some(report) => format!(
             "hookah: {} after editing {} - fix before continuing:\n{}",
             problems(report),
-            request.file.display(),
+            request.shown_file().display(),
             report_text(report, outcome)
         ),
         None => edit_context(outcome)
@@ -81,10 +81,7 @@ mod tests {
             &failing(vec![Notice::FileRewritten("/w/a.py".into())]),
         );
         assert_eq!(r.exit_code, 0);
-        assert!(
-            r.stdout
-                .starts_with("hookah: 1 problem after editing /w/a.py")
-        );
+        assert!(r.stdout.starts_with("hookah: 1 problem after editing a.py"));
         assert!(r.stdout.contains("a.py:3: unused import"));
         assert!(r.stdout.contains("re-read it before editing"));
         assert!(r.stderr.is_empty());

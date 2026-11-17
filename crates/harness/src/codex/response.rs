@@ -55,8 +55,11 @@ pub fn render(invocation: &Invocation, outcome: &Outcome) -> Response {
 
 fn edited_files(invocation: &Invocation) -> String {
     let files: Vec<String> = match invocation {
-        Invocation::Edit(r) => vec![r.file.display().to_string()],
-        Invocation::EditBatch(rs) => rs.iter().map(|r| r.file.display().to_string()).collect(),
+        Invocation::Edit(r) => vec![r.shown_file().display().to_string()],
+        Invocation::EditBatch(rs) => rs
+            .iter()
+            .map(|r| r.shown_file().display().to_string())
+            .collect(),
         _ => vec![],
     };
     files.join(", ")
@@ -144,7 +147,7 @@ mod tests {
         let v = stdout_json(&r);
         assert_eq!(v["decision"], "block");
         let reason = v["reason"].as_str().unwrap();
-        assert!(reason.starts_with("hookah: 1 problem after editing /w/a.rs, /w/b.rs"));
+        assert!(reason.starts_with("hookah: 1 problem after editing a.rs, b.rs"));
         assert!(reason.contains("a.rs:3: unused variable"));
         assert!(reason.contains("re-read it before editing"));
     }

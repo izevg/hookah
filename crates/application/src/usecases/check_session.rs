@@ -421,6 +421,42 @@ mod tests {
     }
 
     #[test]
+    fn sibling_project_paths_render_normalized_like_in_the_edit_phase() {
+        let mut w = world();
+        w.manifests = vec![
+            hookah_domain::project::Manifest::from_path(Path::new("/r/core/Cargo.toml")).unwrap(),
+        ];
+        w.files = vec!["/r/core/src/a.rs".into()];
+        w.selection = TestSelection::Targets(vec!["t".into()]);
+        w.findings.insert(
+            "test".into(),
+            vec![finding(
+                CheckKind::Test,
+                Severity::Error,
+                "src/a.rs",
+                3,
+                "boom",
+            )],
+        );
+        let lines = |req: StopRequest| {
+            let Verdict::Fail(r) = CheckSession::new(w.ports(), 20).run(&req).verdict else {
+                panic!("expected fail");
+            };
+            r.lines()
+        };
+        // A non-normalized display root renders the same as its normalized form.
+        assert_eq!(
+            lines(StopRequest::new("/r").with_display_root("/r/app/..")),
+            ["core/src/a.rs:3: boom"]
+        );
+        // A sibling directory is outside the display root: absolute, never `core/../`.
+        assert_eq!(
+            lines(StopRequest::new("/r").with_display_root("/r/app")),
+            ["/r/core/src/a.rs:3: boom"]
+        );
+    }
+
+    #[test]
     fn port_errors_degrade() {
         let mut w = world();
         w.files_fail = true;

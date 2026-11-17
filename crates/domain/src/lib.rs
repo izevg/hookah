@@ -8,6 +8,7 @@
 //!
 //! - [`project`]: the project a changed file belongs to.
 //! - [`toolchain`]: the checks a project can run, and how they target a file.
+//! - [`path`]: the single rule for rendering paths in reports.
 //! - [`finding`]: problems reported by checks.
 //! - [`verdict`]: the decision and compact report handed back to the agent, and the rule that
 //!   decides which findings are reported.
@@ -15,6 +16,7 @@
 
 pub mod error;
 pub mod finding;
+pub mod path;
 pub mod project;
 pub mod session;
 pub mod toolchain;

@@ -30,7 +30,7 @@ pub fn render(invocation: &Invocation, outcome: &Outcome) -> Response {
                 format!(
                     "hookah: {} after editing {} - fix before continuing:",
                     problems(report),
-                    request.file.display()
+                    request.shown_file().display()
                 ),
                 report,
                 outcome,
@@ -208,10 +208,7 @@ mod tests {
         let r = render(&edit(), &o);
         assert_eq!(r.exit_code, 2);
         assert!(r.stdout.is_empty());
-        assert!(
-            r.stderr
-                .starts_with("hookah: 1 problem after editing /w/a.rs")
-        );
+        assert!(r.stderr.starts_with("hookah: 1 problem after editing a.rs"));
         assert!(r.stderr.contains("a.rs:3: unused variable"));
         assert!(r.stderr.contains("re-read it before editing"));
     }

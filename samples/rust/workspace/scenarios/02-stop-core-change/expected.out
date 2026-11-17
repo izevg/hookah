@@ -2,5 +2,5 @@ exit: 2
 --- stdout
 --- stderr
 hookah: 2 problems in the files changed in this session - tests or checks are failing, fix before finishing:
-<root>/core/../app/src/lib.rs:17:9: test tests::receipt_shows_total failed: assertion `left == right` failed
-<root>/core/src/lib.rs:30:9: test tests::display_pads_cents failed: assertion `left == right` failed
+app/src/lib.rs:17:9: test tests::receipt_shows_total failed: assertion `left == right` failed
+core/src/lib.rs:30:9: test tests::display_pads_cents failed: assertion `left == right` failed

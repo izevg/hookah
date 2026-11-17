@@ -10,6 +10,7 @@
 use std::path::{Path, PathBuf};
 
 use hookah_domain::finding::Finding;
+use hookah_domain::path::display_path;
 use hookah_domain::project::Project;
 use hookah_domain::toolchain::{CheckKind, Tool, Toolchain};
 use hookah_domain::verdict::{Notice, Report, ReportingFilter, Verdict};
@@ -32,6 +33,11 @@ impl EditRequest {
             file: file.into(),
             display_root: display_root.into(),
         }
+    }
+
+    /// The edited file as shown to the agent: the same rule as for finding paths.
+    pub fn shown_file(&self) -> PathBuf {
+        display_path(&self.file, &self.display_root)
     }
 }
 
@@ -133,10 +139,7 @@ impl RunLog {
         self.findings = kept
             .into_iter()
             .map(|mut f| {
-                let abs = project_root.join(&f.location.path);
-                f.location.path = abs
-                    .strip_prefix(display_root)
-                    .map_or(abs.clone(), Path::to_path_buf);
+                f.location.path = display_path(&project_root.join(&f.location.path), display_root);
                 f
             })
             .collect();

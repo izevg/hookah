@@ -129,7 +129,7 @@ fn hook(harness: HarnessKind, limit: usize) -> Response {
 
 fn run_harness(harness: &dyn Harness, stdin: &str, limit: usize) -> Response {
     let invocation = match harness.parse(stdin) {
-        Ok(i) => i,
+        Ok(i) => i.canonical(),
         Err(e) => return warning(e.to_string()),
     };
     let adapters = wiring::build();

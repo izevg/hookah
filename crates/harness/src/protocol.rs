@@ -12,6 +12,7 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 
 use hookah_application::{EditRequest, Outcome, StopRequest};
+use hookah_domain::path::normalize;
 use hookah_domain::toolchain::MissingTool;
 use hookah_domain::verdict::{Notice, Report, Verdict};
 
@@ -33,6 +34,57 @@ pub enum Invocation {
     },
     /// An event `hookah` does not care about.
     Ignore,
+}
+
+impl Invocation {
+    /// Resolves symlinks and aliases (`/var` vs `/private/var`) in every path the request
+    /// carries, so they compare equal to the real paths that `git` reports in the stop phase and
+    /// relativize cleanly. Paths that do not exist (yet) keep their lexical form.
+    pub fn canonical(self) -> Self {
+        let edit = |r: EditRequest| {
+            EditRequest::new(canonical_file(&r.file), canonical_dir(&r.display_root))
+        };
+        match self {
+            Invocation::Edit(r) => Invocation::Edit(edit(r)),
+            Invocation::EditBatch(rs) => Invocation::EditBatch(rs.into_iter().map(edit).collect()),
+            Invocation::Stop {
+                request,
+                already_continuing,
+            } => Invocation::Stop {
+                request: StopRequest::new(canonical_dir(&request.root))
+                    .with_display_root(canonical_dir(&request.display_root)),
+                already_continuing,
+            },
+            Invocation::Ignore => Invocation::Ignore,
+        }
+    }
+}
+
+/// Canonicalizes the longest existing prefix of `path` and appends the rest unchanged.
+fn canonical_dir(path: &Path) -> PathBuf {
+    let path = normalize(path);
+    let mut rest = Vec::new();
+    let mut head = path.as_path();
+    loop {
+        if let Ok(real) = head.canonicalize() {
+            return rest.iter().rev().fold(real, |acc, part| acc.join(part));
+        }
+        match (head.parent(), head.file_name()) {
+            (Some(parent), Some(name)) => {
+                rest.push(name.to_os_string());
+                head = parent;
+            }
+            _ => return path,
+        }
+    }
+}
+
+/// Like [`canonical_dir`], but a symlinked file itself stays what it is.
+fn canonical_file(path: &Path) -> PathBuf {
+    match (path.parent(), path.file_name()) {
+        (Some(dir), Some(name)) => canonical_dir(dir).join(name),
+        _ => path.to_path_buf(),
+    }
 }
 
 /// What the CLI writes and returns to the harness.
@@ -269,5 +321,35 @@ mod tests {
         let d = merge_outcomes(vec![Outcome::pass(), Outcome::degraded("slow")], 20);
         assert_eq!(d.verdict, Verdict::Degraded("slow".into()));
         assert_eq!(merge_outcomes(vec![], 20).verdict, Verdict::Pass);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn canonical_resolves_aliases_for_existing_and_missing_paths() {
+        let base = std::env::temp_dir().join(format!("hookah-canon-{}", std::process::id()));
+        let real = base.join("real");
+        std::fs::create_dir_all(real.join("src")).unwrap();
+        let alias = base.join("alias");
+        std::os::unix::fs::symlink(&real, &alias).unwrap();
+        let real = real.canonicalize().unwrap();
+
+        let edit = Invocation::Edit(EditRequest::new(alias.join("src/new.rs"), &alias)).canonical();
+        assert_eq!(
+            edit,
+            Invocation::Edit(EditRequest::new(real.join("src/new.rs"), &real))
+        );
+        let stop = Invocation::Stop {
+            request: StopRequest::new(alias.join("src/..")),
+            already_continuing: false,
+        }
+        .canonical();
+        assert_eq!(
+            stop,
+            Invocation::Stop {
+                request: StopRequest::new(&real),
+                already_continuing: false
+            }
+        );
+        std::fs::remove_dir_all(&base).unwrap();
     }
 }

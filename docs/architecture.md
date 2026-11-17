@@ -62,7 +62,11 @@ A missing tool never fails a check, and `hookah` never installs anything.
 Findings carry project-relative paths and are filtered that way. Only at the end are they
 rendered relative to the display root, the directory where the agent stands (the harness `cwd`;
 the process cwd for `hookah check`), for example `crates/domain/src/lib.rs:24:5`. A path outside
-the display root is shown absolute. Kinds `Typecheck`, `Architecture`, and `Mutation` are tagged
+the display root is shown absolute. One rule owns this, `hookah_domain::path::display_path`, used by
+both phases and by the edit header: normalize lexically (`.` and `..`, no filesystem access), then
+strip the normalized display root, else keep the normalized absolute path. Aliases such as `/var`
+vs `/private/var` are resolved once at the edge (`Invocation::canonical`), because `git` reports
+real paths in the stop phase. Kinds `Typecheck`, `Architecture`, and `Mutation` are tagged
 in reports (`[typecheck]`).
 
 The `cli` crate is the composition root: `wiring.rs` builds the real adapters

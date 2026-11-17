@@ -28,7 +28,7 @@ pub fn render(invocation: &Invocation, outcome: &Outcome) -> Response {
             Some(report) => context(format!(
                 "hookah: {} after editing {} - fix before continuing:\n{}",
                 problems(report),
-                request.file.display(),
+                request.shown_file().display(),
                 report_text(report, outcome)
             )),
             None => match edit_context(outcome) {
@@ -143,7 +143,7 @@ mod tests {
         let ctx = v["hookSpecificOutput"]["additionalContext"]
             .as_str()
             .unwrap();
-        assert!(ctx.starts_with("hookah: 1 problem after editing /w/a.rs"));
+        assert!(ctx.starts_with("hookah: 1 problem after editing a.rs"));
         assert!(ctx.contains("a.rs:3: unused variable"));
     }
 

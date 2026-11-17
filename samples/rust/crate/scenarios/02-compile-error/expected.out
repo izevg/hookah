@@ -1,5 +1,5 @@
 exit: 2
 --- stdout
 --- stderr
-hookah: 1 problem after editing <root>/src/lib.rs - fix before continuing:
+hookah: 1 problem after editing src/lib.rs - fix before continuing:
 src/lib.rs:28:5: cannot find function `sum_all` in this scope [E0425]

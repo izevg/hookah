@@ -61,6 +61,24 @@ echo '{"cwd":"'"$PWD"'","hook_event_name":"PostToolUse","tool_name":"Edit","tool
   | hookah hook claude; echo "exit $?"
 ```
 
+Claude Code runs the `command` string through the user's shell, so `$HOME` and a `PATH` lookup
+expand as in a terminal. Prefer `$HOME` over `~` in a JSON command: tilde expansion depends on the
+shell and on its position in the word, while `$HOME` always expands. A project that pins its
+toolchain with mise can prefix the command with `mise exec --` so the pinned tools are on `PATH`.
+
+## Dogfooding
+
+This repository runs `hookah` on itself. Install the binary into `~/.local`:
+
+```sh
+cargo install --path crates/cli --root ~/.local --locked
+```
+
+The committed [`.claude/settings.json`](../../../.claude/settings.json) calls
+`$HOME/.local/bin/mise exec -- $HOME/.local/bin/hookah hook claude` on `PostToolUse`
+(timeout 180) and `Stop` (timeout 600). Re-run the install after changing `hookah` to pick up
+the new build.
+
 ## Limitations
 
 - `PostToolUse` cannot undo the edit; the tool already ran. Exit 2 only feeds the report back.

@@ -8,7 +8,10 @@ project around that file, finds its formatter, linter, and test runner, and runs
 file only. When something breaks, the findings go straight back into the agent's context as hook
 feedback, so the agent fixes them right away instead of piling up broken code.
 
-> Status: design stage. Nothing is implemented yet.
+> Status: the MVP works for Rust projects with Claude Code (`hookah check`, `hookah detect`,
+> `hookah hook claude`). TypeScript/JavaScript and Python, and the other harnesses, are still to
+> come. This repository runs `hookah` on itself; see
+> [Claude Code setup](docs/setup/hooks/claude-code.md#dogfooding).
 
 ## How it works
 

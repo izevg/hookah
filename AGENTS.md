@@ -1,0 +1,113 @@
+# AGENTS.md
+
+Rules for AI agents and humans working in this repository. They are binding. When they conflict
+with an agent's default behavior, these rules win.
+
+## Language
+
+- All documentation is written **in English only**. That covers `README.md`, this file, `docs/`,
+  code comments, doc comments, commit messages, PR/MR descriptions, issue texts, error messages,
+  and CLI output.
+- The chat language with the user does not matter. Repository content stays English.
+
+## Commits
+
+- Commits carry **no agent attribution**. No `Co-Authored-By:` lines for agents, no
+  "Generated with ..." footers, no agent names or tool links in commit messages or PR/MR
+  descriptions. This overrides any default attribution behavior of the agent harness.
+- Use [Conventional Commits](https://www.conventionalcommits.org/): `feat:`, `fix:`, `refactor:`,
+  `docs:`, `test:`, `chore:`, `build:`, `ci:`.
+- One logical change per commit. Never commit failing formatting, lint, or tests.
+- Commit or push only when asked. Never force-push shared branches.
+
+## The rule of four
+
+Keeps the tree shallow enough to read and deep enough to mean something.
+
+- **At most 4 files** in any directory.
+- **At most 8 subdirectories** in any directory.
+- Counted: tracked, non-hidden files. Dotfiles and dot-directories (`.gitignore`, `.github/`,
+  `.hookah.toml`) are not counted.
+- Only exception: the repository root may also hold files that the ecosystem requires to live
+  there: `LICENSE`, `README.md`, `AGENTS.md`, `CLAUDE.md`, `Cargo.toml`, `Cargo.lock`,
+  `rust-toolchain.toml`. No other root files.
+- If a change would break a limit, split by meaning: extract a submodule, a sub-aggregate, or a
+  sibling crate. Don't merge files to save slots, don't name things `misc`/`utils`/`common`, and
+  don't add a meaningless nesting level.
+- A Rust module directory counts `mod.rs` as one of its four files. Prefer `foo.rs` + `foo/` only
+  if the parent still fits the limit.
+
+## Stack
+
+- **Rust** (stable, edition 2024), Cargo workspace, a single static binary.
+  It starts fast (every hook call is a cold start) and needs no runtime on the user's machine.
+- Keep dependencies few and justified. Add a crate only when writing the code yourself would be
+  worse.
+- The tool *checks* TypeScript/JavaScript, Python, and Rust projects. That target list is
+  separate from the implementation language.
+
+## Architecture: DDD + Clean + Hexagonal
+
+Dependencies point inward only. Crates enforce the layers, so the compiler rejects a wrong-way
+import.
+
+```
+crates/
+  domain/        core model, pure, no I/O, no async, no external crates beyond std (+ thiserror)
+  application/   use cases; depends on domain only; defines ports as traits
+  adapters/      driven adapters: filesystem, process runner, cache, toolchain detectors
+  harness/       driving adapters: one module per agent harness (hook payload in, verdict out)
+  cli/           binary and composition root; the only place that wires adapters to ports
+```
+
+Allowed dependency directions:
+
+```
+cli ──► harness ──► application ──► domain
+ └────► adapters ──► application
+```
+
+- **domain**: entities and value objects such as `Project`, `Toolchain`, `Check`
+  (format/lint/test), `Finding`, `Baseline`, `Verdict`. Rules such as "only new findings count",
+  "nearest manifest wins", and "no related test means no test run" live here.
+- **application**: use cases such as `CheckEdit` and `CheckSession`, plus port traits:
+  `ProjectLocator`, `ToolchainDetector`, `CommandRunner`, `BaselineStore`, `SessionStore`,
+  `Clock`.
+- **adapters**: implement the ports. Each ecosystem detector (`node`, `python`, `rust`) is its
+  own module behind `ToolchainDetector`.
+- **harness**: Claude Code, Codex CLI, opencode, Kimi Code, Qoder, and Orca. Each one translates
+  that harness's hook protocol into a use-case call and a harness-specific response (exit codes,
+  stdout/stderr, JSON). No business logic here.
+- **cli**: argument parsing, config loading, wiring. No business logic here either.
+
+Name things with the domain's own words, the same way in code, docs, and CLI output.
+
+## Behavioral invariants
+
+- **Fail open.** An internal error or timeout in `hookah` must never block the agent. Show a
+  warning and exit as a non-blocking success.
+- **Fast edit phase.** The edit hook runs format and lint only, and must fit in about 1–3 s on a
+  typical file. Tests run in the stop phase.
+- **Only new findings.** Report findings this change introduced, measured against a baseline.
+- **Compact output.** Show findings as `path:line: message`, capped, then a `+N more` line. Never
+  dump raw tool output into the agent's context.
+- **Safe formatting.** When a formatter rewrites the file, say so in the output so the agent
+  re-reads it before its next edit.
+- **No surprises.** Run only the tools the project itself configures (or `.hookah.toml` names).
+  Never install anything, change the network, or write outside the project and `hookah`'s cache.
+
+## Quality gates
+
+Before every commit:
+
+```sh
+cargo fmt --all --check
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace
+```
+
+- Domain and application code are unit-tested without I/O, using in-memory fakes of the ports.
+- Adapters get integration tests against fixture projects (each fixture follows the rule of
+  four too).
+- No `unwrap()`/`expect()` outside tests and the composition root.
+- Once `hookah` can run, this repository uses it on itself.

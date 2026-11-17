@@ -1,0 +1,13 @@
+diff --git a/src/cart.js b/src/cart.js
+index dfad8bc..5a0d164 100644
+--- a/src/cart.js
++++ b/src/cart.js
+@@ -7,7 +7,7 @@ function totalCents(cart) {
+ }
+ 
+ function isEmpty(cart) {
+-  return cart.length === 0;
++  return cart.length == 0;
+ }
+ 
+ module.exports = { addItem, totalCents, isEmpty };

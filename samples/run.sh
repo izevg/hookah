@@ -113,7 +113,7 @@ for sample in "$here"/*/*/; do
   cp -R "$sample/project/." "$copy/"
   if [ -f "$sample/scenarios/setup.sh" ]; then
     echo "setup $config" >&2
-    (cd "$copy" && with_tools sh "$sample/scenarios/setup.sh" >"$work/setup.log" 2>&1) || {
+    with_tools sh -c 'cd "$1" && sh "$2"' sh "$copy" "$sample/scenarios/setup.sh" >"$work/setup.log" 2>&1 || {
       cat "$work/setup.log" >&2
       echo "FAIL  $config (setup)"
       fail=$((fail + 1))
@@ -126,7 +126,7 @@ for sample in "$here"/*/*/; do
   for s in $scenarios; do
     name=$config/${s##*/}
 
-    if [ -f "$s/requires" ] && ! (cd "$copy" && with_tools sh "$s/requires") >/dev/null 2>&1; then
+    if [ -f "$s/requires" ] && ! with_tools sh -c 'cd "$1" && sh "$2"' sh "$copy" "$s/requires" >/dev/null 2>&1; then
       echo "SKIP  $name (requires not met)"
       skip=$((skip + 1))
       continue

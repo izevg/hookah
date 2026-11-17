@@ -1,0 +1,13 @@
+diff --git a/test/domain/discount.test.ts b/test/domain/discount.test.ts
+index e89e8fc..9eb5d03 100644
+--- a/test/domain/discount.test.ts
++++ b/test/domain/discount.test.ts
+@@ -2,7 +2,7 @@ import { expect, test } from "vitest";
+ import { applyDiscount } from "../../src/domain/discount";
+ 
+ test("takes a percentage off", () => {
+-  expect(applyDiscount(1000, 25)).toBe(750);
++  expect(applyDiscount(1000, 25)).toBe(700);
+ });
+ 
+ test("a negative rate changes nothing", () => {

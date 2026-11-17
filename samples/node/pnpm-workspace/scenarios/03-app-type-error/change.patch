@@ -1,0 +1,12 @@
+diff --git a/packages/app/src/main.ts b/packages/app/src/main.ts
+index 1c5dee0..3ef50a1 100644
+--- a/packages/app/src/main.ts
++++ b/packages/app/src/main.ts
+@@ -1,6 +1,6 @@
+ import { greet, type User } from "@acme/lib";
+ 
+ export function welcome(name: string): string {
+-  const user: User = { name };
++  const user: User = { name, age: 36 };
+   return greet(user).toUpperCase();
+ }

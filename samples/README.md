@@ -54,7 +54,9 @@ directory, dotfiles aside), including the projects inside `project/`.
 `scenarios/setup.sh` runs once per sample, inside the copy, before the initial commit. Use it for
 `npm ci`, `uv sync`, and the like. Generated directories must be git-ignored by the project's own
 `.gitignore`, so scenario resets keep them. A failing setup fails the whole sample. Rust samples
-need none. (It counts toward the four files of `scenarios/`.)
+need none. The Node samples install from the npm registry (`npm ci`, `pnpm install
+--frozen-lockfile`), so the first run needs network access; later runs hit the package-manager
+cache. Node and pnpm come from the pinned `.mise.toml`. (It counts toward the four files of `scenarios/`.)
 
 ### `requires`
 
@@ -98,6 +100,20 @@ is installed on the machine.
 | | `03-failing-test-stop` | stop | a source change breaks `test_stats.py`, found by the naming convention (no testmon) |
 | | `04-test-edit-mutmut-missing` | stop | a weakened test without mutmut: only a `tools not installed` warning |
 | | `05-test-edit-failing-mutmut-missing` | stop | a failing test edit without mutmut: the failure plus the `pip install mutmut` hint |
+| `node/biome-vitest` | `01-clean-edit` | edit | a harmless edit stays silent |
+| | `02-lint-error` | edit | a Biome lint error on a changed line is reported |
+| | `03-type-error` | edit | a wrong argument type: `[typecheck]` error from `tsc` |
+| | `04-architecture-violation` | edit | `domain` imports `infra`: `[architecture]` error from dependency-cruiser |
+| | `05-format-only` | edit | Biome rewrites the file; the agent is told to re-read it |
+| | `06-broken-test-stop` | stop | a broken assertion fails the stop and names the Vitest test |
+| | `07-weakened-test-stop` | stop | a weakened test: Stryker's surviving mutants fail the stop |
+| `node/eslint-prettier-jest` | `01-eslint-error` | edit | an ESLint (flat config) error is reported |
+| | `02-prettier-rewrite` | edit | Prettier rewrites the file; the agent is told to re-read it |
+| | `03-failing-test-stop` | stop | a failing Jest test fails the stop; the missing Stryker notice carries the `npm i -D` hint |
+| | `04-test-edit-no-stryker` | stop | a test edit without Stryker installed: passes, with a "tools not installed" warning |
+| `node/pnpm-workspace` | `01-lib-api-break` | edit | a `lib` type change that breaks `app`: the edit phase only checks `lib`, so it stays silent (known gap) |
+| | `02-lib-api-break-stop` | stop | the same change at stop: the related `lib` tests run (the `app` break is not reported, known gap) |
+| | `03-app-type-error` | edit | a type error in `app` against `lib` through `tsc -b`, shown with its workspace-relative path |
 
 `rust/crate/07-test-edit-mutation` records the answer for a machine without `cargo-mutants`, so
 its `requires` is `! cargo mutants --version`. `08-test-edit-mutation-survivor` is its sibling for

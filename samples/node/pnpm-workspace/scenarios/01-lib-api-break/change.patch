@@ -1,0 +1,14 @@
+diff --git a/packages/lib/src/index.ts b/packages/lib/src/index.ts
+index 310f7b5..b2e58d0 100644
+--- a/packages/lib/src/index.ts
++++ b/packages/lib/src/index.ts
+@@ -1,7 +1,7 @@
+ export interface User {
+-  name: string;
++  fullName: string;
+ }
+ 
+ export function greet(user: User): string {
+-  return `Hello, ${user.name}!`;
++  return `Hello, ${user.fullName}!`;
+ }

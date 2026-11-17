@@ -1,0 +1,13 @@
+diff --git a/src/domain/order.ts b/src/domain/order.ts
+index d91304a..9fc8a1b 100644
+--- a/src/domain/order.ts
++++ b/src/domain/order.ts
+@@ -5,7 +5,7 @@ export interface Line {
+   quantity: number;
+ }
+ 
+-/** Sums the lines and applies one discount to the whole order. */
++/** Sums the lines and applies one discount to the order total. */
+ export function orderTotal(lines: Line[], percent: number): number {
+   const sum = lines.reduce((acc, line) => acc + line.cents * line.quantity, 0);
+   return applyDiscount(sum, percent);

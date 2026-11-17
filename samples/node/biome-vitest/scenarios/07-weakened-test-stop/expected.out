@@ -1,0 +1,8 @@
+exit: 2
+--- stdout
+--- stderr
+hookah: 4 problems in the files changed in this session - tests or checks are failing, fix before finishing:
+src/domain/discount.ts:3:7: [mutation] mutant survived: ConditionalExpression false
+src/domain/discount.ts:3:7: [mutation] mutant survived: EqualityOperator percent <= 0
+src/domain/discount.ts:6:7: [mutation] mutant survived: ConditionalExpression false
+src/domain/discount.ts:6:7: [mutation] mutant survived: EqualityOperator percent >= 100

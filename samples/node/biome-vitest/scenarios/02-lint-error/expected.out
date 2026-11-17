@@ -1,0 +1,5 @@
+exit: 2
+--- stdout
+--- stderr
+hookah: 1 problem after editing src/domain/discount.ts - fix before continuing:
+src/domain/discount.ts:3:15: Using == may be unsafe if you are relying on type coercion. [lint/suspicious/noDoubleEquals]

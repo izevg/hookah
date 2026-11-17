@@ -1,0 +1,12 @@
+{
+  "name": "acme",
+  "private": true,
+  "packageManager": "pnpm@12.21.0",
+  "scripts": {
+    "test": "pnpm -r test"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3",
+    "vitest": "^5.1.0"
+  }
+}

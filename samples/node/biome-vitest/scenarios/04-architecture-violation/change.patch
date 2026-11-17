@@ -1,0 +1,18 @@
+diff --git a/src/domain/order.ts b/src/domain/order.ts
+index d91304a..2714363 100644
+--- a/src/domain/order.ts
++++ b/src/domain/order.ts
+@@ -1,4 +1,5 @@
+ import { applyDiscount } from "./discount";
++import { formatMoney } from "../infra/money";
+ 
+ export interface Line {
+   cents: number;
+@@ -10,3 +11,7 @@ export function orderTotal(lines: Line[], percent: number): number {
+   const sum = lines.reduce((acc, line) => acc + line.cents * line.quantity, 0);
+   return applyDiscount(sum, percent);
+ }
++
++export function describeTotal(lines: Line[], percent: number): string {
++  return formatMoney(orderTotal(lines, percent));
++}

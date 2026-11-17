@@ -1,0 +1,5 @@
+exit: 2
+--- stdout
+--- stderr
+hookah: 1 problem after editing src/domain/order.ts - fix before continuing:
+src/domain/order.ts: [architecture] domain-not-to-infra: src/domain/order.ts -> src/infra/money.ts [domain-not-to-infra]

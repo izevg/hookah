@@ -1,0 +1,17 @@
+{
+  "name": "pricing",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.6.8",
+    "@stryker-mutator/core": "^10.1.1",
+    "@stryker-mutator/vitest-runner": "^10.1.1",
+    "dependency-cruiser": "^18.8.0",
+    "typescript": "^5.9.3",
+    "vitest": "^5.1.0"
+  }
+}

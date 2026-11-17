@@ -1,0 +1,16 @@
+diff --git a/src/cart.js b/src/cart.js
+index dfad8bc..68bc9e1 100644
+--- a/src/cart.js
++++ b/src/cart.js
+@@ -1,9 +1,9 @@
+ function addItem(cart, name, cents) {
+-  return [...cart, { name, cents }];
++  return [...cart, {name, cents}];
+ }
+ 
+ function totalCents(cart) {
+-  return cart.reduce((sum, item) => sum + item.cents, 0);
++  return cart.reduce((sum, item) => sum + item.cents, 0)
+ }
+ 
+ function isEmpty(cart) {

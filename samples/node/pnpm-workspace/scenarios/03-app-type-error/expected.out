@@ -1,0 +1,5 @@
+exit: 2
+--- stdout
+--- stderr
+hookah: 1 problem after editing packages/app/src/main.ts - fix before continuing:
+packages/app/src/main.ts:4:30: [typecheck] Object literal may only specify known properties, and 'age' does not exist in type 'User'. [TS2353]

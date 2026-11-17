@@ -81,10 +81,13 @@ is installed on the machine.
 | | `04-old-warning-untouched` | edit | a committed warning in the same file is not reported |
 | | `05-format-only` | edit | rustfmt rewrites the file; the agent is told to re-read it |
 | | `06-broken-test-stop` | stop | a broken assertion fails the stop and names the test |
-| | `07-test-edit-mutation` | stop | a weakened test; skipped when `cargo-mutants` is installed (see below) |
+| | `07-test-edit-mutation` | stop | a weakened test without `cargo-mutants` installed: silent; skipped when it is installed (see below) |
+| | `08-test-edit-mutation-survivor` | stop | the same weakened test with `cargo-mutants`: surviving mutants of `clamp` fail the stop; skipped without the tool |
 | `rust/workspace` | `01-core-api-break` | edit | a `core` API rename that breaks `app`: the edit phase only checks `core`, so it stays silent (known gap) |
 | | `02-stop-core-change` | stop | a `core` change: stop runs the tests of `core` and of `app` |
 | | `03-core-api-break-stop` | stop | the same API break, caught at stop in `app` |
 
 `rust/crate/07-test-edit-mutation` records the answer for a machine without `cargo-mutants`, so
-its `requires` is `! cargo mutants --version`. A machine that has the tool skips it.
+its `requires` is `! cargo mutants --version`. `08-test-edit-mutation-survivor` is its sibling for
+a machine that has the tool (`requires`: `cargo mutants --version`). Each machine runs exactly one
+of the two.

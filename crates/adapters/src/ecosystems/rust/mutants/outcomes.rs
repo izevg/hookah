@@ -129,6 +129,14 @@ pub fn parse(
             }
         }
     }
+    // Outcome order depends on parallel scheduling and on what `--iterate` skipped.
+    findings.sort_by(|a, b| {
+        (&a.location.path, a.location.line, &a.message).cmp(&(
+            &b.location.path,
+            b.location.line,
+            &b.message,
+        ))
+    });
     Ok(findings)
 }
 
@@ -193,8 +201,8 @@ mod tests {
         assert_eq!(
             shown,
             [
-                "src/lib.rs:2 Error mutant survived: replace add -> i32 with 0",
                 "src/lib.rs:2 Error mutant survived: replace + with - in add",
+                "src/lib.rs:2 Error mutant survived: replace add -> i32 with 0",
                 "src/lib.rs:7 Warning mutant timed out: replace spin with ()",
             ]
         );

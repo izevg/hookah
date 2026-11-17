@@ -7,8 +7,9 @@
 //!   are reported too, by design: an edit can break its callers.
 //! - dependency-cruiser (`--output-type json`): the entries of `summary.violations`. Severity
 //!   `error` is an error, `warn` a warning, `info` and `ignore` are dropped. The location is the
-//!   violating `from` module (the JSON has no line), the rule is the rule name, and the message is
-//!   `rule: from -> to`, or `rule: from` for rules about a module alone, such as orphans.
+//!   violating `from` module, with the line of the violating import when the specifier is found
+//!   in the file (the JSON has no position), the rule is the rule name, and the message is
+//!   `from -> to`, or `from` for rules about a module alone, such as orphans.
 
 use std::path::Path;
 
@@ -71,6 +72,9 @@ struct Summary {
 struct Violation {
     from: String,
     to: Option<String>,
+    /// The import specifier as written in `from`, such as `../infra/money`.
+    #[serde(rename = "unresolvedTo")]
+    unresolved_to: Option<String>,
     rule: Rule,
 }
 
@@ -97,21 +101,39 @@ pub fn depcruise(root: &Path, output: &ProcessOutput) -> Result<Vec<Finding>, Po
                 "warn" => Severity::Warning,
                 _ => return None,
             };
+            // The rule name is the finding's rule and shows in the report; the message is the edge.
             let message = match v.to.as_deref() {
-                Some(to) if to != v.from => format!("{}: {} -> {to}", v.rule.name, v.from),
-                _ => format!("{}: {}", v.rule.name, v.from),
+                Some(to) if to != v.from => format!("{} -> {to}", v.from),
+                _ => v.from.clone(),
+            };
+            let path = relative(root, &v.from);
+            let location = match v
+                .unresolved_to
+                .as_deref()
+                .and_then(|spec| import_line(&root.join(&path), spec))
+            {
+                Some(line) => Location::line(path, line),
+                None => Location::file(path),
             };
             Some(
-                Finding::new(
-                    CheckKind::Architecture,
-                    severity,
-                    Location::file(relative(root, &v.from)),
-                    message,
-                )
-                .with_rule(v.rule.name),
+                Finding::new(CheckKind::Architecture, severity, location, message)
+                    .with_rule(v.rule.name),
             )
         })
         .collect())
+}
+
+/// The 1-based line of the first quoted occurrence of `specifier` in `file`. The report carries
+/// no position, so this is a best effort: the first line with the specifier in single, double,
+/// or back quotes, which is the import, re-export, or `require` that causes the violation. An
+/// unreadable file or an unquoted specifier gives `None`.
+fn import_line(file: &Path, specifier: &str) -> Option<u32> {
+    let text = std::fs::read_to_string(file).ok()?;
+    let quoted = ['"', '\'', '`'].map(|q| format!("{q}{specifier}{q}"));
+    let index = text
+        .lines()
+        .position(|line| quoted.iter().any(|q| line.contains(q.as_str())))?;
+    u32::try_from(index + 1).ok()
 }
 
 #[cfg(test)]
@@ -202,18 +224,47 @@ mod tests {
         assert_eq!(found.len(), 3, "info is dropped: {found:?}");
         assert_eq!(found[0].severity, Severity::Error);
         assert_eq!(found[0].location, Location::file("src/ui/view.ts"));
-        assert_eq!(
-            found[0].message,
-            "no-ui-to-db: src/ui/view.ts -> src/db/q.ts"
-        );
+        assert_eq!(found[0].message, "src/ui/view.ts -> src/db/q.ts");
         assert_eq!(found[0].rule.as_deref(), Some("no-ui-to-db"));
         assert_eq!(found[0].kind, CheckKind::Architecture);
         assert_eq!(found[1].severity, Severity::Warning);
-        assert_eq!(
-            found[1].message,
-            "no-circular: src/db/q.ts -> src/ui/view.ts"
-        );
-        assert_eq!(found[2].message, "no-orphans: src/a.ts");
+        assert_eq!(found[1].message, "src/db/q.ts -> src/ui/view.ts");
+        assert_eq!(found[2].message, "src/a.ts");
+    }
+
+    #[test]
+    fn depcruise_violations_get_the_line_of_the_import() {
+        let dir = std::env::temp_dir().join(format!("hookah-cruise-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("src/ui")).unwrap();
+        std::fs::write(
+            dir.join("src/ui/view.ts"),
+            "import { a } from \"./a\";\n\nimport { q } from '../db/q';\n",
+        )
+        .unwrap();
+        let found = depcruise(&dir, &out(1, DEPCRUISE_OUT)).unwrap();
+        assert_eq!(found[0].location, Location::line("src/ui/view.ts", 3));
+        // No such file, or a specifier that does not appear, leaves the line out.
+        assert_eq!(found[1].location, Location::file("src/db/q.ts"));
+        assert_eq!(found[2].location, Location::file("src/a.ts"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn import_lines_by_quote_style() {
+        let dir = std::env::temp_dir().join(format!("hookah-import-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("a.ts");
+        std::fs::write(
+            &file,
+            "// ./x mentioned\nconst a = require(\"./x\");\nimport('./y');\nimport(`./z`);\n",
+        )
+        .unwrap();
+        assert_eq!(import_line(&file, "./x"), Some(2));
+        assert_eq!(import_line(&file, "./y"), Some(3));
+        assert_eq!(import_line(&file, "./z"), Some(4));
+        assert_eq!(import_line(&file, "./w"), None);
+        assert_eq!(import_line(&dir.join("missing.ts"), "./x"), None);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

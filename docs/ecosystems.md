@@ -89,8 +89,10 @@ or exact version the package's own `version` satisfies.
   TSxxxx` lines (no-location diagnostics sit at `tsconfig.json`). Biome `information` and `hint`
   are dropped.
 - dependency-cruiser: `error` becomes an error, `warn` a warning, `info` and `ignore` are
-  dropped. The location is the `from` module (the JSON carries no line) and the message is
-  `rule: from -> to`.
+  dropped. The location is the `from` module and the message is `from -> to` (the rule name is
+  the finding's rule, shown as `[rule]`). The JSON carries no position, so the line is a best
+  effort: the first line of the `from` file that holds the violating import's specifier
+  (`unresolvedTo`) in quotes; without a match the finding has no line.
 - Vitest and Jest: every failed assertion is an error at the test file, on the line of the first
   stack frame inside it. A suite that cannot run (syntax or import error) is one error. Vitest 5
   writes its report to a file and says where; older versions print it. Jest runs with

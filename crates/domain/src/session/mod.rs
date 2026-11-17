@@ -1,7 +1,10 @@
-//! The session aggregate.
+//! Phases of an agent run and the files it changed.
 //!
-//! `Session`: one agent run, identified by the harness's session id. It collects the files
-//! changed during the run so the stop phase can test all of them together.
+//! There is no persisted session aggregate in the MVP: changes come from git through the
+//! `ChangeSource` port, not from a session store.
 
 pub mod changes;
 pub mod phase;
+
+pub use changes::{ChangeSet, ChangedLines, LineRange, ProjectChanges};
+pub use phase::Phase;

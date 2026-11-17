@@ -1,4 +1,4 @@
-//! Storage ports.
+//! Storage ports. Post-MVP: no traits are defined yet.
 //!
-//! - `BaselineStore`: load and save the finding baseline per project and file.
-//! - `SessionStore`: load and save a session's change set between hook calls.
+//! The MVP keeps no state between hook calls. Later this module will hold `BaselineStore` (the
+//! finding baseline per project and file) and, if needed, a session store.

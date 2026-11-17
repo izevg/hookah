@@ -2,7 +2,7 @@
 //!
 //! - [`fs`]: project location and manifest reading on the real filesystem.
 //! - [`process`]: running external tools with timeouts and capturing output.
-//! - [`store`]: file-based baseline and session storage in the user cache directory.
+//! - [`store`]: post-MVP storage stubs (baseline); nothing implemented yet.
 //! - [`config`]: `.hookah.toml` loading and overrides on top of auto-detection.
 //! - [`ecosystems`]: per-ecosystem toolchain detection, output parsing, and test selection.
 

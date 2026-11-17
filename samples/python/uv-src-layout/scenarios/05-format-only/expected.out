@@ -2,7 +2,7 @@ exit: 0
 --- stdout
 {
   "hookSpecificOutput": {
-    "additionalContext": "hookah reformatted <root>/src/shop/domain/cart.py. Re-read the file before editing it again.",
+    "additionalContext": "hookah reformatted src/shop/domain/cart.py. Re-read the file before editing it again.",
     "hookEventName": "PostToolUse"
   }
 }

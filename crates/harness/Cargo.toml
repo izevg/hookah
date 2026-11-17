@@ -10,6 +10,8 @@ publish.workspace = true
 [dependencies]
 hookah-domain.workspace = true
 hookah-application.workspace = true
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 
 [lints]
 workspace = true

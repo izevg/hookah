@@ -1,0 +1,12 @@
+diff --git a/src/shop/domain/cart.py b/src/shop/domain/cart.py
+index bc55ba8..337c5d2 100644
+--- a/src/shop/domain/cart.py
++++ b/src/shop/domain/cart.py
+@@ -1,5 +1,7 @@
+ """Cart pricing."""
+ 
++import os
++
+ 
+ def discount(total: int) -> int:
+     """Return the discount in cents: 10 percent for carts of 100 or more."""

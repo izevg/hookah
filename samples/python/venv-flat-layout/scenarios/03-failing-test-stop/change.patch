@@ -1,0 +1,10 @@
+diff --git a/tally/stats.py b/tally/stats.py
+index 16caaa4..6aad199 100644
+--- a/tally/stats.py
++++ b/tally/stats.py
+@@ -12,4 +12,4 @@ def spread(values: list[float]) -> float:
+     """Return the difference between the largest and smallest value."""
+     if not values:
+         return 0.0
+-    return max(values) - min(values)
++    return min(values) - max(values)

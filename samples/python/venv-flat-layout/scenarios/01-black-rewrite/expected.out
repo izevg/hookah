@@ -1,0 +1,9 @@
+exit: 0
+--- stdout
+{
+  "hookSpecificOutput": {
+    "additionalContext": "hookah reformatted <root>/tally/stats.py. Re-read the file before editing it again.",
+    "hookEventName": "PostToolUse"
+  }
+}
+--- stderr

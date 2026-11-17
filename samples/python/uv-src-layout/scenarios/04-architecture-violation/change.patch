@@ -1,0 +1,21 @@
+diff --git a/src/shop/domain/cart.py b/src/shop/domain/cart.py
+index bc55ba8..cb18e7b 100644
+--- a/src/shop/domain/cart.py
++++ b/src/shop/domain/cart.py
+@@ -1,5 +1,7 @@
+ """Cart pricing."""
+ 
++from shop.infra.store import Store
++
+ 
+ def discount(total: int) -> int:
+     """Return the discount in cents: 10 percent for carts of 100 or more."""
+@@ -11,3 +13,8 @@ def discount(total: int) -> int:
+ def payable(total: int) -> int:
+     """Return what the customer pays, in cents."""
+     return total - discount(total)
++
++
++def checkout(total: int) -> int:
++    """Place the order and return the amount charged."""
++    return Store().place(total)

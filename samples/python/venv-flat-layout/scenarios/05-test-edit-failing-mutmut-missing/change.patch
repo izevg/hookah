@@ -1,0 +1,10 @@
+diff --git a/tests/test_stats.py b/tests/test_stats.py
+index 6605a44..b8a25f1 100644
+--- a/tests/test_stats.py
++++ b/tests/test_stats.py
+@@ -7,4 +7,4 @@ def test_mean() -> None:
+ 
+ 
+ def test_spread() -> None:
+-    assert spread([4, 9, 1]) == 8
++    assert spread([4, 9, 1]) == 9

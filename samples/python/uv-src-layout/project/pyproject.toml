@@ -1,0 +1,46 @@
+[project]
+name = "shop"
+version = "0.1.0"
+description = "A tiny shop used as a hookah sample."
+requires-python = ">=3.13"
+dependencies = []
+
+[dependency-groups]
+dev = [
+    "import-linter>=2.1",
+    "mutmut>=3.2",
+    "mypy>=1.13",
+    "pytest>=8.3",
+    "pytest-testmon>=2.1",
+    "ruff>=0.8",
+]
+
+[build-system]
+requires = ["uv_build>=0.9,<0.14"]
+build-backend = "uv_build"
+
+[tool.ruff]
+line-length = 88
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B"]
+
+[tool.mypy]
+strict = true
+files = ["src", "tests"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.mutmut]
+paths_to_mutate = ["src/"]
+tests_dir = ["tests/"]
+
+[tool.importlinter]
+root_package = "shop"
+
+[[tool.importlinter.contracts]]
+name = "Domain must not import infra"
+type = "forbidden"
+source_modules = ["shop.domain"]
+forbidden_modules = ["shop.infra"]

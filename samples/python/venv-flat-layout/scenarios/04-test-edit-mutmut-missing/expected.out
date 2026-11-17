@@ -1,0 +1,6 @@
+exit: 0
+--- stdout
+{
+  "systemMessage": "hookah: tools not installed: mutmut (mutation)"
+}
+--- stderr

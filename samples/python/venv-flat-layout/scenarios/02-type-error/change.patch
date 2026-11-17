@@ -1,0 +1,13 @@
+diff --git a/tally/stats.py b/tally/stats.py
+index 16caaa4..14260d5 100644
+--- a/tally/stats.py
++++ b/tally/stats.py
+@@ -5,7 +5,7 @@ def mean(values: list[float]) -> float:
+     """Return the arithmetic mean; an empty list has mean 0."""
+     if not values:
+         return 0.0
+-    return sum(values) / len(values)
++    return str(sum(values) / len(values))
+ 
+ 
+ def spread(values: list[float]) -> float:

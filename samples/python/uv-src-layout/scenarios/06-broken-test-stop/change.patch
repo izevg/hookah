@@ -1,0 +1,11 @@
+diff --git a/tests/test_cart.py b/tests/test_cart.py
+index 5bfe1b4..9a419d3 100644
+--- a/tests/test_cart.py
++++ b/tests/test_cart.py
+@@ -7,5 +7,5 @@ def test_discount_from_threshold() -> None:
+ 
+ 
+ def test_payable() -> None:
+-    assert payable(200) == 180
++    assert payable(200) == 181
+     assert payable(50) == 50

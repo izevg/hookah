@@ -1,0 +1,5 @@
+exit: 2
+--- stdout
+--- stderr
+hookah: 1 problem after editing src/shop/domain/cart.py - fix before continuing:
+src/shop/domain/cart.py:3:8: `os` imported but unused [F401]

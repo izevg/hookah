@@ -1,0 +1,11 @@
+diff --git a/src/shop/domain/cart.py b/src/shop/domain/cart.py
+index bc55ba8..2059bbd 100644
+--- a/src/shop/domain/cart.py
++++ b/src/shop/domain/cart.py
+@@ -9,5 +9,5 @@ def discount(total: int) -> int:
+ 
+ 
+ def payable(total: int) -> int:
+-    """Return what the customer pays, in cents."""
++    """Return what the customer pays, in cents, after the discount."""
+     return total - discount(total)

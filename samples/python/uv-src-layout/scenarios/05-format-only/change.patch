@@ -1,0 +1,15 @@
+diff --git a/src/shop/domain/cart.py b/src/shop/domain/cart.py
+index bc55ba8..986390f 100644
+--- a/src/shop/domain/cart.py
++++ b/src/shop/domain/cart.py
+@@ -3,8 +3,8 @@
+ 
+ def discount(total: int) -> int:
+     """Return the discount in cents: 10 percent for carts of 100 or more."""
+-    if total >= 100:
+-        return total // 10
++    if total>=100:
++        return total//10
+     return 0
+ 
+ 

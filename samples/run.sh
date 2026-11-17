@@ -21,10 +21,11 @@ for arg in "$@"; do
   esac
 done
 
-# Runs a command with the repository's pinned toolchains on PATH.
+# Runs a command with the repository's pinned toolchains on PATH, in the caller's directory.
 with_tools() {
   if [ -x "$mise" ]; then
-    (cd "$repo" && "$mise" exec -- "$@")
+    local here_dir=$PWD
+    (cd "$repo" && "$mise" exec -- sh -c 'cd "$0" && exec "$@"' "$here_dir" "$@")
   else
     "$@"
   fi

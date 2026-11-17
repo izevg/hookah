@@ -1,0 +1,8 @@
+exit: 2
+--- stdout
+--- stderr
+hookah: 4 problems in the files changed in this session - tests or checks are failing, fix before finishing:
+src/shop/domain/cart.py:6: [mutation] mutant survived: shop.domain.cart.x_discount__mutmut_1 (`if total >= 100:` -> `if total > 100:`)
+src/shop/domain/cart.py:6: [mutation] mutant survived: shop.domain.cart.x_discount__mutmut_2 (`if total >= 100:` -> `if total >= 101:`)
+src/shop/domain/cart.py:7: [mutation] mutant survived: shop.domain.cart.x_discount__mutmut_3 (`return total // 10` -> `return total / 10`)
+src/shop/domain/cart.py:8: [mutation] mutant survived: shop.domain.cart.x_discount__mutmut_5 (`return 0` -> `return 1`)

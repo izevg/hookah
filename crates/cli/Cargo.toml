@@ -16,6 +16,7 @@ hookah-domain.workspace = true
 hookah-application.workspace = true
 hookah-adapters.workspace = true
 hookah-harness.workspace = true
+clap = { version = "4", default-features = false, features = ["std", "derive", "help", "usage", "error-context"] }
 
 [lints]
 workspace = true

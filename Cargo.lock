@@ -88,6 +88,8 @@ dependencies = [
  "hookah-application",
  "hookah-domain",
  "nix",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

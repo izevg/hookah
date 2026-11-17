@@ -1,4 +1,4 @@
-//! Node (TypeScript / JavaScript) ecosystem adapter.
+//! Node (TypeScript / JavaScript) ecosystem adapter. Status: planned; not implemented yet.
 
 pub mod detect;
 pub mod parse;

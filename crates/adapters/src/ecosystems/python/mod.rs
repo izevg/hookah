@@ -1,4 +1,4 @@
-//! Python ecosystem adapter.
+//! Python ecosystem adapter. Status: planned; not implemented yet.
 
 pub mod detect;
 pub mod parse;

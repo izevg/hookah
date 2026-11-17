@@ -5,7 +5,8 @@
 //! - [`store`]: post-MVP storage stubs (baseline); nothing implemented yet.
 //! - [`vcs`]: changed files and lines as reported by `git`.
 //! - [`config`]: `.hookah.toml` loading and overrides on top of auto-detection.
-//! - [`ecosystems`]: per-ecosystem toolchain detection, output parsing, and test selection.
+//! - [`ecosystems`]: the `Ecosystems` registry plus per-ecosystem toolchain detection, output
+//!   parsing, and test selection (Rust implemented; Node and Python planned).
 
 pub mod config;
 pub mod ecosystems;

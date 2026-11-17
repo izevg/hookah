@@ -41,7 +41,7 @@ impl Paths {
 
     /// Makes a compiler-reported `file` project-relative. `None` for pseudo files (`<...>`) and
     /// absolute paths outside the workspace (registry and toolchain sources).
-    fn relative(&self, file: &str) -> Option<PathBuf> {
+    pub fn relative(&self, file: &str) -> Option<PathBuf> {
         resolve(&self.project_root, &self.workspace_root, file)
     }
 }

@@ -10,7 +10,8 @@ use hookah_adapters::process::ProcessRunner;
 use hookah_application::ports::{CheckRunner, ToolchainDetector};
 use hookah_domain::finding::{Finding, Severity};
 use hookah_domain::project::{Ecosystem, Manifest, Project};
-use hookah_domain::toolchain::{CheckKind, TestSelection};
+use hookah_domain::session::{ChangedLines, FileRole, LineRange};
+use hookah_domain::toolchain::{CheckKind, MutationSelection, TestSelection};
 
 struct Scratch(PathBuf);
 
@@ -139,4 +140,79 @@ fn virtual_workspace_has_no_tools() {
     s.write("Cargo.toml", "[workspace]\nmembers = []\n");
     let toolchain = Ecosystems::new().detect(&s.project()).unwrap();
     assert!(toolchain.is_empty());
+}
+
+fn mutants_installed(root: &Path) -> bool {
+    std::process::Command::new("cargo")
+        .args(["mutants", "--version"])
+        .current_dir(root)
+        .output()
+        .is_ok_and(|o| o.status.success())
+}
+
+#[test]
+fn weak_test_lets_a_mutant_survive() {
+    let s = Scratch::new("mutants");
+    if !mutants_installed(&s.0) {
+        eprintln!("skipped: cargo-mutants is not installed");
+        return;
+    }
+    s.write(
+        "src/lib.rs",
+        "pub fn add(a: i32, b: i32) -> i32 {\n    a + b\n}\n\n#[cfg(test)]\nmod tests {\n    #[test]\n    fn weak() {\n        assert_eq!(super::add(0, 0), 0);\n    }\n}\n",
+    );
+    let project = s.project();
+    let eco = Ecosystems::new();
+
+    let toolchain = eco.detect(&project).unwrap();
+    assert!(toolchain.tools().iter().any(|t| t.name == "cargo-mutants"));
+    assert!(toolchain.missing().is_empty());
+
+    let lib = s.0.join("src/lib.rs");
+    let role = eco.classify(
+        &project,
+        &lib,
+        &ChangedLines::Ranges(vec![LineRange::new(8, 10).unwrap()]),
+    );
+    assert_eq!(role, FileRole::Test);
+
+    let MutationSelection::Targets(targets) = eco.select_mutants(&project, &[lib], &[]) else {
+        panic!("expected targets");
+    };
+    assert_eq!(targets, ["--file=src/lib.rs"]);
+
+    let found = check(&project, "cargo-mutants", &targets).unwrap();
+    assert!(!found.is_empty(), "{found:?}");
+    assert!(found.iter().all(|f| f.kind == CheckKind::Mutation));
+    assert!(found.iter().all(|f| f.severity == Severity::Error));
+    assert!(found.iter().all(|f| at(f) == "src/lib.rs:2"), "{found:?}");
+    assert!(
+        found
+            .iter()
+            .any(|f| f.message == "mutant survived: replace + with - in add"),
+        "{found:?}"
+    );
+
+    // A strong test catches everything; the iterated run re-tests only what is left.
+    s.write(
+        "src/lib.rs",
+        "pub fn add(a: i32, b: i32) -> i32 {\n    a + b\n}\n\n#[cfg(test)]\nmod tests {\n    #[test]\n    fn strong() {\n        assert_eq!(super::add(2, 3), 5);\n        assert_eq!(super::add(0, 0), 0);\n    }\n}\n",
+    );
+    let found = check(&project, "cargo-mutants", &targets).unwrap();
+    assert!(found.is_empty(), "{found:?}");
+}
+
+#[test]
+fn missing_cargo_mutants_is_reported_only_for_crates_with_tests() {
+    let s = Scratch::new("nomutants");
+    s.write("src/lib.rs", "pub fn f() {}\n");
+    let project = s.project();
+    let eco = Ecosystems::new();
+    let toolchain = eco.detect(&project).unwrap();
+    assert!(toolchain.missing().is_empty());
+    s.write("src/lib.rs", "pub fn f() {}\n\n#[test]\nfn t() {}\n");
+    let toolchain = eco.detect(&project).unwrap();
+    let has_tool = toolchain.tools().iter().any(|t| t.name == "cargo-mutants");
+    // Either the tool is installed (and offered) or it is reported missing, never both.
+    assert_eq!(has_tool, toolchain.missing().is_empty());
 }

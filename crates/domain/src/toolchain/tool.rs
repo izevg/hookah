@@ -4,7 +4,7 @@
 //! check it serves, and a `CommandSpec` (program, arguments, working directory, timeout). A
 //! `CommandSpec` only describes a command; the `CheckRunner` port executes it.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use super::check::CheckKind;
@@ -16,6 +16,10 @@ pub enum Arg {
     Literal(String),
     /// Placeholder replaced by every target, each as its own argument.
     Targets,
+    /// Placeholder replaced by the targets that are neither one of these paths nor below one of
+    /// them (whole path components), each as its own argument. For tools that are handed whole
+    /// directories already and reject the same file given twice.
+    TargetsOutside(Vec<String>),
 }
 
 /// A command to run: program, arguments with target placeholders, directory, and time limit.
@@ -57,6 +61,12 @@ impl CommandSpec {
             match arg {
                 Arg::Literal(s) => out.push(s.clone()),
                 Arg::Targets => out.extend(targets.iter().cloned()),
+                Arg::TargetsOutside(covered) => out.extend(
+                    targets
+                        .iter()
+                        .filter(|t| !covered.iter().any(|c| Path::new(t).starts_with(c)))
+                        .cloned(),
+                ),
             }
         }
         out
@@ -119,5 +129,34 @@ mod tests {
             ["test", "-p", "a", "b", "--quiet"]
         );
         assert_eq!(spec.expand_args(&[]), ["test", "-p", "--quiet"]);
+    }
+
+    #[test]
+    fn targets_outside_skip_covered_paths_by_component() {
+        let spec = CommandSpec::new(
+            "mypy",
+            vec![
+                Arg::Literal("src/shop".into()),
+                Arg::TargetsOutside(vec!["src/shop".into(), "tests".into()]),
+            ],
+            "/r",
+            Duration::from_secs(1),
+        );
+        let targets: Vec<String> = [
+            "src/shop",
+            "src/shop/a.py",
+            "src/shop2/b.py",
+            "tests/t.py",
+            "tests",
+            "setup.py",
+            "src/other/c.py",
+        ]
+        .map(String::from)
+        .to_vec();
+        assert_eq!(
+            spec.expand_args(&targets),
+            ["src/shop", "src/shop2/b.py", "setup.py", "src/other/c.py"]
+        );
+        assert_eq!(spec.expand_args(&[]), ["src/shop"]);
     }
 }

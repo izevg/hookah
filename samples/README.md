@@ -95,6 +95,7 @@ is installed on the machine.
 | | `05-format-only` | edit | ruff rewrites the file; the agent is told to re-read it |
 | | `06-broken-test-stop` | stop | a broken assertion fails the stop and names the test (pytest-testmon) |
 | | `07-weak-test-mutation` | stop | a weakened test: surviving mutants of `cart.py` via mutmut 3 |
+| | `08-return-type-break` | edit | `payable` now returns `str`: mypy checks the whole project, so the breakage in `infra/store.py` and the tests is reported too |
 | `python/venv-flat-layout` | `01-black-rewrite` | edit | black (no ruff) rewrites the file; re-read hint |
 | | `02-type-error` | edit | mypy 1.10 has no JSON output, so the text parser reads the error |
 | | `03-failing-test-stop` | stop | a source change breaks `test_stats.py`, found by the naming convention (no testmon) |

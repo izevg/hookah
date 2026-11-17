@@ -177,7 +177,7 @@ files (edit hook) or all changed files of the project (stop hook).
 | format       | `ruff`        | `ruff format --force-exclude {files}`                                                | 30 s    |
 | format       | `black`       | `black {files}`; only without ruff, and only if `[tool.black]` exists or black is a declared dependency | 30 s |
 | lint         | `ruff`        | `ruff check --output-format json --force-exclude --no-fix {files}`                   | 30 s    |
-| typecheck    | `mypy`        | `mypy [-O json] --show-column-numbers --show-error-codes --no-error-summary --no-color-output {files}` | 120 s |
+| typecheck    | `mypy`        | `mypy [-O json] --show-column-numbers --show-error-codes --no-error-summary --no-color-output [{packages} {files outside them}]` | 120 s |
 | architecture | `lint-imports`| `lint-imports` (project-wide; `env PYTHONPATH=src` is prepended in the src layout)   | 60 s    |
 | test         | `pytest`      | `pytest [--testmon] -rfE --tb=short -q --color=no --rootdir=. {tests}`               | 300 s   |
 | mutation     | `mutmut`      | `mutmut run {globs}` (mutmut 3 only)                                                 | 480 s   |
@@ -190,8 +190,15 @@ files (edit hook) or all changed files of the project (stop hook).
   `setup.cfg [mypy]`, `tox.ini [mypy]`, which gets `--config-file tox.ini`) or declared as a
   dependency. `-O json` is used only when the installed mypy is known to be 1.11 or newer (read
   from the venv's `dist-info`); otherwise the text output is parsed. mypy keeps its default
-  `.mypy_cache`. It checks imported modules too, so findings can come from other files; they are
-  reported on purpose.
+  `.mypy_cache`, which keeps whole-project runs fast. An edit can break the modules that import
+  it, and mypy only reports a module it is asked to check, so it checks the whole project: when
+  its configuration sets `files`, `packages`, or `modules` (in `[tool.mypy]` or a `[mypy]`
+  section of `mypy.ini`, `.mypy.ini`, `setup.cfg`, or `tox.ini`) it runs with no arguments and
+  checks exactly that; otherwise it gets the project's top-level packages (`src/<pkg>` in the
+  src layout, the root directories with an `__init__.py` in the flat layout) followed by the
+  changed files that lie outside those packages (a file given twice is a mypy error). Errors in
+  any file are reported;
+  warnings only on changed lines.
 - **import-linter** runs when configured (`[tool.importlinter]`, `.importlinter`,
   `setup.cfg [importlinter]`). Each illegal chain of a broken contract is one finding, such as
   `src/shop/domain/cart.py:2: [architecture] shop.domain.cart -> shop.infra.db [Domain must not

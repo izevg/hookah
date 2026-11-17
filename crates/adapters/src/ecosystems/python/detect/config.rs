@@ -23,7 +23,8 @@ pub struct Config {
     pyproject: String,
     setup_cfg: String,
     tox_ini: String,
-    mypy_ini: bool,
+    mypy_ini: String,
+    mypy_ini_exists: bool,
     ruff_toml: bool,
     importlinter: bool,
 }
@@ -37,7 +38,8 @@ impl Config {
             pyproject: read("pyproject.toml"),
             setup_cfg: read("setup.cfg"),
             tox_ini: read("tox.ini"),
-            mypy_ini: exists(&["mypy.ini", ".mypy.ini"]),
+            mypy_ini: format!("{}{}", read("mypy.ini"), read(".mypy.ini")),
+            mypy_ini_exists: exists(&["mypy.ini", ".mypy.ini"]),
             ruff_toml: exists(&["ruff.toml", ".ruff.toml"]),
             importlinter: exists(&[".importlinter"]),
         }
@@ -55,7 +57,7 @@ impl Config {
 
     /// How mypy is configured, or `None` when it is not.
     pub fn mypy(&self) -> Option<MypyConfig> {
-        if self.mypy_ini
+        if self.mypy_ini_exists
             || has_table(&self.pyproject, "tool.mypy")
             || has_section(&self.setup_cfg, "mypy")
         {
@@ -65,6 +67,17 @@ impl Config {
         } else {
             None
         }
+    }
+
+    /// Whether mypy's own configuration names what to check (`files`, `packages`, or `modules`
+    /// in `[tool.mypy]`, or in a `[mypy]` section of `mypy.ini`, `.mypy.ini`, `setup.cfg`, or
+    /// `tox.ini`). Without arguments mypy then checks exactly that.
+    pub fn mypy_names_targets(&self) -> bool {
+        const KEYS: &[&str] = &["files", "packages", "modules"];
+        section_sets(&self.pyproject, "tool.mypy", KEYS)
+            || [&self.mypy_ini, &self.setup_cfg, &self.tox_ini]
+                .iter()
+                .any(|text| section_sets(text, "mypy", KEYS))
     }
 
     /// import-linter has a configuration.
@@ -116,6 +129,27 @@ fn has_section(text: &str, name: &str) -> bool {
     headers(text).any(|h| h == name)
 }
 
+/// Whether the table or section `name` of `text` sets one of `keys` (`key = ...`). Only the
+/// section itself counts, not its sub-tables such as `tool.mypy.overrides`.
+fn section_sets(text: &str, name: &str, keys: &[&str]) -> bool {
+    let mut inside = false;
+    for line in text.lines().map(str::trim) {
+        if let Some(inner) = line.strip_prefix('[')
+            && line.ends_with(']')
+            && !inner.contains('"')
+        {
+            let inner = inner.strip_prefix('[').unwrap_or(inner);
+            inside = inner.trim_end_matches(']').trim() == name;
+        } else if inside
+            && let Some((key, _)) = line.split_once('=')
+            && keys.contains(&key.trim())
+        {
+            return true;
+        }
+    }
+    false
+}
+
 fn is_name_char(c: char) -> bool {
     c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.')
 }
@@ -152,6 +186,41 @@ mod tests {
             s.write(name, text);
         }
         Config::load(s.root())
+    }
+
+    #[test]
+    fn mypy_names_targets_only_in_its_own_section() {
+        let names = |files: &[(&str, &str)]| load(files).mypy_names_targets();
+        assert!(names(&[(
+            "pyproject.toml",
+            "[tool.mypy]\nfiles = [\"src\"]\n"
+        )]));
+        assert!(names(&[(
+            "pyproject.toml",
+            "[tool.mypy]\nstrict = true\npackages=[\"a\"]\n"
+        )]));
+        assert!(names(&[("mypy.ini", "[mypy]\nmodules = a\n")]));
+        assert!(names(&[(".mypy.ini", "[mypy]\nfiles = src\n")]));
+        assert!(names(&[("setup.cfg", "[mypy]\nfiles = src\n")]));
+        assert!(names(&[("tox.ini", "[mypy]\nfiles = src\n")]));
+        assert!(!names(&[(
+            "pyproject.toml",
+            "[tool.mypy]\nstrict = true\n"
+        )]));
+        assert!(!names(&[(
+            "pyproject.toml",
+            "[tool.mypy]\nstrict = true\n[tool.other]\nfiles = 1\n"
+        )]));
+        assert!(!names(&[(
+            "pyproject.toml",
+            "[[tool.mypy.overrides]]\nmodule = \"a\"\nfiles = 1\n"
+        )]));
+        assert!(!names(&[(
+            "pyproject.toml",
+            "[tool.mypy]\nfilesystem = 1\n"
+        )]));
+        assert!(!names(&[("setup.cfg", "[flake8]\nfiles = 1\n")]));
+        assert!(!names(&[]));
     }
 
     #[test]

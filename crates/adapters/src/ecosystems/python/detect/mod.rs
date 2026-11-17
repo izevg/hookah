@@ -10,13 +10,16 @@
 //! | format       | `ruff`        | `ruff format --force-exclude {files}`                           | 30 s    |
 //! | format       | `black`       | `black {files}` (only without ruff; needs `[tool.black]` or a declared dependency) | 30 s |
 //! | lint         | `ruff`        | `ruff check --output-format json --force-exclude --no-fix {files}` | 30 s |
-//! | typecheck    | `mypy`        | `mypy [-O json] --show-column-numbers --show-error-codes --no-error-summary --no-color-output {files}` | 120 s |
+//! | typecheck    | `mypy`        | `mypy [-O json] --show-column-numbers --show-error-codes --no-error-summary --no-color-output {files}` (see below) | 120 s |
 //! | architecture | `lint-imports`| `lint-imports` (project-wide; `PYTHONPATH=src` in the src layout) | 60 s  |
 //! | test         | `pytest`      | `pytest [--testmon] -rfE --tb=short -q --color=no --rootdir=. {tests}`       | 300 s   |
 //! | mutation     | `mutmut`      | `mutmut run {globs}` (mutmut 3 only)                            | 480 s   |
 //!
 //! `-O json` is used only when the installed mypy is known to be 1.11 or newer (read from the
-//! virtual environment); otherwise the text output is parsed. mypy runs when it is available and
+//! virtual environment); otherwise the text output is parsed. mypy checks the whole project, so an
+//! edit's importers are covered: without `files`/`packages`/`modules` in its own configuration it
+//! gets the top-level packages (`src/<pkg>`, or the root packages of the flat layout) before the
+//! changed files outside them; with them it gets no arguments at all and checks what the project says. mypy runs when it is available and
 //! configured (`[tool.mypy]`, `mypy.ini`, `.mypy.ini`, `setup.cfg [mypy]`, `tox.ini [mypy]`) or a
 //! declared dependency. import-linter needs its own configuration. With `pytest-testmon`
 //! installed, pytest runs with `--testmon` and no file arguments, so testmon picks the tests.
@@ -231,10 +234,23 @@ pub fn toolchain(setup: &Setup, root: &Path) -> Toolchain {
             if configured == Some(MypyConfig::ToxIni) {
                 args.extend(["--config-file", "tox.ini"]);
             }
+            // The whole project, not just the changed files: an edit breaks its importers, which
+            // mypy only reports when it checks them. Its incremental cache keeps that fast.
+            // Configured `files`/`packages`/`modules` win: no arguments make mypy use them.
+            let mut tail = Vec::new();
+            if !config.mypy_names_targets() {
+                let packages: Vec<String> = layout::top_level_packages(root)
+                    .iter()
+                    .map(|p| p.to_string_lossy().into_owned())
+                    .collect();
+                tail.extend(packages.iter().cloned().map(Arg::Literal));
+                // A file inside a package is checked with it; mypy rejects it given twice.
+                tail.push(Arg::TargetsOutside(packages));
+            }
             tools.push(tool(
                 MYPY,
                 CheckKind::Typecheck,
-                spec(inv, &args, targets(), root, MYPY_TIMEOUT),
+                spec(inv, &args, tail, root, MYPY_TIMEOUT),
             ));
         }
         (None, Some(_)) => missing.push(missing_tool("mypy", CheckKind::Typecheck, manager)),
@@ -427,6 +443,7 @@ mod tests {
                 "--show-error-codes",
                 "--no-error-summary",
                 "--no-color-output",
+                "src/shop",
                 "a.py"
             ]
         );
@@ -530,6 +547,60 @@ mod tests {
         assert_eq!(argv(&tc, "mypy", &[]).1[0], "--show-column-numbers");
         let (_s, tc) = project("tc-mypy-new", &["mypy"], &["mypy-2.4.1"], &cfg);
         assert_eq!(&argv(&tc, "mypy", &[]).1[..2], ["-O", "json"]);
+    }
+
+    #[test]
+    fn mypy_checks_the_top_level_packages_then_the_changed_files() {
+        let cfg =
+            "[tool.mypy]\nstrict = true\n[[tool.mypy.overrides]]\nmodule = \"x\"\nfiles = 1\n";
+        let (_s, tc) = project(
+            "tc-mypy-src",
+            &["mypy"],
+            &[],
+            &[
+                ("pyproject.toml", cfg),
+                ("src/shop/__init__.py", ""),
+                ("src/other/a.py", ""),
+            ],
+        );
+        let args = argv(&tc, "mypy", &["a.py", "src/shop/b.py", "src/other/c.py"]).1;
+        assert_eq!(&args[args.len() - 3..], ["src/other", "src/shop", "a.py"]);
+        let (_s, tc) = project(
+            "tc-mypy-flat",
+            &["mypy"],
+            &[],
+            &[("pyproject.toml", cfg), ("shop/__init__.py", "")],
+        );
+        let args = argv(&tc, "mypy", &["a.py", "shop/b.py"]).1;
+        assert_eq!(&args[args.len() - 2..], ["shop", "a.py"]);
+        // No package to find: just the changed files, as before.
+        let (_s, tc) = project("tc-mypy-bare", &["mypy"], &[], &[("pyproject.toml", cfg)]);
+        let args = argv(&tc, "mypy", &["a.py"]).1;
+        assert_eq!(args.last().map(String::as_str), Some("a.py"));
+        assert!(!args.contains(&"shop".to_string()));
+    }
+
+    #[test]
+    fn mypy_with_configured_targets_takes_no_arguments() {
+        let (_s, tc) = project(
+            "tc-mypy-files",
+            &["mypy"],
+            &[],
+            &[
+                ("pyproject.toml", "[tool.mypy]\nfiles = [\"src\"]\n"),
+                ("src/shop/__init__.py", ""),
+            ],
+        );
+        let args = argv(&tc, "mypy", &["a.py"]).1;
+        assert_eq!(
+            args,
+            [
+                "--show-column-numbers",
+                "--show-error-codes",
+                "--no-error-summary",
+                "--no-color-output"
+            ]
+        );
     }
 
     #[test]

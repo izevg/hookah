@@ -111,6 +111,48 @@ pub fn module_file(root: &Path, module: &str) -> Option<PathBuf> {
     None
 }
 
+/// The top-level packages (and modules, below `src/`) of the project, as paths relative to the
+/// root, sorted: the entries of `src/` in the src layout, else the directories with an
+/// `__init__.py` at the root. Namespace packages (directories without `__init__.py`) count only
+/// in the src layout, where a directory holding Python files is one.
+pub fn top_level_packages(root: &Path) -> Vec<PathBuf> {
+    let src = has_src_layout(root);
+    let base = if src {
+        root.join("src")
+    } else {
+        root.to_path_buf()
+    };
+    let Ok(entries) = fs::read_dir(&base) else {
+        return vec![];
+    };
+    let mut out: Vec<PathBuf> = entries
+        .flatten()
+        .filter(|e| {
+            let path = e.path();
+            let name = e.file_name();
+            let Some(name) = name.to_str() else {
+                return false;
+            };
+            if path.is_dir() {
+                !is_skipped_dir(name)
+                    && (path.join("__init__.py").is_file() || (src && has_python_below(&path)))
+            } else {
+                src && name.ends_with(".py")
+            }
+        })
+        .map(|e| {
+            let name = e.file_name();
+            if src {
+                Path::new("src").join(name)
+            } else {
+                PathBuf::from(name)
+            }
+        })
+        .collect();
+    out.sort();
+    out
+}
+
 /// Whether the project uses the src layout: a `src/` directory holding a Python package or module.
 pub fn has_src_layout(root: &Path) -> bool {
     let Ok(entries) = fs::read_dir(root.join("src")) else {
@@ -198,6 +240,52 @@ mod tests {
             Some("flat/pkg/__init__.py".into())
         );
         assert_eq!(module_file(r, "nope.mod"), None);
+    }
+
+    #[test]
+    fn top_level_packages_in_the_src_layout() {
+        let s = Scratch::new("layout-top-src");
+        for f in [
+            "src/shop/__init__.py",
+            "src/ns/x.py",
+            "src/solo.py",
+            "src/notes.txt",
+            "src/empty/readme.md",
+            "src/.hidden/__init__.py",
+            "src/shop.egg-info/__init__.py",
+            "shop/__init__.py",
+            "tests/__init__.py",
+        ] {
+            s.write(f, "");
+        }
+        std::fs::create_dir_all(s.root().join("src/nopy")).unwrap();
+        assert_eq!(
+            top_level_packages(s.root()),
+            [
+                PathBuf::from("src/ns"),
+                PathBuf::from("src/shop"),
+                PathBuf::from("src/solo.py")
+            ]
+        );
+    }
+
+    #[test]
+    fn top_level_packages_in_the_flat_layout() {
+        let s = Scratch::new("layout-top-flat");
+        for f in [
+            "shop/__init__.py",
+            "tests/__init__.py",
+            "scripts/run.py",
+            "venv/__init__.py",
+            "main.py",
+        ] {
+            s.write(f, "");
+        }
+        assert_eq!(
+            top_level_packages(s.root()),
+            [PathBuf::from("shop"), PathBuf::from("tests")]
+        );
+        assert!(top_level_packages(&s.root().join("missing")).is_empty());
     }
 
     #[test]

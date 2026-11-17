@@ -2,8 +2,8 @@
 //!
 //! [`Ecosystems`] is the registry: it sends each [`ToolchainDetector`] call to the module of the
 //! project's ecosystem. Each module implements toolchain detection, tool-output parsing into
-//! findings, and related-test selection. Rust is implemented; Node and Python are planned and
-//! currently yield an empty toolchain and no test selection.
+//! findings, and related-test selection. Rust and Node are implemented; Python is planned and
+//! currently yields an empty toolchain and no test selection.
 
 pub mod node;
 pub mod python;
@@ -18,11 +18,13 @@ use hookah_domain::project::{Ecosystem, Project};
 use hookah_domain::session::{ChangedLines, FileRole};
 use hookah_domain::toolchain::{MutationSelection, TestSelection, Tool, Toolchain};
 
+use node::NodeEcosystem;
 use rust::RustEcosystem;
 
 /// Registry of all ecosystem detectors.
 #[derive(Debug, Default)]
 pub struct Ecosystems {
+    node: NodeEcosystem,
     rust: RustEcosystem,
 }
 
@@ -37,14 +39,16 @@ impl ToolchainDetector for Ecosystems {
     fn detect(&self, project: &Project) -> Result<Toolchain, PortError> {
         match project.ecosystem {
             Ecosystem::Rust => self.rust.detect(project),
-            Ecosystem::Node | Ecosystem::Python => Ok(Toolchain::default()),
+            Ecosystem::Node => self.node.detect(project),
+            Ecosystem::Python => Ok(Toolchain::default()),
         }
     }
 
     fn classify(&self, project: &Project, file: &Path, changed: &ChangedLines) -> FileRole {
         match project.ecosystem {
             Ecosystem::Rust => self.rust.classify(project, file, changed),
-            Ecosystem::Node | Ecosystem::Python => FileRole::Source,
+            Ecosystem::Node => self.node.classify(project, file, changed),
+            Ecosystem::Python => FileRole::Source,
         }
     }
 
@@ -58,7 +62,10 @@ impl ToolchainDetector for Ecosystems {
             Ecosystem::Rust => self
                 .rust
                 .select_mutants(project, changed_tests, changed_sources),
-            Ecosystem::Node | Ecosystem::Python => MutationSelection::None,
+            Ecosystem::Node => self
+                .node
+                .select_mutants(project, changed_tests, changed_sources),
+            Ecosystem::Python => MutationSelection::None,
         }
     }
 
@@ -69,7 +76,8 @@ impl ToolchainDetector for Ecosystems {
     ) -> Result<TestSelection, PortError> {
         match project.ecosystem {
             Ecosystem::Rust => self.rust.select_tests(project, changed),
-            Ecosystem::Node | Ecosystem::Python => Ok(TestSelection::None),
+            Ecosystem::Node => self.node.select_tests(project, changed),
+            Ecosystem::Python => Ok(TestSelection::None),
         }
     }
 
@@ -81,7 +89,8 @@ impl ToolchainDetector for Ecosystems {
     ) -> Result<Vec<Finding>, PortError> {
         match project.ecosystem {
             Ecosystem::Rust => self.rust.parse(project, tool, output),
-            Ecosystem::Node | Ecosystem::Python => Ok(vec![]),
+            Ecosystem::Node => self.node.parse(project, tool, output),
+            Ecosystem::Python => Ok(vec![]),
         }
     }
 }
@@ -94,17 +103,15 @@ mod tests {
     #[test]
     fn planned_ecosystems_are_empty() {
         let reg = Ecosystems::new();
-        for ecosystem in [Ecosystem::Node, Ecosystem::Python] {
-            let p = Project {
-                root: "/r".into(),
-                ecosystem,
-                manifests: vec![],
-            };
-            assert!(reg.detect(&p).unwrap().is_empty());
-            assert_eq!(
-                reg.select_tests(&p, &["/r/a".into()]).unwrap(),
-                TestSelection::None
-            );
-        }
+        let p = Project {
+            root: "/r".into(),
+            ecosystem: Ecosystem::Python,
+            manifests: vec![],
+        };
+        assert!(reg.detect(&p).unwrap().is_empty());
+        assert_eq!(
+            reg.select_tests(&p, &["/r/a".into()]).unwrap(),
+            TestSelection::None
+        );
     }
 }

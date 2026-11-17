@@ -786,6 +786,28 @@ mod tests {
     }
 
     #[test]
+    fn a_root_package_is_not_its_own_solution_config() {
+        let s = workspace();
+        s.write(
+            "package.json",
+            r#"{"name":"top","devDependencies":{"typescript":"5"}}"#,
+        );
+        s.write(
+            "packages/app/package.json",
+            r#"{"name":"app","dependencies":{"top":"workspace:*"}}"#,
+        );
+        s.write("packages/app/tsconfig.json", "{}");
+        s.write(
+            "tsconfig.json",
+            r#"{"references":[{"path":"packages/app"}]}"#,
+        );
+        let checks = typechecks(&detect_in(&s, "."));
+        assert_eq!(checks.len(), 2);
+        assert_eq!(checks[0].0, s.0);
+        assert_eq!(checks[1].0, s.path("packages/app"));
+    }
+
+    #[test]
     fn dependents_run_their_own_test_runner_from_their_directory() {
         let s = workspace();
         let tc = detect_in(&s, "packages/lib");

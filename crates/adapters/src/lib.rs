@@ -2,11 +2,11 @@
 //!
 //! - [`fs`]: project location and manifest reading on the real filesystem.
 //! - [`process`]: running external tools with timeouts and capturing output.
-//! - [`store`]: post-MVP storage stubs (baseline); nothing implemented yet.
+//! - [`store`]: the per-project cache directory. Baseline and session storage are post-MVP stubs.
 //! - [`vcs`]: changed files and lines as reported by `git`.
 //! - [`config`]: `.hookah.toml` loading and overrides on top of auto-detection.
 //! - [`ecosystems`]: the `Ecosystems` registry plus per-ecosystem toolchain detection, output
-//!   parsing, and test selection (Rust implemented; Node and Python planned).
+//!   parsing, and test selection (Rust, Node, and Python).
 
 pub mod config;
 pub mod ecosystems;

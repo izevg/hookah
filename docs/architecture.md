@@ -1,7 +1,5 @@
 # Architecture
 
-> Stub. Expands as the code is written.
-
 ## Layers
 
 How `domain`, `application`, `adapters`, `harness`, and `cli` fit together, and which way
@@ -75,7 +73,8 @@ use cases as `Ports`.
 
 ## Baseline
 
-How fingerprints are taken, stored, and compared, so only new findings are reported.
+Post-MVP. Until then the changed-lines filter stands in for a baseline. Fingerprints will be
+taken, stored, and compared so only new findings are reported.
 
 ## Failure handling
 

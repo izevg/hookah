@@ -8,9 +8,10 @@ project around that file, finds its formatter, linter, and test runner, and runs
 file only. When something breaks, the findings go straight back into the agent's context as hook
 feedback, so the agent fixes them right away instead of piling up broken code.
 
-> Status: the MVP works for Rust projects with Claude Code (`hookah check`, `hookah detect`,
-> `hookah hook claude`). TypeScript/JavaScript and Python, and the other harnesses, are still to
-> come. This repository runs `hookah` on itself; see
+> Status: works for Rust, Node (TypeScript/JavaScript), and Python projects, with the Claude Code,
+> Codex, Qoder, and Kimi harnesses (`hookah check`, `hookah detect`, `hookah hook <harness>`),
+> including mutation testing at stop. opencode and Orca are still to come; end-to-end
+> [samples](samples/README.md) cover the behavior. This repository runs `hookah` on itself; see
 > [Claude Code setup](docs/setup/hooks/claude-code.md#dogfooding).
 
 ## How it works
@@ -46,8 +47,8 @@ blocks the agent.
 ## Supported agent harnesses
 
 Each harness gets a thin adapter that reads that harness's hook payload, calls the core, and
-reports results in the format that harness expects. The table shows the planned integration; each
-row will be checked against the harness's current docs when its adapter is built.
+reports results in the format that harness expects. The table shows the integration points; opencode and
+Orca are still planned.
 
 | Harness     | Integration point                                   | Feedback channel                         |
 |-------------|-----------------------------------------------------|------------------------------------------|
@@ -61,7 +62,7 @@ row will be checked against the harness's current docs when its adapter is built
 For the MVP, each harness is supported through written setup instructions. A setup wizard that
 detects installed harnesses is planned after the MVP.
 
-## Supported ecosystems (MVP)
+## Supported ecosystems
 
 - TypeScript / JavaScript
 - Python

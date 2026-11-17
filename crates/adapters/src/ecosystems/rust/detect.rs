@@ -8,9 +8,11 @@
 //! - `rustfmt --edition <edition> {targets}` (format). Targets are project-relative file paths.
 //!   rustfmt also formats the out-of-line child modules (`mod foo;`) of the file it is given, so
 //!   a formatted file may rewrite more files than the one passed.
-//! - `cargo clippy -p <package> --all-targets --message-format=json --quiet` (lint). It takes no
-//!   targets: clippy checks the whole crate, and the use case's reporting filter decides what
-//!   to show. Timeout 120 s.
+//! - `cargo clippy -p <package> [-p <dependent>]... --all-targets --message-format=json --quiet`
+//!   (lint). The dependents are the workspace members that depend on the package by path, so an
+//!   API change that breaks them is caught in the edit phase (clippy is incremental, only their
+//!   check is added). It takes no targets: clippy checks the whole crates, and the use case's
+//!   reporting filter decides what to show. Timeout 120 s.
 //! - `cargo test --message-format=json --quiet {targets} --no-fail-fast` (test). Targets are
 //!   `--package=<name>` strings, one argv entry each, so `Arg::Targets` can expand them in place
 //!   and cargo still sees one valid flag per entry. Timeout 300 s.
@@ -150,22 +152,21 @@ pub fn toolchain(info: &PackageInfo, root: &Path) -> Toolchain {
             FORMAT_TIMEOUT,
         ),
     };
+    // The edited package plus its path dependents: an API change breaks them, not the package.
+    let mut lint_args = vec![lit("clippy")];
+    for name in std::iter::once(&info.name).chain(&info.dependents) {
+        lint_args.push(lit("-p"));
+        lint_args.push(lit(name));
+    }
+    lint_args.extend([
+        lit("--all-targets"),
+        lit("--message-format=json"),
+        lit("--quiet"),
+    ]);
     let lint = Tool {
         name: CLIPPY.into(),
         kind: CheckKind::Lint,
-        command: CommandSpec::new(
-            "cargo",
-            vec![
-                lit("clippy"),
-                lit("-p"),
-                lit(&info.name),
-                lit("--all-targets"),
-                lit("--message-format=json"),
-                lit("--quiet"),
-            ],
-            root,
-            LINT_TIMEOUT,
-        ),
+        command: CommandSpec::new("cargo", lint_args, root, LINT_TIMEOUT),
     };
     let test = Tool {
         name: CARGO_TEST.into(),
@@ -278,6 +279,26 @@ mod tests {
                 "--quiet",
                 "X",
                 "--no-fail-fast"
+            ]
+        );
+        let with_deps = PackageInfo {
+            dependents: vec!["app".into(), "cli".into()],
+            ..info
+        };
+        let tc2 = toolchain(&with_deps, Path::new("/ws/crates/core"));
+        assert_eq!(
+            tc2.tools()[1].command.expand_args(&[]),
+            [
+                "clippy",
+                "-p",
+                "core-lib",
+                "-p",
+                "app",
+                "-p",
+                "cli",
+                "--all-targets",
+                "--message-format=json",
+                "--quiet"
             ]
         );
         assert_eq!(tc.tools()[1].command.timeout, Duration::from_secs(120));

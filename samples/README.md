@@ -83,7 +83,7 @@ is installed on the machine.
 | | `06-broken-test-stop` | stop | a broken assertion fails the stop and names the test |
 | | `07-test-edit-mutation` | stop | a weakened test without `cargo-mutants` installed: silent; skipped when it is installed (see below) |
 | | `08-test-edit-mutation-survivor` | stop | the same weakened test with `cargo-mutants`: surviving mutants of `clamp` fail the stop; skipped without the tool |
-| `rust/workspace` | `01-core-api-break` | edit | a `core` API rename that breaks `app`: the edit phase only checks `core`, so it stays silent (known gap) |
+| `rust/workspace` | `01-core-api-break` | edit | a `core` API rename that breaks `app`: the edit phase also lints dependents, so the error in `app` is reported |
 | | `02-stop-core-change` | stop | a `core` change: stop runs the tests of `core` and of `app` |
 | | `03-core-api-break-stop` | stop | the same API break, caught at stop in `app` |
 | `python/uv-src-layout` | `01-clean-edit` | edit | a docstring edit stays silent (exit 0) |

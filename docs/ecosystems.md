@@ -1,7 +1,5 @@
 # Ecosystems
 
-> Stub. Expands as each ecosystem adapter is written.
-
 For each ecosystem: how its manifests are recognized, which tools are detected and in what order
 of preference, how output is parsed, and how related tests are selected.
 
@@ -240,7 +238,7 @@ no toolchain, and a missing `cargo` degrades the run instead of failing it.
 | Check  | Tool         | Command (cwd = project root)                                                      |
 |--------|--------------|-----------------------------------------------------------------------------------|
 | format | `rustfmt`    | `rustfmt --edition <edition> <file>` (also formats the file's out-of-line modules) |
-| lint   | `clippy`     | `cargo clippy -p <pkg> --all-targets --message-format=json --quiet`                |
+| lint   | `clippy`     | `cargo clippy -p <pkg> [-p <dependent>]... --all-targets --message-format=json --quiet` |
 | test   | `cargo-test` | `cargo test --message-format=json --quiet --package=<pkg> ... --no-fail-fast`      |
 
 - Output: clippy and cargo JSON compiler messages (error and warning, primary span, rule from the
@@ -248,6 +246,9 @@ no toolchain, and a missing `cargo` degrades the run instead of failing it.
   errors from stderr; failed libtest tests located at their `panicked at` position. A tool that
   fails without any finding degrades the run.
 - Paths are relative to the project root, so a sibling crate shows as `../sibling/src/x.rs`.
+- Lint scope: the package plus the workspace members that depend on it by path, so an API change
+  that breaks a dependent is caught in the edit phase. Errors in dependents always count; their
+  warnings follow the usual changed-lines filter.
 - Test selection: any changed `.rs` file or the `Cargo.toml` selects the package plus workspace
   members that depend on it by path; otherwise no tests run.
 

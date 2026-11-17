@@ -1,54 +1,104 @@
+<div align="center">
+
+<!-- logo: docs/assets/logo.svg (pending) -->
+
 # hookah
 
-**Make coding agents keep the code green.**
+**Relax. The hooks catch the bugs.**
 
-`hookah` is a single-binary CLI you plug into the hooks of AI coding agents. After every file
-edit, the agent harness calls `hookah` with the path of the changed file. `hookah` works out the
-project around that file, finds its formatter, linter, and test runner, and runs them on that
-file only. When something breaks, the findings go straight back into the agent's context as hook
-feedback, so the agent fixes them right away instead of piling up broken code.
+A single-binary CLI that AI coding agents call from their hooks after every file edit. It runs your
+project's own format, lint, typecheck, architecture, test, and mutation checks on what changed and
+feeds failures straight back to the agent, so it fixes them immediately.
 
-> Status: works for Rust, Node (TypeScript/JavaScript), and Python projects, with the Claude Code,
-> Codex, Qoder, and Kimi harnesses (`hookah check`, `hookah detect`, `hookah hook <harness>`),
-> including mutation testing at stop. opencode and Orca are still to come; end-to-end
-> [samples](samples/README.md) cover the behavior. This repository runs `hookah` on itself; see
+[![CI](https://github.com/izevg/hookah/actions/workflows/ci.yml/badge.svg)](https://github.com/izevg/hookah/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/izevg/hookah?include_prereleases&sort=semver)](https://github.com/izevg/hookah/releases)
+[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+[![Rust edition 2024](https://img.shields.io/badge/rust-edition%202024-orange.svg)](Cargo.toml)
+![Platforms](https://img.shields.io/badge/platforms-Linux%20%C2%B7%20macOS%20%C2%B7%20Windows-lightgrey.svg)
+![mutants: 0 survived](https://img.shields.io/badge/mutants-0%20survived-brightgreen.svg)
+
+</div>
+
+> **Status:** works for Rust, Node (TypeScript/JavaScript), and Python projects, with the Claude
+> Code, Codex, Qoder, and Kimi harnesses (`hookah check`, `hookah detect`, `hookah hook
+> <harness>`), including mutation testing at stop. opencode and Orca are still to come. End-to-end
+> [samples](samples/README.md) cover the behavior. Prebuilt binaries and the install scripts
+> arrive with the first release. This repository runs `hookah` on itself; see
 > [Claude Code setup](docs/setup/hooks/claude-code.md#dogfooding).
 
-## How it works
+## Why
 
-1. **Locate.** Walk up from the changed file to the nearest package manifest (`package.json`,
-   `pyproject.toml`, `Cargo.toml`, `go.mod`, ...). The nearest manifest wins, so monorepos are
-   handled per package.
-2. **Detect.** Read the manifest and config files to find the project's own formatter, linter,
-   and test runner (for example `biome`/`eslint`/`prettier` + `vitest`/`jest`, `ruff` + `pytest`,
-   `rustfmt` + `clippy` + `cargo test`). The project's own scripts and configs come first.
-   `.hookah.toml` overrides auto-detection.
-3. **Target.** Narrow every tool to the changed file: format and lint the file, then select only
-   the related tests (`vitest related`, `jest --findRelatedTests`, name conventions,
-   per-package/per-crate test runs). If no related test can be found, run no tests rather than
-   the whole suite.
-4. **Report.** Report only findings that this change introduced, compared against a baseline, so
-   old warnings don't send the agent off fixing unrelated code. Output is compact
-   (`file:line: message`) and capped, with a "+N more" line when it is cut.
+Agents write code fast and leave a trail: a type error three files away, a new lint warning, a
+test they quietly weakened. `hookah` closes the loop. Each time the agent edits a file, the
+harness calls `hookah`, which runs the project's own tools on that change and answers in a few
+lines. What the agent sees after an edit that breaks a call site:
 
-Two phases keep each hook fast:
+```text
+hookah: 1 problem after editing src/lib.rs - fix before continuing:
+src/lib.rs:28:5: cannot find function `sum_all` in this scope [E0425]
+```
 
-| Phase   | Agent event                      | Runs                                | Budget     |
-|---------|----------------------------------|-------------------------------------|------------|
-| `edit`  | after a file write/edit          | format + lint of the changed file   | ~1–3 s     |
-| `stop`  | when the agent declares it's done | tests related to all files changed in the session | bounded by timeout |
+And when the agent finishes with tests that no longer prove anything (mutation testing at stop):
 
-If the agent edits five files during a refactor, the tests don't run on each half-finished step.
-They run once, when the agent says it's done, and a red result blocks the finish.
+```text
+hookah: 9 problems in the files changed in this session - tests or checks are failing, fix before finishing:
+src/lib.rs:17: [mutation] mutant survived: replace < with <= in clamp
+src/lib.rs:17: [mutation] mutant survived: replace clamp -> i64 with 0
+src/lib.rs:19: [mutation] mutant survived: replace > with < in clamp
+...
+```
 
-`hookah` fails open. If `hookah` itself crashes or hits its timeout, it shows a warning and never
-blocks the agent.
+The agent reads that as hook feedback and fixes the code before moving on. No raw tool output, no
+old warnings from code it did not touch.
+
+## Install
+
+> Available from the first release. Until then, build from source.
+
+| Platform      | Command |
+|---------------|---------|
+| Linux / macOS | `curl -fsSL https://izevg.github.io/hookah/install.sh \| sh` |
+| Windows (PowerShell) | `irm https://izevg.github.io/hookah/install.ps1 \| iex` |
+| From source   | `cargo install --git https://github.com/izevg/hookah --locked hookah` |
+
+> **Let your agent do it.** Paste `https://github.com/izevg/hookah` into your coding agent and
+> say: *"install and configure hookah for me."* An agent-readable install guide will live at
+> <https://izevg.github.io/hookah/> (coming soon).
+
+## Quick start
+
+1. Put `hookah` on your `PATH`.
+2. Add the hook config for your harness:
+
+| Harness     | Setup |
+|-------------|-------|
+| Claude Code | [docs/setup/hooks/claude-code.md](docs/setup/hooks/claude-code.md) |
+| Codex CLI   | [docs/setup/hooks/codex.md](docs/setup/hooks/codex.md) |
+| Qoder       | [docs/setup/hooks/qoder.md](docs/setup/hooks/qoder.md) |
+| Kimi Code   | [docs/setup/hooks/kimi.md](docs/setup/hooks/kimi.md) |
+| opencode    | [docs/setup/plugins/opencode.md](docs/setup/plugins/opencode.md) (planned) |
+| Orca        | [docs/setup/plugins/orca.md](docs/setup/plugins/orca.md) (planned) |
+
+3. Edit a file. To try it by hand: `hookah check <file>` runs the edit phase on one file, and
+   `hookah detect <file>` shows which tools it found.
+
+## Supported ecosystems
+
+`hookah` runs only the tools your project already configures (or `.hookah.toml` names). It never
+installs anything.
+
+| Ecosystem | Format | Lint | Typecheck | Architecture | Test | Mutation |
+|-----------|--------|------|-----------|--------------|------|----------|
+| TypeScript / JavaScript | Biome, Prettier | Biome, ESLint | `tsc` | dependency-cruiser | Vitest, Jest | Stryker |
+| Python | Ruff, Black | Ruff | mypy | import-linter | pytest | mutmut |
+| Rust | rustfmt | Clippy | (compiler errors via Clippy) | n/a | `cargo test` | cargo-mutants |
+
+Details, commands, and test-selection rules: [docs/ecosystems.md](docs/ecosystems.md).
 
 ## Supported agent harnesses
 
 Each harness gets a thin adapter that reads that harness's hook payload, calls the core, and
-reports results in the format that harness expects. The table shows the integration points; opencode and
-Orca are still planned.
+reports results in the format that harness expects.
 
 | Harness     | Integration point                                   | Feedback channel                         |
 |-------------|-----------------------------------------------------|------------------------------------------|
@@ -59,18 +109,66 @@ Orca are still planned.
 | Qoder       | `PostToolUse` (`Write\|Edit`), `Stop` in `.qoder/settings.json` | `additionalContext` (edit), exit 2 + stderr (stop) |
 | Orca        | through the hooks of the agent it runs; Orca plugin for workspace-level events | per hosted agent |
 
-For the MVP, each harness is supported through written setup instructions. A setup wizard that
-detects installed harnesses is planned after the MVP.
+Each harness is supported through written setup instructions. A setup wizard that detects
+installed harnesses is planned.
 
-## Supported ecosystems
+## How it works
 
-- TypeScript / JavaScript
-- Python
-- Rust
+1. **Locate.** Walk up from the changed file to the nearest package manifest (`package.json`,
+   `pyproject.toml`, `Cargo.toml`). The nearest manifest wins, so monorepos are
+   handled per package.
+2. **Detect.** Read the manifest and config files to find the project's own formatter, linter,
+   and test runner. The project's own scripts and configs come first; `.hookah.toml` overrides
+   auto-detection.
+3. **Target.** Narrow every tool to the changed file: format and lint the file, then select only
+   the related tests (`vitest related`, `jest --findRelatedTests`, per-package/per-crate test
+   runs). If no related test can be found, run no tests rather than the whole suite.
+4. **Report.** Report only findings that this change introduced, compared against a baseline, so
+   old warnings don't send the agent off fixing unrelated code. Output is compact
+   (`file:line: message`) and capped, with a "+N more" line when it is cut.
+
+Two phases keep each hook fast:
+
+| Phase   | Agent event                      | Runs                                | Budget     |
+|---------|----------------------------------|-------------------------------------|------------|
+| `edit`  | after a file write/edit          | format + lint of the changed file   | ~1-3 s     |
+| `stop`  | when the agent declares it's done | tests related to all files changed in the session | bounded by timeout |
+
+If the agent edits five files during a refactor, the tests don't run on each half-finished step.
+They run once, when the agent says it's done, and a red result blocks the finish.
+
+<details>
+<summary>Guarantees</summary>
+
+- **Fail open.** If `hookah` crashes or hits its timeout, it shows a warning and never blocks the
+  agent.
+- **Safe formatting.** When a formatter rewrites the file, the output says so and the agent
+  re-reads it before its next edit.
+- **No surprises.** Only the project's own tools run. Nothing is installed, and nothing is
+  written outside the project and `hookah`'s cache.
+
+</details>
 
 ## Samples
 
-[`samples/`](samples/README.md) holds small projects with scenarios ("the agent makes this edit, `hookah` answers this") that double as end-to-end tests: `samples/run.sh`.
+[`samples/`](samples/README.md) holds small projects with scenarios ("the agent makes this edit,
+`hookah` answers this") that double as end-to-end tests: `samples/run.sh`.
+
+## Documentation
+
+| Page | Covers |
+|------|--------|
+| [Architecture](docs/architecture.md) | layers, request flow, baseline, failure handling |
+| [Ecosystems](docs/ecosystems.md) | detection, commands, output parsing, test selection per ecosystem |
+| [Configuration](docs/configuration.md) | `.hookah.toml` and the cache (in progress) |
+| [Mutation testing](docs/mutation.md) | mutation-testing `hookah` itself |
+| [Harness setup](docs/setup/hooks/claude-code.md) | one page per harness, linked in Quick start |
+
+## Contributing
+
+Read [AGENTS.md](AGENTS.md) first. It holds the binding rules for humans and agents: English
+only, Conventional Commits, the rule of four for the file tree, the DDD + hexagonal layering,
+and the quality gates (`cargo fmt`, `cargo clippy`, `cargo test`).
 
 ## License
 

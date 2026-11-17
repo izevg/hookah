@@ -16,10 +16,10 @@
 
 use hookah_application::Outcome;
 use hookah_domain::toolchain::MissingTool;
-use hookah_domain::verdict::{Notice, Report, Verdict};
+use hookah_domain::verdict::{Notice, Report};
 use serde_json::{Value, json};
 
-use crate::protocol::{Invocation, Response, blocking_report};
+use crate::protocol::{Invocation, Response, blocking_report, degraded_warnings};
 
 /// Renders `outcome` for Claude Code.
 pub fn render(invocation: &Invocation, outcome: &Outcome) -> Response {
@@ -123,22 +123,7 @@ fn allow(outcome: &Outcome, edit_phase: bool) -> Response {
             json!({"hookEventName": "PostToolUse", "additionalContext": context.join(" ")}),
         );
     }
-    let mut warnings: Vec<String> = outcome
-        .notices
-        .iter()
-        .filter(|n| matches!(n, Notice::Degraded(_)))
-        .map(ToString::to_string)
-        .collect();
-    if !missing.is_empty() {
-        let names: Vec<String> = missing
-            .iter()
-            .map(|t| format!("{} ({})", t.name, t.kind.name()))
-            .collect();
-        warnings.push(format!("hookah: tools not installed: {}", names.join(", ")));
-    }
-    if let Verdict::Degraded(reason) = &outcome.verdict {
-        warnings.push(format!("hookah: checks incomplete: {reason}"));
-    }
+    let warnings = degraded_warnings(outcome);
     if !warnings.is_empty() {
         out.insert("systemMessage".into(), Value::String(warnings.join("\n")));
     }
@@ -163,6 +148,7 @@ mod tests {
     use hookah_application::{EditRequest, StopRequest};
     use hookah_domain::finding::{Finding, Location, Severity};
     use hookah_domain::toolchain::CheckKind;
+    use hookah_domain::verdict::Verdict;
 
     use super::*;
 
@@ -245,7 +231,10 @@ mod tests {
         assert!(ctx.contains("mutation testing tool cargo-mutants not installed"));
         assert!(ctx.contains("cargo install cargo-mutants") && ctx.contains("tell the user"));
         let msg = v["systemMessage"].as_str().unwrap();
-        assert_eq!(msg, "hookah: tools not installed: cargo-mutants (mutation)");
+        assert_eq!(
+            msg,
+            "hookah: tool not installed: cargo-mutants (mutation): cargo install cargo-mutants"
+        );
     }
 
     #[test]

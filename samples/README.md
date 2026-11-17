@@ -87,7 +87,7 @@ is installed on the machine.
 | | `08-test-edit-mutation-survivor` | stop | the same weakened test with `cargo-mutants`: surviving mutants of `clamp` fail the stop; skipped without the tool |
 | `rust/workspace` | `01-core-api-break` | edit | a `core` API rename that breaks `app`: the edit phase also lints dependents, so the error in `app` is reported |
 | | `02-stop-core-change` | stop | a `core` change: stop runs the tests of `core` and of `app` |
-| | `03-core-api-break-stop` | stop | the same API break, caught at stop in `app` |
+| | `03-core-api-break-stop` | stop | the same API break, caught at stop in `app`; clippy and `cargo test` both report E0599 there, counted once |
 | `python/uv-src-layout` | `01-clean-edit` | edit | a docstring edit stays silent (exit 0) |
 | | `02-lint-error` | edit | ruff `F401` on a changed line |
 | | `03-type-error` | edit | a wrong return type: `[typecheck]` finding from mypy |
@@ -98,7 +98,7 @@ is installed on the machine.
 | `python/venv-flat-layout` | `01-black-rewrite` | edit | black (no ruff) rewrites the file; re-read hint |
 | | `02-type-error` | edit | mypy 1.10 has no JSON output, so the text parser reads the error |
 | | `03-failing-test-stop` | stop | a source change breaks `test_stats.py`, found by the naming convention (no testmon) |
-| | `04-test-edit-mutmut-missing` | stop | a weakened test without mutmut: only a `tools not installed` warning |
+| | `04-test-edit-mutmut-missing` | stop | a weakened test without mutmut: passes, with a `tool not installed` warning carrying the `pip install mutmut` hint |
 | | `05-test-edit-failing-mutmut-missing` | stop | a failing test edit without mutmut: the failure plus the `pip install mutmut` hint |
 | `node/biome-vitest` | `01-clean-edit` | edit | a harmless edit stays silent |
 | | `02-lint-error` | edit | a Biome lint error on a changed line is reported |
@@ -110,7 +110,7 @@ is installed on the machine.
 | `node/eslint-prettier-jest` | `01-eslint-error` | edit | an ESLint (flat config) error is reported |
 | | `02-prettier-rewrite` | edit | Prettier rewrites the file; the agent is told to re-read it |
 | | `03-failing-test-stop` | stop | a failing Jest test fails the stop; the missing Stryker notice carries the `npm i -D` hint |
-| | `04-test-edit-no-stryker` | stop | a test edit without Stryker installed: passes, with a "tools not installed" warning |
+| | `04-test-edit-no-stryker` | stop | a test edit without Stryker installed: passes, with a `tool not installed` warning carrying the `npm i -D` hint |
 | `node/pnpm-workspace` | `01-lib-api-break` | edit | a `lib` type change that breaks `app`: the edit phase only checks `lib`, so it stays silent (known gap) |
 | | `02-lib-api-break-stop` | stop | the same change at stop: the related `lib` tests run (the `app` break is not reported, known gap) |
 | | `03-app-type-error` | edit | a type error in `app` against `lib` through `tsc -b`, shown with its workspace-relative path |

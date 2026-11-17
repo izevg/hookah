@@ -1,6 +1,6 @@
 exit: 0
 --- stdout
 {
-  "systemMessage": "hookah: tools not installed: stryker (mutation)"
+  "systemMessage": "hookah: tool not installed: stryker (mutation): npm i -D @stryker-mutator/core @stryker-mutator/jest-runner"
 }
 --- stderr

@@ -209,6 +209,16 @@ pub fn edit_context(outcome: &Outcome) -> Option<String> {
     (!parts.is_empty()).then(|| parts.join(" "))
 }
 
+/// One user-facing line per missing tool: `name (kind): hint`.
+fn missing_line(t: &MissingTool) -> String {
+    format!(
+        "hookah: tool not installed: {} ({}): {}",
+        t.name,
+        t.kind.name(),
+        t.hint
+    )
+}
+
 /// Warnings meant for the user only: degradation notices, missing tools, and a degraded verdict.
 pub fn degraded_warnings(outcome: &Outcome) -> Vec<String> {
     let mut warnings: Vec<String> = outcome
@@ -219,11 +229,7 @@ pub fn degraded_warnings(outcome: &Outcome) -> Vec<String> {
         .collect();
     let missing = missing_tools(outcome);
     if !missing.is_empty() {
-        let names: Vec<String> = missing
-            .iter()
-            .map(|t| format!("{} ({})", t.name, t.kind.name()))
-            .collect();
-        warnings.push(format!("hookah: tools not installed: {}", names.join(", ")));
+        warnings.extend(missing.iter().map(|t| missing_line(t)));
     }
     if let Verdict::Degraded(reason) = &outcome.verdict {
         warnings.push(format!("hookah: checks incomplete: {reason}"));
@@ -342,7 +348,10 @@ mod tests {
         };
         let ctx = edit_context(&o).unwrap();
         assert!(ctx.contains("ruff") && ctx.contains("tell the user"));
-        assert!(degraded_warnings(&o)[0].contains("tools not installed: ruff"));
+        assert_eq!(
+            degraded_warnings(&o),
+            ["hookah: tool not installed: ruff (lint): pip install ruff"]
+        );
         assert_eq!(edit_context(&Outcome::pass()), None);
     }
 

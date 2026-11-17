@@ -1,8 +1,11 @@
 //! `Report`: the compact, capped rendering policy for findings.
 //!
-//! One `path:line: message` per finding, errors first, then by path and line, cut off at a limit,
-//! followed by a `+N more` line. Agent-agnostic; harness adapters wrap it in their own protocol.
+//! One `path:line: message` per finding, in a total order (severity, path, line, column, kind,
+//! rule, message), cut off at a limit, followed by a `+N more` line. Findings with the same path,
+//! line, column, and rule id are one problem (the earliest check kind wins); findings without a
+//! rule id are de-duplicated only on exact equality. Agent-agnostic; harness adapters wrap it in their own protocol.
 
+use std::collections::HashSet;
 use std::fmt;
 
 use crate::finding::{Finding, Severity};
@@ -21,21 +24,18 @@ pub struct Report {
 impl Report {
     /// Orders and de-duplicates `findings`. Returns `None` if there are none.
     pub fn new(mut findings: Vec<Finding>, limit: usize) -> Option<Self> {
-        findings.sort_by(|a, b| {
-            (
-                a.severity,
-                &a.location.path,
-                a.location.line,
-                a.location.column,
-            )
-                .cmp(&(
-                    b.severity,
-                    &b.location.path,
-                    b.location.line,
-                    b.location.column,
-                ))
+        findings.sort_by(|a, b| sort_key(a).cmp(&sort_key(b)));
+        let mut seen_exact = HashSet::new();
+        let mut seen_ruled = HashSet::new();
+        findings.retain(|f| match &f.rule {
+            Some(rule) => seen_ruled.insert((
+                f.location.path.clone(),
+                f.location.line,
+                f.location.column,
+                rule.clone(),
+            )),
+            None => seen_exact.insert(f.clone()),
         });
-        findings.dedup();
         (!findings.is_empty()).then_some(Self { findings, limit })
     }
 
@@ -57,6 +57,19 @@ impl Report {
         }
         lines
     }
+}
+
+/// Total order: severity, path, line, column, kind (phase order), rule, message.
+fn sort_key(f: &Finding) -> impl Ord + '_ {
+    (
+        f.severity,
+        &f.location.path,
+        f.location.line,
+        f.location.column,
+        f.kind,
+        &f.rule,
+        &f.message,
+    )
 }
 
 fn render(f: &Finding) -> String {
@@ -170,5 +183,98 @@ mod tests {
         .with_rule("r1");
         let r = Report::new(vec![a.clone(), a], 20).unwrap();
         assert_eq!(r.lines(), ["a.rs:1:2: m [r1]"]);
+    }
+
+    fn ruled(kind: CheckKind, col: u32, rule: &str, msg: &str) -> Finding {
+        Finding::new(kind, Severity::Error, Location::at("a.rs", 8, col), msg).with_rule(rule)
+    }
+
+    #[test]
+    fn same_place_and_rule_is_one_problem_keeping_the_earliest_kind() {
+        let test = ruled(CheckKind::Test, 47, "E0599", "no method on Money");
+        let lint = ruled(
+            CheckKind::Lint,
+            47,
+            "E0599",
+            "no method on ledger_core::Money",
+        );
+        let r = Report::new(vec![test, lint], 20).unwrap();
+        assert_eq!(r.findings().len(), 1);
+        assert_eq!(r.findings()[0].kind, CheckKind::Lint);
+        assert_eq!(
+            r.lines(),
+            ["a.rs:8:47: no method on ledger_core::Money [E0599]"]
+        );
+    }
+
+    #[test]
+    fn dedup_needs_same_column_rule_and_line_and_path() {
+        let base = ruled(CheckKind::Lint, 47, "E0599", "m");
+        let other_col = ruled(CheckKind::Test, 48, "E0599", "m");
+        let other_rule = ruled(CheckKind::Test, 47, "E0600", "m");
+        let mut other_line = ruled(CheckKind::Test, 47, "E0599", "m");
+        other_line.location.line = Some(9);
+        let mut other_path = ruled(CheckKind::Test, 47, "E0599", "m");
+        other_path.location.path = "b.rs".into();
+        let r = Report::new(
+            vec![base, other_col, other_rule, other_line, other_path],
+            20,
+        )
+        .unwrap();
+        assert_eq!(r.findings().len(), 5);
+    }
+
+    #[test]
+    fn dedup_applies_even_when_other_findings_sit_between() {
+        let a = ruled(CheckKind::Lint, 47, "E1", "x");
+        let b = ruled(CheckKind::Lint, 47, "E2", "y");
+        let c = ruled(CheckKind::Test, 47, "E1", "z");
+        let r = Report::new(vec![c, b, a], 20).unwrap();
+        assert_eq!(r.lines(), ["a.rs:8:47: x [E1]", "a.rs:8:47: y [E2]"]);
+    }
+
+    #[test]
+    fn findings_without_rule_dedupe_only_on_equality() {
+        let a = Finding::new(
+            CheckKind::Lint,
+            Severity::Error,
+            Location::at("a.rs", 1, 1),
+            "m1",
+        );
+        let b = Finding::new(
+            CheckKind::Test,
+            Severity::Error,
+            Location::at("a.rs", 1, 1),
+            "m2",
+        );
+        let r = Report::new(vec![a.clone(), b, a], 20).unwrap();
+        assert_eq!(r.findings().len(), 2);
+    }
+
+    #[test]
+    fn order_is_total_across_every_key() {
+        let mk = |sev, col, kind, rule: Option<&str>, msg: &str| {
+            let f = Finding::new(kind, sev, Location::at("a.rs", 1, col), msg);
+            match rule {
+                Some(r) => f.with_rule(r),
+                None => f,
+            }
+        };
+        let want = vec![
+            mk(Severity::Error, 1, CheckKind::Lint, None, "a"),
+            mk(Severity::Error, 1, CheckKind::Lint, None, "b"),
+            mk(Severity::Error, 1, CheckKind::Lint, Some("r1"), "a"),
+            mk(Severity::Error, 1, CheckKind::Lint, Some("r2"), "a"),
+            mk(Severity::Error, 1, CheckKind::Test, None, "a"),
+            mk(Severity::Error, 2, CheckKind::Lint, None, "a"),
+            mk(Severity::Warning, 1, CheckKind::Lint, None, "a"),
+        ];
+        let mut shuffled = want.clone();
+        shuffled.reverse();
+        let r = Report::new(shuffled.clone(), 20).unwrap();
+        assert_eq!(r.findings(), want.as_slice());
+        shuffled.rotate_left(3);
+        let r = Report::new(shuffled, 20).unwrap();
+        assert_eq!(r.findings(), want.as_slice());
     }
 }

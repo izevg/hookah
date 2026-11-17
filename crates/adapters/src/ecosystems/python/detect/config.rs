@@ -134,11 +134,7 @@ fn names_in(line: &str) -> Vec<&str> {
         return vec![];
     }
     let mut names = vec![leading_name(line)];
-    let mut rest = line;
-    while let Some(i) = rest.find(['"', '\'']) {
-        rest = &rest[i + 1..];
-        names.push(leading_name(rest));
-    }
+    names.extend(line.split(['"', '\'']).skip(1).map(leading_name));
     names.retain(|n| !n.is_empty());
     names
 }
@@ -245,6 +241,14 @@ black = { version = "24" }
             ("tox.ini", "[testenv]\ndeps =\n    pytest\n    mutmut\n"),
         ]);
         assert!(c.declares("mypy") && c.declares("pytest") && c.declares("mutmut"));
+    }
+
+    #[test]
+    fn comments_and_table_headers_declare_nothing() {
+        assert!(names_in("# \"ruff>=0.4\"").is_empty());
+        assert!(names_in("[tool.poetry.dependencies]").is_empty());
+        assert!(names_in("[\"ruff\"]").is_empty());
+        assert_eq!(names_in("  ruff = \"^0.4\""), ["ruff"]);
     }
 
     #[test]

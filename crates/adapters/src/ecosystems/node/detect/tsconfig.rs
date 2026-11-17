@@ -8,75 +8,83 @@ use serde_json::Value;
 
 /// Removes `//` and `/* */` comments and trailing commas outside of string literals.
 pub fn strip_jsonc(text: &str) -> String {
-    let chars: Vec<char> = text.chars().collect();
+    remove_trailing_commas(&remove_comments(text))
+}
+
+type Chars<'a> = std::iter::Peekable<std::str::Chars<'a>>;
+
+/// Copies the rest of a string literal (its opening quote is already written) to `out`.
+fn copy_string(chars: &mut Chars<'_>, out: &mut String) {
+    while let Some(c) = chars.next() {
+        out.push(c);
+        match c {
+            '\\' => out.extend(chars.next()),
+            '"' => break,
+            _ => {}
+        }
+    }
+}
+
+/// Drops `//` and `/* */` comments. A line comment keeps its newline.
+fn remove_comments(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
-    let mut i = 0;
-    while i < chars.len() {
-        let c = chars[i];
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
         match c {
             '"' => {
                 out.push(c);
-                i += 1;
-                while i < chars.len() {
-                    out.push(chars[i]);
-                    if chars[i] == '\\' && i + 1 < chars.len() {
-                        out.push(chars[i + 1]);
-                        i += 2;
-                        continue;
-                    }
-                    i += 1;
-                    if chars[i - 1] == '"' {
+                copy_string(&mut chars, &mut out);
+            }
+            '/' if chars.peek() == Some(&'/') => while chars.next_if(|&n| n != '\n').is_some() {},
+            '/' if chars.peek() == Some(&'*') => {
+                chars.next();
+                let mut previous = ' ';
+                for n in chars.by_ref() {
+                    if previous == '*' && n == '/' {
                         break;
                     }
+                    previous = n;
                 }
             }
-            '/' if chars.get(i + 1) == Some(&'/') => {
-                while i < chars.len() && chars[i] != '\n' {
-                    i += 1;
-                }
-            }
-            '/' if chars.get(i + 1) == Some(&'*') => {
-                i += 2;
-                while i < chars.len() && !(chars[i] == '*' && chars.get(i + 1) == Some(&'/')) {
-                    i += 1;
-                }
-                i += 2;
-            }
-            ',' if next_significant(&chars, i + 1).is_some_and(|n| n == '}' || n == ']') => {
-                i += 1;
-            }
-            _ => {
-                out.push(c);
-                i += 1;
-            }
+            _ => out.push(c),
         }
     }
     out
 }
 
-/// The next character at or after `from` that is not whitespace and not inside a comment.
-fn next_significant(chars: &[char], mut from: usize) -> Option<char> {
-    while from < chars.len() {
-        match chars[from] {
-            c if c.is_whitespace() => from += 1,
-            '/' if chars.get(from + 1) == Some(&'/') => {
-                while from < chars.len() && chars[from] != '\n' {
-                    from += 1;
-                }
+/// Drops a comma that is followed, past whitespace, by a closing `}` or `]`.
+fn remove_trailing_commas(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+    // Whitespace seen after a comma that is not yet written.
+    let mut pending: Option<String> = None;
+    while let Some(c) = chars.next() {
+        if c.is_whitespace()
+            && let Some(space) = pending.as_mut()
+        {
+            space.push(c);
+            continue;
+        }
+        if let Some(space) = pending.take() {
+            if !matches!(c, '}' | ']') {
+                out.push(',');
             }
-            '/' if chars.get(from + 1) == Some(&'*') => {
-                from += 2;
-                while from < chars.len()
-                    && !(chars[from] == '*' && chars.get(from + 1) == Some(&'/'))
-                {
-                    from += 1;
-                }
-                from += 2;
+            out.push_str(&space);
+        }
+        match c {
+            '"' => {
+                out.push(c);
+                copy_string(&mut chars, &mut out);
             }
-            c => return Some(c),
+            ',' => pending = Some(String::new()),
+            _ => out.push(c),
         }
     }
-    None
+    if let Some(space) = pending {
+        out.push(',');
+        out.push_str(&space);
+    }
+    out
 }
 
 /// Whether the tsconfig text declares at least one project reference. Unreadable text counts as
@@ -109,6 +117,42 @@ mod tests {
         assert_eq!(v["compilerOptions"]["paths"]["@/*"][0], "src/*");
         assert_eq!(v["url"], "http://x/y // not a comment");
         assert_eq!(v["esc"], "a\"//b");
+    }
+
+    #[test]
+    fn comments_end_where_they_should() {
+        assert_eq!(strip_jsonc("a // x\nb"), "a \nb");
+        assert_eq!(strip_jsonc("a // x"), "a ");
+        assert_eq!(strip_jsonc("a /* x */b"), "a b");
+        assert_eq!(strip_jsonc("a /** x **/b"), "a b");
+        assert_eq!(strip_jsonc("a /*/ b"), "a ");
+        assert_eq!(strip_jsonc("a /* x"), "a ");
+        assert_eq!(
+            strip_jsonc(r#"["//", "/*", "*/"]"#),
+            r#"["//", "/*", "*/"]"#
+        );
+        assert_eq!(strip_jsonc(r#""a\\" // c"#), r#""a\\" "#);
+    }
+
+    #[test]
+    fn trailing_commas_go_but_separators_stay() {
+        assert_eq!(strip_jsonc("[1,]"), "[1]");
+        assert_eq!(strip_jsonc("[1, \n ]"), "[1 \n ]");
+        assert_eq!(strip_jsonc(r#"{"a":1,}"#), r#"{"a":1}"#);
+        assert_eq!(strip_jsonc("[1, // c\n]"), "[1 \n]");
+        assert_eq!(strip_jsonc("[1, /* c */ ]"), "[1  ]");
+        assert_eq!(strip_jsonc("[1,2]"), "[1,2]");
+        assert_eq!(strip_jsonc("[1, 2,\n3]"), "[1, 2,\n3]");
+        assert_eq!(strip_jsonc("[1,"), "[1,");
+        assert_eq!(strip_jsonc("[1, "), "[1, ");
+        assert_eq!(strip_jsonc(r#"["a,]", "b,}"]"#), r#"["a,]", "b,}"]"#);
+        assert_eq!(strip_jsonc(r#"[",", ]"#), r#"["," ]"#);
+    }
+
+    #[test]
+    fn a_lone_slash_is_not_a_comment() {
+        assert_eq!(strip_jsonc("a / b"), "a / b");
+        assert_eq!(strip_jsonc("a /* c */ b"), "a  b");
     }
 
     #[test]

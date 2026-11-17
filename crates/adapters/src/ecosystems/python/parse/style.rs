@@ -97,9 +97,9 @@ pub fn black(root: &Root, out: &ProcessOutput) -> Result<Vec<Finding>, PortError
         if let Some(rest) = line.strip_prefix("error: cannot parse: ") {
             // `error: cannot parse: path:line:col`, then the source line, a caret, and the reason.
             if let Some((path, l, c)) = parse_position(rest) {
-                let reason = lines
+                // The `error:` line itself never starts with `ParseError: `.
+                let reason = lines[i..]
                     .iter()
-                    .skip(i + 1)
                     .find_map(|l| l.strip_prefix("ParseError: "))
                     .unwrap_or("cannot parse");
                 findings.push(format_error(root, path, l, c, reason));
@@ -262,6 +262,25 @@ mod tests {
             black(&root(), &out(123, "", older)).unwrap()[0].location,
             Location::at("a.py", 1, 6)
         );
+    }
+
+    #[test]
+    fn black_error_with_a_line_but_no_column() {
+        let f = black(
+            &root(),
+            &out(123, "", "error: cannot format a.py: Cannot parse: 3: bad\n"),
+        )
+        .unwrap();
+        assert_eq!(f[0].location, Location::line("a.py", 3));
+    }
+
+    #[test]
+    fn ruff_timeouts_and_unknown_exit_codes_are_failures() {
+        let mut o = out(0, "[]", "");
+        o.timed_out = true;
+        assert!(ruff_check(&root(), &o).is_err());
+        assert!(ruff_check(&root(), &out(2, "[]", "")).is_err());
+        assert!(ruff_check(&root(), &out(0, "[]", "")).unwrap().is_empty());
     }
 
     #[test]

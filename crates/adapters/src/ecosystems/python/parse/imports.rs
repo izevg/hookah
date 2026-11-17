@@ -121,22 +121,21 @@ fn read_report(stdout: &str) -> (Vec<Chain>, Vec<String>) {
 
     let mut chains: Vec<Chain> = Vec::new();
     let mut contract: Option<String> = None;
+    // Whether the last chain may still grow: set by a hop, cleared by a heading, a blank line, or
+    // a line ending in a colon.
     let mut open = false;
-    let mut i = start + 1;
-    while i < lines.len() {
-        let line = lines[i];
-        let next_is_rule = lines.get(i + 1).is_some_and(|n| is_rule(n));
+    let mut rest = lines[start..].iter().skip(1).peekable();
+    while let Some(&line) = rest.next() {
+        let next_is_rule = rest.peek().is_some_and(|n| is_rule(n));
         if !line.trim().is_empty() && !is_rule(line) && next_is_rule {
             contract = Some(line.trim().to_string());
             open = false;
-            i += 2;
+            rest.next(); // the rule under the heading
             continue;
         }
         if let (Some(name), Some((starts_chain, hop))) = (&contract, hop(line)) {
             match chains.last_mut() {
-                Some(last) if !starts_chain && open && &last.contract == name => {
-                    last.hops.push(hop)
-                }
+                Some(last) if !starts_chain && open => last.hops.push(hop),
                 _ => {
                     chains.push(Chain {
                         contract: name.clone(),
@@ -148,7 +147,6 @@ fn read_report(stdout: &str) -> (Vec<Chain>, Vec<String>) {
         } else if line.trim().is_empty() || line.trim().ends_with(':') {
             open = false;
         }
-        i += 1;
     }
     (chains, broken)
 }
@@ -168,7 +166,7 @@ fn hop(line: &str) -> Option<(bool, Hop)> {
         None => (false, t),
     };
     let (importer, rest) = body.split_once(" -> ")?;
-    if importer.contains(char::is_whitespace) || importer.is_empty() {
+    if importer.contains(char::is_whitespace) {
         return None;
     }
     let (imported, tail) = match rest.split_once(' ') {
@@ -343,6 +341,104 @@ shop.app is not allowed to import shop.util:
         assert_eq!(f[0].rule.as_deref(), Some("My contract"));
     }
 
+    fn chains_of(report: &str) -> Vec<(String, Vec<String>)> {
+        read_report(report)
+            .0
+            .into_iter()
+            .map(|c| (c.contract, c.hops.into_iter().map(|h| h.importer).collect()))
+            .collect()
+    }
+
+    fn one(contract: &str, hops: &[&str]) -> (String, Vec<String>) {
+        (
+            contract.to_string(),
+            hops.iter().map(|h| (*h).to_string()).collect(),
+        )
+    }
+
+    #[test]
+    fn chain_continuation_rules() {
+        let head = "Broken contracts\n----------------\n\nC\n---\n";
+        let with = |body: &str| chains_of(&format!("{head}{body}"));
+        // An unmarked line right after a hop continues the chain.
+        assert_eq!(with("- a -> b\n  b -> c\n"), [one("C", &["a", "b"])]);
+        // A new marker starts a new chain even without a blank line.
+        assert_eq!(
+            with("- a -> b\n- c -> d\n"),
+            [one("C", &["a"]), one("C", &["c"])]
+        );
+        // A blank line ends the chain; an unmarked hop after it starts another.
+        assert_eq!(
+            with("- a -> b\n\n  c -> d\n"),
+            [one("C", &["a"]), one("C", &["c"])]
+        );
+        // So does a line ending in a colon.
+        assert_eq!(
+            with("- a -> b\nx is not allowed to import y:\n  c -> d\n"),
+            [one("C", &["a"]), one("C", &["c"])]
+        );
+        // A heading starts over: the first hop of the next contract is its own chain.
+        assert_eq!(
+            with("- a -> b\nD\n---\n  c -> d\n"),
+            [one("C", &["a"]), one("D", &["c"])]
+        );
+    }
+
+    #[test]
+    fn hops_before_the_broken_contracts_section_are_ignored() {
+        let report = "Preamble\nAnalyzed 1 files.\n-----------------\n  a -> b (l.1)\n\nBroken contracts\n----------------\n\nC\n---\n- x -> y\n";
+        assert_eq!(chains_of(report), [one("C", &["x"])]);
+    }
+
+    #[test]
+    fn timeouts_and_kills_are_failures_even_with_output() {
+        let root = Root::new(Path::new("/p"));
+        let mut o = out(0, "Contracts: 1 kept, 0 broken.\n", "");
+        o.timed_out = true;
+        assert!(parse(&root, &o).is_err());
+        let mut o = out(0, "Contracts: 1 kept, 0 broken.\n", "");
+        o.exit_code = None;
+        assert!(parse(&root, &o).is_err());
+    }
+
+    #[test]
+    fn only_contracts_without_a_chain_are_reported_at_the_config() {
+        let s = Scratch::new("imports-partial");
+        s.write("pyproject.toml", "");
+        let report = "A BROKEN\nB BROKEN\n\n----------------\nBroken contracts\n----------------\n\nA\n---\n\n- p.q -> r.s (l.3)\n";
+        let f = parse(&Root::new(s.root()), &out(1, report, "")).unwrap();
+        let rules: Vec<_> = f.iter().map(|f| f.rule.as_deref().unwrap()).collect();
+        assert_eq!(rules, ["A", "B"]);
+        assert_eq!(f[0].location, Location::line("p/q.py", 3));
+        assert_eq!(f[1].location, Location::file("pyproject.toml"));
+    }
+
+    #[test]
+    fn config_file_prefers_pyproject_then_the_dedicated_files() {
+        let cfg = |files: &[&str]| {
+            let s = Scratch::new("imports-cfg");
+            for f in files {
+                s.write(f, "");
+            }
+            config_file(&Root::new(s.root()))
+        };
+        assert_eq!(cfg(&[]), Path::new("pyproject.toml"));
+        assert_eq!(cfg(&[".importlinter"]), Path::new(".importlinter"));
+        assert_eq!(cfg(&["setup.cfg"]), Path::new("setup.cfg"));
+        assert_eq!(
+            cfg(&[".importlinter", "setup.cfg"]),
+            Path::new(".importlinter")
+        );
+        assert_eq!(
+            cfg(&[".importlinter", "pyproject.toml"]),
+            Path::new("pyproject.toml")
+        );
+        assert_eq!(
+            cfg(&["setup.cfg", "pyproject.toml"]),
+            Path::new("pyproject.toml")
+        );
+    }
+
     #[test]
     fn hops() {
         let (starts, h) = hop("-   a.b -> c.d (l.7, l.9)").unwrap();
@@ -354,5 +450,7 @@ shop.app is not allowed to import shop.util:
         let (starts, h) = hop("  c.d -> e.f").unwrap();
         assert!(!starts && h.line.is_none());
         assert!(hop("shop.domain is not allowed to import shop.infra:").is_none());
+        assert!(hop("see the docs -> here").is_none());
+        assert!(hop("a -> ").is_none());
     }
 }

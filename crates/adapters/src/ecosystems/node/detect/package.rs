@@ -295,11 +295,26 @@ mod tests {
             ("bun.lockb", PackageManager::Bun),
             ("bun.lock", PackageManager::Bun),
             ("package-lock.json", PackageManager::Npm),
+            ("npm-shrinkwrap.json", PackageManager::Npm),
         ] {
             let s = Scratch::new();
             s.write("package.json", "{}");
             s.write(lock, "");
             assert_eq!(PackageInfo::read(&s.0).unwrap().manager, manager, "{lock}");
+        }
+    }
+
+    #[test]
+    fn either_npm_lockfile_beats_the_field() {
+        for lock in ["package-lock.json", "npm-shrinkwrap.json"] {
+            let s = Scratch::new();
+            s.write("package.json", r#"{"packageManager":"pnpm@9.0.0"}"#);
+            s.write(lock, "");
+            assert_eq!(
+                PackageInfo::read(&s.0).unwrap().manager,
+                PackageManager::Npm,
+                "{lock}"
+            );
         }
     }
 
@@ -311,6 +326,26 @@ mod tests {
             PackageInfo::read(&s.0).unwrap().manager,
             PackageManager::Yarn
         );
+    }
+
+    #[test]
+    fn package_manager_field_names_each_manager() {
+        for (field, manager) in [
+            ("pnpm@9.1.0", PackageManager::Pnpm),
+            ("yarn@4.1.0", PackageManager::Yarn),
+            ("bun@1.1.0", PackageManager::Bun),
+            ("npm@10.2.0", PackageManager::Npm),
+        ] {
+            let manifest = serde_json::json!({ "packageManager": field });
+            assert_eq!(
+                PackageManager::from_field(&manifest),
+                Some(manager),
+                "{field}"
+            );
+        }
+        let unknown = serde_json::json!({ "packageManager": "deno@2.0.0" });
+        assert_eq!(PackageManager::from_field(&unknown), None);
+        assert_eq!(PackageManager::from_field(&serde_json::json!({})), None);
     }
 
     #[test]

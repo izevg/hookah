@@ -78,3 +78,44 @@ impl ToolchainDetector for PythonEcosystem {
         parse::parse(project, tool, output)
     }
 }
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod tests {
+    use hookah_domain::project::Ecosystem;
+
+    use super::*;
+    use fixture::Scratch;
+
+    fn project(s: &Scratch) -> Project {
+        Project {
+            root: s.root().to_path_buf(),
+            ecosystem: Ecosystem::Python,
+            manifests: vec![],
+        }
+    }
+
+    #[test]
+    fn detect_and_parse_delegate_to_the_modules() {
+        let s = Scratch::new("eco-delegate");
+        s.write("pyproject.toml", "[tool.mypy]\nstrict = true\n");
+        s.write(".venv/pyvenv.cfg", "");
+        s.executable(".venv/bin/mypy");
+        let p = project(&s);
+        let eco = PythonEcosystem::new();
+        let toolchain = eco.detect(&p).unwrap();
+        let tool = toolchain
+            .tools()
+            .iter()
+            .find(|t| t.name == detect::MYPY)
+            .expect("mypy is detected");
+        let out = ProcessOutput {
+            exit_code: Some(1),
+            stdout: "a.py:3: error: bad type  [assignment]\n".into(),
+            stderr: String::new(),
+            timed_out: false,
+        };
+        let findings = eco.parse(&p, tool, &out).unwrap();
+        assert_eq!(findings.len(), 1);
+    }
+}

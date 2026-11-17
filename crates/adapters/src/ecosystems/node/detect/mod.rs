@@ -729,6 +729,13 @@ mod tests {
     }
 
     #[test]
+    fn no_installed_runner_means_no_test_runner() {
+        let s = project(&[("eslint", "9.0.0", "eslint")]);
+        s.write("package.json", r#"{"devDependencies":{"eslint":"9"}}"#);
+        assert!(!has_test_runner(&PackageInfo::read(&s.0).unwrap()));
+    }
+
+    #[test]
     fn parses_major_and_minor() {
         assert_eq!(major_minor("2.6.8"), Some((2, 6)));
         assert_eq!(major_minor("1.9.0-beta.1"), Some((1, 9)));

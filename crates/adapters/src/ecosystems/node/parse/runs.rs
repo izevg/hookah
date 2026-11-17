@@ -272,26 +272,29 @@ fn stryker_failure(all: &str, output: &ProcessOutput) -> PortError {
 
 /// Decodes `%XX` escapes (spaces and non-ASCII in a `file://` URL).
 fn percent_decode(text: &str) -> String {
-    let bytes = text.as_bytes();
-    let mut out = Vec::with_capacity(bytes.len());
-    let mut i = 0;
-    while i < bytes.len() {
-        let hex = bytes
-            .get(i + 1..i + 3)
-            .and_then(|h| std::str::from_utf8(h).ok())
-            .and_then(|h| u8::from_str_radix(h, 16).ok());
-        match (bytes[i], hex) {
-            (b'%', Some(byte)) => {
+    let mut chunks = text.as_bytes().split(|b| *b == b'%');
+    let mut out = chunks.next().unwrap_or_default().to_vec();
+    for chunk in chunks {
+        match chunk.get(..2).and_then(hex_byte) {
+            Some(byte) => {
                 out.push(byte);
-                i += 3;
+                out.extend_from_slice(&chunk[2..]);
             }
-            (byte, _) => {
-                out.push(byte);
-                i += 1;
+            None => {
+                out.push(b'%');
+                out.extend_from_slice(chunk);
             }
         }
     }
     String::from_utf8_lossy(&out).into_owned()
+}
+
+/// The byte spelled by two hex digits.
+fn hex_byte(digits: &[u8]) -> Option<u8> {
+    std::str::from_utf8(digits)
+        .ok()
+        .filter(|d| d.bytes().all(|b| b.is_ascii_hexdigit()))
+        .and_then(|d| u8::from_str_radix(d, 16).ok())
 }
 
 #[cfg(test)]
@@ -481,5 +484,32 @@ mod tests {
     fn decodes_percent_escapes() {
         assert_eq!(percent_decode("/a%20b/%C3%A9"), "/a b/é");
         assert_eq!(percent_decode("100%"), "100%");
+        assert_eq!(percent_decode("%41%7e%2F"), "A~/");
+        assert_eq!(percent_decode("a%%41"), "a%A");
+        assert_eq!(percent_decode("%4"), "%4");
+        assert_eq!(percent_decode("%zz%4g"), "%zz%4g");
+        // A sign is not a hex digit.
+        assert_eq!(percent_decode("%+1"), "%+1");
+    }
+
+    #[test]
+    fn jest_clean_run_without_a_report_passes() {
+        let ok = ProcessOutput {
+            exit_code: Some(0),
+            stdout: "no json here".into(),
+            stderr: String::new(),
+            timed_out: false,
+        };
+        assert!(jest(Path::new("/ws"), &ok).unwrap().is_empty());
+    }
+
+    #[test]
+    fn suite_failure_skips_bullet_headings() {
+        assert_eq!(
+            suite_failure("  ● Test suite failed to run\n\n    Cannot find module 'x'\n"),
+            "Cannot find module 'x'"
+        );
+        assert_eq!(suite_failure("Boom\nmore"), "Boom");
+        assert_eq!(suite_failure("● only a heading"), "");
     }
 }

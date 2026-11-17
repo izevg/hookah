@@ -32,20 +32,28 @@ pub fn is_skipped_dir(name: &str) -> bool {
 
 /// Every `.py` file under `root`, sorted, as paths relative to `root`. Symlinks are not followed.
 pub fn python_files(root: &Path) -> Vec<PathBuf> {
+    python_files_within(root, MAX_DEPTH, MAX_FILES)
+}
+
+/// [`python_files`] with explicit limits: directories deeper than `max_depth` are not entered and
+/// the walk stops once `max_files` files are collected.
+fn python_files_within(root: &Path, max_depth: usize, max_files: usize) -> Vec<PathBuf> {
     let mut out = Vec::new();
-    walk(root, Path::new(""), 0, &mut out);
+    walk(root, Path::new(""), (0, max_depth, max_files), &mut out);
     out.sort();
     out
 }
 
-fn walk(root: &Path, rel: &Path, depth: usize, out: &mut Vec<PathBuf>) {
-    if depth > MAX_DEPTH || out.len() >= MAX_FILES {
-        return;
-    }
+/// One step of the walk; `limits` is `(depth, max_depth, max_files)`.
+fn walk(root: &Path, rel: &Path, limits: (usize, usize, usize), out: &mut Vec<PathBuf>) {
+    let (depth, max_depth, max_files) = limits;
     let Ok(entries) = fs::read_dir(root.join(rel)) else {
         return;
     };
     for entry in entries.flatten() {
+        if out.len() >= max_files {
+            return;
+        }
         let Ok(kind) = entry.file_type() else {
             continue;
         };
@@ -55,8 +63,8 @@ fn walk(root: &Path, rel: &Path, depth: usize, out: &mut Vec<PathBuf>) {
         };
         let path = rel.join(text);
         if kind.is_dir() {
-            if !is_skipped_dir(text) {
-                walk(root, &path, depth + 1, out);
+            if depth < max_depth && !is_skipped_dir(text) {
+                walk(root, &path, (depth + 1, max_depth, max_files), out);
             }
         } else if kind.is_file() && text.ends_with(".py") {
             out.push(path);
@@ -201,5 +209,46 @@ mod tests {
         let flat = Scratch::new("layout-flat");
         flat.write("shop/__init__.py", "");
         assert!(!has_src_layout(flat.root()));
+    }
+
+    #[test]
+    fn src_layout_needs_python_in_src() {
+        let layout = |name: &str, files: &[&str], dirs: &[&str]| {
+            let s = Scratch::new(name);
+            for f in files {
+                s.write(f, "");
+            }
+            for d in dirs {
+                std::fs::create_dir_all(s.root().join(d)).unwrap();
+            }
+            has_src_layout(s.root())
+        };
+        assert!(layout("src-pkg", &["src/pkg/__init__.py"], &[]));
+        assert!(layout("src-mod", &["src/mod.py"], &[]));
+        assert!(layout("src-ns", &["src/ns/mod.py"], &[]));
+        assert!(!layout("src-readme", &["src/README.md"], &[]));
+        assert!(!layout("src-empty-dir", &[], &["src/ns"]));
+        assert!(!layout("src-ns-text", &["src/ns/notes.txt"], &[]));
+        assert!(!layout("src-empty", &[], &["src"]));
+    }
+
+    #[test]
+    fn walk_respects_depth_and_file_limits() {
+        let s = Scratch::new("layout-limits");
+        for f in ["a.py", "d1/b.py", "d1/d2/c.py", "d1/d2/d3/d.py"] {
+            s.write(f, "");
+        }
+        let names = |depth, files| {
+            python_files_within(s.root(), depth, files)
+                .iter()
+                .map(|p| p.to_string_lossy().into_owned())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(names(0, 100), ["a.py"]);
+        assert_eq!(names(1, 100), ["a.py", "d1/b.py"]);
+        assert_eq!(names(2, 100), ["a.py", "d1/b.py", "d1/d2/c.py"]);
+        assert_eq!(names(16, 100).len(), 4);
+        assert_eq!(names(16, 2).len(), 2);
+        assert_eq!(names(16, 4).len(), 4);
     }
 }

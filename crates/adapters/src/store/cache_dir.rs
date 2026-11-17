@@ -111,6 +111,21 @@ mod tests {
         assert_eq!(root_hash(Path::new("/a/b")), root_hash(Path::new("/a/b")));
         assert_ne!(root_hash(Path::new("/a/b")), root_hash(Path::new("/a/c")));
         assert_eq!(root_hash(Path::new("/a/b")).len(), 16);
+        // Published FNV-1a 64 test vectors.
+        assert_eq!(root_hash(Path::new("a")), "af63dc4c8601ec8c");
+        assert_eq!(root_hash(Path::new("foobar")), "85944171f73967e8");
+    }
+
+    #[test]
+    fn the_public_entry_point_resolves_under_the_environment_base() {
+        let root = std::env::temp_dir();
+        let Ok(dir) = project_cache_dir(&root) else {
+            return; // neither XDG_CACHE_HOME nor HOME is set
+        };
+        assert!(dir.is_dir());
+        let canonical = root.canonicalize().unwrap();
+        assert_eq!(dir.file_name().unwrap(), root_hash(&canonical).as_str());
+        assert_eq!(dir.parent().unwrap().file_name().unwrap(), "hookah");
     }
 
     #[test]

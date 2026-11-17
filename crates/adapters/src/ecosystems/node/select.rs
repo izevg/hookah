@@ -41,11 +41,9 @@ fn file_name_marks_test(path: &Path) -> bool {
     let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
         return false;
     };
-    let parts: Vec<&str> = name.split('.').collect();
-    parts.len() > 2
-        && parts[1..parts.len() - 1]
-            .iter()
-            .any(|p| matches!(*p, "test" | "spec"))
+    let mut parts = name.split('.').skip(1).collect::<Vec<_>>();
+    parts.pop(); // the extension
+    parts.iter().any(|p| matches!(*p, "test" | "spec"))
 }
 
 /// The index, among the directory components of `rel`, of the innermost test directory.
@@ -210,6 +208,9 @@ mod tests {
             "src/testing/foo.ts",
             "src/contest/foo.ts",
             "src/latest.ts",
+            "src/foo.bar.spec",
+            "src/foo.test",
+            "src/foo.bar.ts",
             "foo.tsx",
         ] {
             assert_eq!(role(&s, source), FileRole::Source, "{source}");

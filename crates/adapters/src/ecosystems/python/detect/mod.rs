@@ -104,9 +104,7 @@ impl Setup {
         let path_dirs = std::env::var_os("PATH")
             .map(|p| std::env::split_paths(&p).collect())
             .unwrap_or_default();
-        let uv_env = std::env::var_os("UV_PROJECT_ENVIRONMENT")
-            .filter(|v| !v.is_empty())
-            .map(std::path::PathBuf::from);
+        let uv_env = uv_environment(std::env::var_os("UV_PROJECT_ENVIRONMENT"));
         Self::with_env(root, path_dirs, uv_env)
     }
 
@@ -131,6 +129,13 @@ impl Setup {
     pub fn testmon(&self) -> bool {
         self.env.tool(PYTEST_REF).is_some() && self.env.has_package("pytest-testmon")
     }
+}
+
+/// `$UV_PROJECT_ENVIRONMENT` as a path; an empty value counts as unset.
+fn uv_environment(value: Option<std::ffi::OsString>) -> Option<std::path::PathBuf> {
+    value
+        .filter(|v| !v.is_empty())
+        .map(std::path::PathBuf::from)
 }
 
 fn spec(
@@ -337,6 +342,16 @@ mod tests {
         }
         let tc = toolchain(&Setup::with_path(s.root(), vec![]), s.root());
         (s, tc)
+    }
+
+    #[test]
+    fn empty_uv_project_environment_is_unset() {
+        assert_eq!(uv_environment(None), None);
+        assert_eq!(uv_environment(Some("".into())), None);
+        assert_eq!(
+            uv_environment(Some("/envs/x".into())),
+            Some("/envs/x".into())
+        );
     }
 
     fn names(tc: &Toolchain) -> Vec<&str> {

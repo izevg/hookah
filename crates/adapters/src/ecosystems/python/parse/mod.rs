@@ -198,6 +198,37 @@ mod tests {
         assert_eq!(e.message(), "ruff was killed: no output");
     }
 
+    fn tool(name: &str) -> Tool {
+        use hookah_domain::toolchain::{CheckKind, CommandSpec};
+        Tool {
+            name: name.into(),
+            kind: CheckKind::Lint,
+            command: CommandSpec::new(name, vec![], "/proj", std::time::Duration::from_secs(1)),
+        }
+    }
+
+    #[test]
+    fn parse_dispatches_on_the_tool_name() {
+        use hookah_domain::project::Ecosystem;
+        let project = Project {
+            root: "/proj".into(),
+            ecosystem: Ecosystem::Python,
+            manifests: vec![],
+        };
+        let mypy = testing::out(1, "a.py:3: error: bad type  [assignment]\n", "");
+        let f = parse(&project, &tool(detect::MYPY), &mypy).unwrap();
+        assert_eq!(f.len(), 1);
+        assert_eq!(f[0].rule.as_deref(), Some("assignment"));
+        let ruff = testing::out(1, "[]", "");
+        assert!(
+            parse(&project, &tool(detect::RUFF), &ruff)
+                .unwrap()
+                .is_empty()
+        );
+        let e = parse(&project, &tool("flake8"), &ruff).unwrap_err();
+        assert_eq!(e.message(), "unknown Python tool `flake8`");
+    }
+
     #[test]
     fn clips_long_text() {
         assert_eq!(clip("abc", 5), "abc");

@@ -168,6 +168,15 @@ mod tests {
     }
 
     #[test]
+    fn tsc_line_without_a_position_needs_the_error_prefix() {
+        let root = Path::new("/ws");
+        assert!(tsc_line(root, "error foo: bar").is_none());
+        assert!(tsc_line(root, "warning TS1: bar").is_none());
+        let f = tsc_line(root, "error TS5083: Cannot read file.").unwrap();
+        assert_eq!(f.rule.as_deref(), Some("TS5083"));
+    }
+
+    #[test]
     fn tsc_clean_run_and_unreadable_failure() {
         assert!(tsc(Path::new(ROOT), &out(0, "")).unwrap().is_empty());
         let e = tsc(

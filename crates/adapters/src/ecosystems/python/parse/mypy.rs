@@ -155,6 +155,24 @@ mod tests {
     const TEXT: &str = "src/shop/domain/cart.py:6:14: error: Incompatible types in assignment (expression has type \"str\", variable has type \"int\")  [assignment]\nsrc/shop/domain/cart.py:6:14: note: Some note\nsrc/shop/other.py:3:1: warning: Unused \"type: ignore\" comment  [unused-ignore]\n";
 
     #[test]
+    fn timeouts_and_kills_are_failures_even_with_output() {
+        let mut o = out(0, TEXT, "");
+        o.timed_out = true;
+        assert!(parse(&root(), &o).is_err());
+        let mut o = out(0, TEXT, "");
+        o.exit_code = None;
+        assert!(parse(&root(), &o).is_err());
+    }
+
+    #[test]
+    fn only_positive_numbers_are_positions() {
+        assert_eq!(positive(Some(1)), Some(1));
+        assert_eq!(positive(Some(0)), None);
+        assert_eq!(positive(Some(-3)), None);
+        assert_eq!(positive(None), None);
+    }
+
+    #[test]
     fn parses_json_lines() {
         let f = parse(&root(), &out(1, JSON, "")).unwrap();
         assert_eq!(f.len(), 1, "notes are dropped");

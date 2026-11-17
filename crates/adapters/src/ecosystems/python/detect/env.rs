@@ -431,6 +431,26 @@ mod tests {
     }
 
     #[test]
+    fn poetry_needs_both_its_lock_and_its_executable() {
+        let lock = "[[package]]\nname = \"ruff\"\nversion = \"1\"\n";
+        let ruff_path = |s: &Scratch| s.root().join("bin/ruff").to_string_lossy().into_owned();
+        // The lock without `poetry` on PATH.
+        let s = Scratch::new("env-poetry-lock-only");
+        s.write("poetry.lock", lock);
+        s.executable("bin/ruff");
+        let env = Env::resolve(s.root(), path_of(&s, "bin"), None);
+        assert_eq!(env.tool(RUFF).unwrap().program, ruff_path(&s));
+        assert_eq!(env.manager(), Manager::Poetry);
+        // `poetry` on PATH without a lock.
+        let s = Scratch::new("env-poetry-exe-only");
+        s.executable("bin/poetry");
+        s.executable("bin/ruff");
+        let env = Env::resolve(s.root(), path_of(&s, "bin"), None);
+        assert_eq!(env.tool(RUFF).unwrap().program, ruff_path(&s));
+        assert_eq!(env.manager(), Manager::Pip);
+    }
+
+    #[test]
     fn plain_path_environment() {
         let s = Scratch::new("env-path");
         s.executable("bin/ruff");

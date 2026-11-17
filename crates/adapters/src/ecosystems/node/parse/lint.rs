@@ -313,6 +313,16 @@ mod tests {
     }
 
     #[test]
+    fn biome_format_reports_other_diagnostics_without_a_position_for_line_zero() {
+        let report = r#"{"diagnostics":[{"severity":"error","message":"cannot read the file","category":"internalError/io","location":{"path":"src/a.ts","start":{"line":0,"column":0},"end":{"line":0,"column":0}}}]}"#;
+        let found = biome_format(Path::new(ROOT), &out(1, report, "")).unwrap();
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].location, Location::file("src/a.ts"));
+        assert_eq!(found[0].kind, CheckKind::Format);
+        assert_eq!(found[0].rule.as_deref(), Some("internalError/io"));
+    }
+
+    #[test]
     fn biome_clean_and_broken_runs() {
         let clean = r#"{"summary":{"changed":1},"diagnostics":[],"command":"format"}"#;
         assert!(
@@ -353,6 +363,13 @@ mod tests {
     }
 
     #[test]
+    fn eslint_message_with_a_line_but_no_column_is_located_at_the_line() {
+        let report = r#"[{"filePath":"/ws/app/a.js","messages":[{"ruleId":"x","severity":2,"message":"m","line":7}]}]"#;
+        let found = eslint(Path::new(ROOT), &out(1, report, "")).unwrap();
+        assert_eq!(found[0].location, Location::line("a.js", 7));
+    }
+
+    #[test]
     fn eslint_without_a_report_is_an_error() {
         let e = eslint(
             Path::new(ROOT),
@@ -378,6 +395,15 @@ mod tests {
         assert_eq!(found[0].message, "SyntaxError: Expression expected.");
         assert_eq!(found[0].severity, Severity::Error);
         assert_eq!(found[0].kind, CheckKind::Format);
+    }
+
+    #[test]
+    fn prettier_ignores_lines_that_are_not_errors_or_have_no_path() {
+        let root = Path::new(ROOT);
+        assert!(prettier_error(root, "src/a.ts: Warning: odd (1:2)").is_none());
+        assert!(prettier_error(root, ": SyntaxError: odd (1:2)").is_none());
+        let f = prettier_error(root, "src/a.ts: SyntaxError: odd").unwrap();
+        assert_eq!(f.location, Location::file("src/a.ts"));
     }
 
     #[test]

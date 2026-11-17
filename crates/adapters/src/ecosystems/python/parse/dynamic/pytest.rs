@@ -437,4 +437,49 @@ FAILED tests/test_gone.py::test_x - AssertionError: nope
         assert!(parse(&root(), &out(1, "garbled\n", "")).is_err());
         assert!(parse(&root(), &ProcessOutput::default()).is_err());
     }
+
+    #[test]
+    fn headings_need_underscores_around_a_title() {
+        assert_eq!(heading("___ test_a ___").as_deref(), Some("test_a"));
+        assert_eq!(heading("____ ____"), None);
+        assert_eq!(heading("__x__"), None);
+        assert_eq!(heading("test_a"), None);
+    }
+
+    #[test]
+    fn setup_errors_use_the_first_error_line_and_their_own_section() {
+        let text = "\
+=== ERRORS ===
+___ ERROR at setup of test_other ___
+tests/t.py:3: in test_other
+E   wrong section
+___ ERROR at setup of test_err ___
+tests/t.py:9: in test_err
+E   first
+E   second
+=== short test summary info ===
+ERROR tests/t.py::test_err
+";
+        let f = parse(&root(), &out(1, text, "")).unwrap();
+        assert_eq!(f.len(), 1);
+        assert_eq!(f[0].location, Location::line("tests/t.py", 9));
+        assert_eq!(f[0].message, "error in test_err: first");
+    }
+
+    #[test]
+    fn a_section_is_used_once() {
+        let text = "\
+=== FAILURES ===
+___ test_a ___
+tests/t.py:2: in test_a
+E   boom
+=== short test summary info ===
+FAILED tests/t.py::test_a - boom
+FAILED tests/t.py::test_a - again
+";
+        let f = parse(&root(), &out(1, text, "")).unwrap();
+        assert_eq!(f[0].location, Location::line("tests/t.py", 2));
+        assert_eq!(f[1].location, Location::file("tests/t.py"));
+        assert_eq!(f[1].message, "test_a failed: again");
+    }
 }

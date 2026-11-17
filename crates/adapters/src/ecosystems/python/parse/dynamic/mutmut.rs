@@ -194,11 +194,13 @@ fn block<'a>(text: &'a str, name: &str) -> Option<Vec<&'a str>> {
                 .is_some_and(|r| r.starts_with(&header))
     })?;
     let base = indent(lines[start]);
-    let mut end = start + 1;
-    while end < lines.len() && (lines[end].trim().is_empty() || indent(lines[end]) > base) {
-        end += 1;
-    }
-    let mut body = lines[start..end].to_vec();
+    let mut body = vec![lines[start]];
+    body.extend(
+        lines[start..]
+            .iter()
+            .skip(1)
+            .take_while(|l| l.trim().is_empty() || indent(l) > base),
+    );
     while body.last().is_some_and(|l| l.trim().is_empty()) {
         body.pop();
     }
@@ -371,5 +373,25 @@ mutants_x_total__mutmut['_mutmut_orig'] = x_total__mutmut_orig # type: ignore # 
         assert!(e.message().contains("failed to collect stats"));
         assert!(parse(&root, &out(0, "9/11\n", "")).is_err());
         assert!(parse(&root, &ProcessOutput::default()).is_err());
+    }
+
+    #[test]
+    fn timeouts_and_kills_are_failures_even_with_a_zero_exit() {
+        let mut o = out(0, RUN, "");
+        o.timed_out = true;
+        assert!(parse(&Root::new(Path::new("/p")), &o).is_err());
+        let mut o = out(0, RUN, "");
+        o.exit_code = None;
+        assert!(parse(&Root::new(Path::new("/p")), &o).is_err());
+    }
+
+    #[test]
+    fn a_block_ends_at_the_next_line_with_the_same_indent() {
+        let text = "def a():\n    return 1\n\n\ndef b():\n    return 2\n";
+        assert_eq!(block(text, "a").unwrap(), ["def a():", "    return 1"]);
+        assert_eq!(block(text, "b").unwrap(), ["def b():", "    return 2"]);
+        assert!(block(text, "c").is_none());
+        let method = "class K:\n    def a(self):\n        pass\n    def b(self):\n        pass\n";
+        assert_eq!(block(method, "a").unwrap().len(), 2);
     }
 }

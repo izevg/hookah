@@ -20,10 +20,10 @@ feeds failures straight back to the agent, so it fixes them immediately.
 </div>
 
 > **Status:** works for Rust, Node (TypeScript/JavaScript), and Python projects, with the Claude
-> Code, Codex, Qoder, and Kimi harnesses (`hookah check`, `hookah detect`, `hookah hook
-> <harness>`), including mutation testing at stop. opencode and Orca are still to come. End-to-end
-> [samples](samples/README.md) cover the behavior. Prebuilt binaries and the install scripts
-> arrive with the first release. This repository runs `hookah` on itself; see
+> Code, Codex, Qoder, Kimi, and opencode harnesses (`hookah check`, `hookah detect`, `hookah hook
+> <harness>`, `hookah plugin opencode`), including mutation testing at stop. Orca is still to come.
+> End-to-end [samples](samples/README.md) cover the behavior. Prebuilt binaries and the install
+> scripts arrive with the first release. This repository runs `hookah` on itself; see
 > [Claude Code setup](docs/setup/hooks/claude-code.md#dogfooding).
 
 ## Why
@@ -76,7 +76,7 @@ old warnings from code it did not touch.
 | Codex CLI   | [docs/setup/hooks/codex.md](docs/setup/hooks/codex.md) |
 | Qoder       | [docs/setup/hooks/qoder.md](docs/setup/hooks/qoder.md) |
 | Kimi Code   | [docs/setup/hooks/kimi.md](docs/setup/hooks/kimi.md) |
-| opencode    | [docs/setup/plugins/opencode.md](docs/setup/plugins/opencode.md) (planned) |
+| opencode    | `hookah plugin opencode > .opencode/plugins/hookah.ts` — [docs/setup/plugins/opencode.md](docs/setup/plugins/opencode.md) |
 | Orca        | [docs/setup/plugins/orca.md](docs/setup/plugins/orca.md) (planned) |
 
 3. Edit a file. To try it by hand: `hookah check <file>` runs the edit phase on one file, and
@@ -98,13 +98,14 @@ Details, commands, and test-selection rules: [docs/ecosystems.md](docs/ecosystem
 ## Supported agent harnesses
 
 Each harness gets a thin adapter that reads that harness's hook payload, calls the core, and
-reports results in the format that harness expects.
+reports results in the format that harness expects. The table shows the integration points; Orca
+is still planned.
 
 | Harness     | Integration point                                   | Feedback channel                         |
 |-------------|-----------------------------------------------------|------------------------------------------|
 | Claude Code | `PostToolUse` (`Edit\|Write\|MultiEdit`), `Stop`    | exit code 2 + stderr                     |
 | Codex CLI   | `PostToolUse` (`apply_patch`), `Stop` in `config.toml` / `hooks.json` | JSON `decision: block` + `reason` |
-| opencode    | plugin, `tool.execute.after`                        | appended tool output                     |
+| opencode    | bundled plugin (`hookah plugin opencode`): `tool.execute.after`, `session.idle` | appended tool output (edit), injected message (stop) |
 | Kimi Code   | `PostToolUse` (`Write\|Edit`) `[[hooks]]` in `config.toml` (beta); no stop phase | stdout (may reach the model) |
 | Qoder       | `PostToolUse` (`Write\|Edit`), `Stop` in `.qoder/settings.json` | `additionalContext` (edit), exit 2 + stderr (stop) |
 | Orca        | through the hooks of the agent it runs; Orca plugin for workspace-level events | per hosted agent |

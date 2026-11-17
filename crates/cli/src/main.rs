@@ -21,10 +21,11 @@ use hookah_domain::project::locate_project;
 use hookah_harness::claude::Claude;
 use hookah_harness::codex::Codex;
 use hookah_harness::kimi::Kimi;
+use hookah_harness::opencode::{Opencode, PLUGIN_SOURCE};
 use hookah_harness::protocol::{Harness, Invocation, Response, merge_outcomes};
 use hookah_harness::qoder::Qoder;
 
-use crate::args::{Cli, Command, HarnessKind};
+use crate::args::{Cli, Command, HarnessKind, PluginKind};
 use crate::render::Style;
 
 fn main() -> ExitCode {
@@ -47,6 +48,7 @@ fn main() -> ExitCode {
         Command::Check { paths } => exit(check(&paths, limit)),
         Command::Detect { path } => exit(detect(&path)),
         Command::Hook { harness } => exit(guarded_hook(harness, limit)),
+        Command::Plugin { harness } => exit(plugin(harness)),
     }
 }
 
@@ -74,6 +76,14 @@ fn check(paths: &[PathBuf], limit: usize) -> i32 {
         print_out(&render::outcome(style, &shown, &outcome));
     }
     i32::from(failed)
+}
+
+/// `hookah plugin <harness>`: print the embedded plugin source.
+fn plugin(harness: PluginKind) -> i32 {
+    match harness {
+        PluginKind::Opencode => print_out(PLUGIN_SOURCE),
+    }
+    0
 }
 
 /// `hookah detect`: print what would run for `path`.
@@ -130,6 +140,7 @@ fn hook(harness: HarnessKind, limit: usize) -> Response {
         HarnessKind::Codex => run_harness(&Codex, &stdin, limit),
         HarnessKind::Qoder => run_harness(&Qoder, &stdin, limit),
         HarnessKind::Kimi => run_harness(&Kimi, &stdin, limit),
+        HarnessKind::Opencode => run_harness(&Opencode, &stdin, limit),
     }
 }
 

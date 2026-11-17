@@ -166,7 +166,7 @@ fn members(root: &Path, patterns: &[String]) -> Vec<PathBuf> {
 fn segments(pattern: &str) -> Vec<&str> {
     pattern
         .split('/')
-        .filter(|s| !s.is_empty() && *s != ".")
+        .filter(|s| !matches!(*s, "" | "."))
         .collect()
 }
 

@@ -759,7 +759,16 @@ mod tests {
             typechecks(&detect_in(&s, "packages/lib")),
             [(s.0.clone(), build.clone())]
         );
-        // Referencing only a dependent is enough; referencing neither is not.
+        // Referencing only a dependent is enough, as a directory or as a file; referencing
+        // neither is not.
+        s.write(
+            "tsconfig.json",
+            r#"{"references":[{"path":"packages/app/tsconfig.json"}]}"#,
+        );
+        assert_eq!(
+            typechecks(&detect_in(&s, "packages/lib")),
+            [(s.0.clone(), build.clone())]
+        );
         s.write(
             "tsconfig.json",
             r#"{"references":[{"path":"packages/app"}]}"#,

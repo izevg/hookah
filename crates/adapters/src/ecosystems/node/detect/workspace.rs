@@ -331,6 +331,16 @@ mod tests {
     }
 
     #[test]
+    fn patterns_with_dots_and_empty_segments_find_the_same_directories() {
+        let s = Scratch::new();
+        s.write("pnpm-workspace.yaml", "packages:\n  - ./packages//*\n");
+        package(&s, "packages/lib", "lib", "");
+        package(&s, "packages/app", "app", r#""lib":"*""#);
+        let info = PackageInfo::read(&s.path("packages/lib")).unwrap();
+        assert_eq!(info.dependents[0].root, s.path("packages/app"));
+    }
+
+    #[test]
     fn spec_rules() {
         assert!(spec_matches("workspace:~", None));
         assert!(spec_matches(" * ", None));
@@ -358,6 +368,8 @@ mod tests {
         assert!(wildcard("exact", "exact"));
         assert!(!wildcard("exact", "exact2"));
         assert!(!wildcard("a*a", "a"));
+        assert!(wildcard("a*b*b", "abb"));
+        assert!(!wildcard("a*b*b", "ab"));
     }
 
     #[test]
@@ -367,6 +379,10 @@ mod tests {
             ["a/*", "b"]
         );
         assert_eq!(yaml_packages("packages: [ 'a/*', b ]\n"), ["a/*", "b"]);
+        assert_eq!(
+            yaml_packages("packages:\n  - a\n\n    # note\n  - b\nx: 1\n  - c\n"),
+            ["a", "b"]
+        );
         assert!(yaml_packages("other: 1\n").is_empty());
     }
 }

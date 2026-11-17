@@ -22,11 +22,6 @@ nix = { version = "0.30", default-features = false, features = ["signal"] }
 [workspace.lints.rust]
 unsafe_code = "forbid"
 
-[workspace.lints.cargo]
-# Temporary: the stubs declare the layer dependencies before any code uses them.
-# Remove once the layers are wired.
-unused_dependencies = "allow"
-
 [workspace.lints.clippy]
 unwrap_used = "deny"
 expect_used = "deny"

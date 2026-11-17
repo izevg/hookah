@@ -67,6 +67,10 @@ detects installed harnesses is planned after the MVP.
 - Python
 - Rust
 
+## Samples
+
+[`samples/`](samples/README.md) holds small projects with scenarios ("the agent makes this edit, `hookah` answers this") that double as end-to-end tests: `samples/run.sh`.
+
 ## License
 
 [Apache License 2.0](LICENSE).

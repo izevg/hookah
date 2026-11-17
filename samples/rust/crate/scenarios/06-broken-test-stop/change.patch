@@ -1,0 +1,13 @@
+diff --git a/tests/stats.rs b/tests/stats.rs
+index aa81bc9..c2c6718 100644
+--- a/tests/stats.rs
++++ b/tests/stats.rs
+@@ -2,7 +2,7 @@ use stats::{clamp, describe, mean, shorten};
+ 
+ #[test]
+ fn mean_of_values() {
+-    assert_eq!(mean(&[1.0, 2.0, 3.0]), Some(2.0));
++    assert_eq!(mean(&[1.0, 2.0, 3.0]), Some(3.0));
+ }
+ 
+ #[test]

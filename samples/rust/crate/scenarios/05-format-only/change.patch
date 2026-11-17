@@ -1,0 +1,23 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 2c2794a..0654fcf 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -14,11 +14,11 @@ pub fn mean(values: &[f64]) -> Option<f64> {
+ 
+ /// Clamps `value` into `lo..=hi`.
+ pub fn clamp(value: i64, lo: i64, hi: i64) -> i64 {
+-    if value < lo {
+-        lo
+-    } else if value > hi {
+-        hi
+-    } else {
+-        value
+-    }
++  if value < lo {
++      lo
++  } else if value > hi {
++          hi
++  } else {
++      value
++  }
+ }

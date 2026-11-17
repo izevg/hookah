@@ -1,0 +1,13 @@
+diff --git a/src/legacy.rs b/src/legacy.rs
+index 3ab2ab7..140f6b0 100644
+--- a/src/legacy.rs
++++ b/src/legacy.rs
+@@ -1,5 +1,8 @@
+ /// Describes a count in words.
+ pub fn describe(count: usize) -> String {
++    if count == 0 {
++        return "no items".to_string();
++    }
+     let label = if count == 1 { "item" } else { "items" };
+     format!("{count} {label}")
+ }

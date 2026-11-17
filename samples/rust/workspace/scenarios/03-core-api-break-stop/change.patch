@@ -1,0 +1,21 @@
+diff --git a/core/src/lib.rs b/core/src/lib.rs
+index 9bcbe79..25222b2 100644
+--- a/core/src/lib.rs
++++ b/core/src/lib.rs
+@@ -11,7 +11,7 @@ impl Money {
+     }
+ 
+     /// Formats the amount as `dollars.cents`.
+-    pub fn display(self) -> String {
++    pub fn to_text(self) -> String {
+         format!("{}.{:02}", self.0 / 100, self.0 % 100)
+     }
+ }
+@@ -27,6 +27,6 @@ mod tests {
+ 
+     #[test]
+     fn display_pads_cents() {
+-        assert_eq!(Money(105).display(), "1.05");
++        assert_eq!(Money(105).to_text(), "1.05");
+     }
+ }

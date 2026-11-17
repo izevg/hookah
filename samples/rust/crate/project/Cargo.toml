@@ -1,0 +1,7 @@
+[package]
+name = "stats"
+version = "0.1.0"
+edition = "2024"
+
+# Makes this crate its own workspace root, so an enclosing workspace never captures it.
+[workspace]

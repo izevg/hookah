@@ -1,0 +1,15 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 2c2794a..9675c02 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -22,3 +22,10 @@ pub fn clamp(value: i64, lo: i64, hi: i64) -> i64 {
+         value
+     }
+ }
++
++/// Distance between the smallest and the largest value.
++pub fn spread(values: &[i64]) -> Option<i64> {
++    let max = values.iter().max()?;
++    let min = values.iter().min()?;
++    Some(max - min)
++}

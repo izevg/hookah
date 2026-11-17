@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 2c2794a..0e73ad4 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -22,3 +22,8 @@ pub fn clamp(value: i64, lo: i64, hi: i64) -> i64 {
+         value
+     }
+ }
++
++/// True when `text` has no characters.
++pub fn is_blank(text: &str) -> bool {
++    text.len() == 0
++}

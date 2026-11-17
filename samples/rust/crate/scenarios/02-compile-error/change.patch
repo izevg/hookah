@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 2c2794a..b87e6b7 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -22,3 +22,8 @@ pub fn clamp(value: i64, lo: i64, hi: i64) -> i64 {
+         value
+     }
+ }
++
++/// Sum of all values.
++pub fn total(values: &[f64]) -> f64 {
++    sum_all(values)
++}

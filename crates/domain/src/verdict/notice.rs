@@ -40,3 +40,23 @@ impl fmt::Display for Notice {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::toolchain::CheckKind;
+
+    #[test]
+    fn renders_each_notice() {
+        assert_eq!(
+            Notice::FileRewritten("/r/a.rs".into()).to_string(),
+            "/r/a.rs was reformatted; re-read it before editing"
+        );
+        let t = MissingTool::new("cargo-mutants", CheckKind::Mutation, "cargo install x");
+        assert_eq!(
+            Notice::MissingTool(t).to_string(),
+            "mutation testing tool cargo-mutants not installed: cargo install x"
+        );
+        assert_eq!(Notice::Degraded("slow".into()).to_string(), "hookah: slow");
+    }
+}

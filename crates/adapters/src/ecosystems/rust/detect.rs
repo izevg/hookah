@@ -72,7 +72,7 @@ struct Dependency {
     path: Option<PathBuf>,
 }
 
-fn canonical(path: &Path) -> PathBuf {
+pub(super) fn canonical(path: &Path) -> PathBuf {
     path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
 }
 

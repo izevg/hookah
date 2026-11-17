@@ -263,6 +263,13 @@ mod tests {
     }
 
     #[test]
+    fn only_a_formatter_can_rewrite_the_file() {
+        let mut w = World::new("/r/Cargo.toml", vec![tool("lint", CheckKind::Lint)]);
+        w.rewrite = true;
+        assert_eq!(run(&w), Outcome::pass());
+    }
+
+    #[test]
     fn missing_tool_degrades_but_never_fails() {
         let mut w = world();
         w.run_fails = vec!["lint".into()];

@@ -126,6 +126,12 @@ fn repo_without_head_is_all() {
         GitChanges::new().changed_lines(&dir, &f).unwrap(),
         ChangedLines::All
     );
+    // Staged but never committed: tracked, yet there is no HEAD to diff against.
+    git(&dir, &["add", "a.txt"]);
+    assert_eq!(
+        GitChanges::new().changed_lines(&dir, &f).unwrap(),
+        ChangedLines::All
+    );
 }
 
 #[test]

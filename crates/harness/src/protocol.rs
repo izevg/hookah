@@ -88,7 +88,7 @@ fn canonical_file(path: &Path) -> PathBuf {
 }
 
 /// What the CLI writes and returns to the harness.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Response {
     /// Process exit code.
     pub exit_code: i32,
@@ -101,7 +101,11 @@ pub struct Response {
 impl Response {
     /// Exit 0 with nothing to say.
     pub fn silent() -> Self {
-        Self::default()
+        Self {
+            exit_code: 0,
+            stdout: String::new(),
+            stderr: String::new(),
+        }
     }
 }
 
@@ -286,6 +290,32 @@ mod tests {
             verdict: Verdict::Fail(Report::new(vec![f], 20).unwrap()),
             notices: vec![],
         }
+    }
+
+    #[test]
+    fn display_root_prefers_an_absolute_cwd_else_the_file_directory() {
+        let file = Path::new("/w/src/a.rs");
+        assert_eq!(display_root(file, Some(Path::new("/w"))), Path::new("/w"));
+        assert_eq!(
+            display_root(file, Some(Path::new("rel"))),
+            Path::new("/w/src")
+        );
+        assert_eq!(display_root(file, None), Path::new("/w/src"));
+    }
+
+    #[test]
+    fn silent_response_is_exit_zero_and_empty() {
+        let r = Response::silent();
+        assert_eq!(r.exit_code, 0);
+        assert!(r.stdout.is_empty() && r.stderr.is_empty());
+    }
+
+    #[test]
+    fn payload_error_names_the_problem() {
+        assert_eq!(
+            PayloadError("no file".into()).to_string(),
+            "malformed hook payload: no file"
+        );
     }
 
     #[test]

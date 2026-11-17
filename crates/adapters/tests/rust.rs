@@ -78,6 +78,7 @@ fn warning_and_failing_test() {
     assert_eq!(at(&lint[0]), "src/lib.rs:2:5");
     assert_eq!(lint[0].severity, Severity::Warning);
     assert_eq!(lint[0].rule.as_deref(), Some("clippy::needless_return"));
+    assert_eq!(lint[0].kind, CheckKind::Lint);
 
     let eco = Ecosystems::new();
     let sel = eco

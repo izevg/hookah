@@ -52,10 +52,6 @@ impl RustEcosystem {
     }
 }
 
-fn canonical(path: &Path) -> PathBuf {
-    path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
-}
-
 impl ToolchainDetector for RustEcosystem {
     fn detect(&self, project: &Project) -> Result<Toolchain, PortError> {
         let Some(info) = self.info(&project.root)? else {
@@ -84,7 +80,7 @@ impl ToolchainDetector for RustEcosystem {
         let Ok(Some(info)) = self.info(&project.root) else {
             return MutationSelection::None;
         };
-        let root = canonical(&project.root);
+        let root = detect::canonical(&project.root);
         let crate_dir = root
             .strip_prefix(&info.workspace_root)
             .unwrap_or(Path::new(""));

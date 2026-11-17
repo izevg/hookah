@@ -61,5 +61,6 @@ mod tests {
         );
         assert!(p.relative(Path::new("/x/a.rs")).is_err());
         assert!(p.contains(Path::new("/r/a")));
+        assert!(!p.contains(Path::new("/x/a")));
     }
 }

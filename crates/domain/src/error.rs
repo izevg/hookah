@@ -32,3 +32,17 @@ impl fmt::Display for DomainError {
 }
 
 impl std::error::Error for DomainError {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn displays_file_and_root() {
+        let e = DomainError::FileOutsideProject {
+            file: "/x/a.rs".into(),
+            root: "/r".into(),
+        };
+        assert_eq!(e.to_string(), "file /x/a.rs is outside project root /r");
+    }
+}

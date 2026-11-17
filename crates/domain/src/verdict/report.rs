@@ -94,6 +94,22 @@ mod tests {
     }
 
     #[test]
+    fn exposes_findings_and_displays_lines() {
+        let r = Report::new(vec![f(Severity::Error, "a.rs", 1, "m")], 5).unwrap();
+        assert_eq!(r.findings().len(), 1);
+        assert_eq!(r.to_string(), "a.rs:1: m");
+        let r = Report::new(
+            vec![
+                f(Severity::Error, "a.rs", 1, "m"),
+                f(Severity::Error, "a.rs", 2, "m"),
+            ],
+            1,
+        )
+        .unwrap();
+        assert_eq!(r.to_string(), "a.rs:1: m\n+1 more");
+    }
+
+    #[test]
     fn empty_is_none() {
         assert!(Report::new(vec![], 5).is_none());
     }

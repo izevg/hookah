@@ -91,10 +91,42 @@ fn wait(child: &mut Child, timeout: Duration) -> std::io::Result<(Option<i32>, b
 }
 
 fn kill_group(child: &mut Child) {
+    kill_with(child, |pid| killpg(pid, Signal::SIGKILL).is_ok());
+}
+
+/// Kills the child's process group with `group_kill`; falls back to killing the child alone
+/// when that fails.
+fn kill_with(child: &mut Child, group_kill: impl FnOnce(Pid) -> bool) {
     let killed = i32::try_from(child.id())
         .ok()
-        .is_some_and(|pid| killpg(Pid::from_raw(pid), Signal::SIGKILL).is_ok());
+        .is_some_and(|pid| group_kill(Pid::from_raw(pid)));
     if !killed {
         let _ = child.kill();
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod tests {
+    use super::*;
+
+    fn sleeper() -> Child {
+        Command::new("sleep").arg("30").spawn().unwrap()
+    }
+
+    #[test]
+    fn falls_back_to_killing_the_child_when_the_group_kill_fails() {
+        let mut child = sleeper();
+        kill_with(&mut child, |_| false);
+        assert!(child.wait().unwrap().code().is_none(), "killed by signal");
+    }
+
+    #[test]
+    fn leaves_the_child_alone_when_the_group_kill_worked() {
+        let mut child = sleeper();
+        kill_with(&mut child, |_| true);
+        assert!(child.try_wait().unwrap().is_none(), "still running");
+        child.kill().unwrap();
+        child.wait().unwrap();
     }
 }

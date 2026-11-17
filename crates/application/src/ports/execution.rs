@@ -42,3 +42,25 @@ pub trait ContentHasher {
     /// A hash of the file's bytes; equal content gives an equal hash within one process.
     fn content_hash(&self, file: &Path) -> Result<u64, PortError>;
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn output(exit_code: Option<i32>, timed_out: bool) -> ProcessOutput {
+        ProcessOutput {
+            exit_code,
+            timed_out,
+            ..ProcessOutput::default()
+        }
+    }
+
+    #[test]
+    fn success_needs_exit_zero_in_time() {
+        assert!(output(Some(0), false).success());
+        assert!(!output(Some(1), false).success());
+        assert!(!output(None, false).success());
+        assert!(!output(Some(0), true).success());
+        assert!(!output(None, true).success());
+    }
+}

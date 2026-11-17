@@ -210,6 +210,21 @@ mod tests {
     }
 
     #[test]
+    fn tail_of_takes_the_last_error_line_or_a_fallback() {
+        let output = ProcessOutput {
+            stderr: "ERROR first\nnoise\nERROR second problem\n".into(),
+            ..ProcessOutput::default()
+        };
+        assert_eq!(tail_of(&output), "second problem");
+        let output = ProcessOutput {
+            stdout: "Error: from stdout\n".into(),
+            ..ProcessOutput::default()
+        };
+        assert_eq!(tail_of(&output), "from stdout");
+        assert_eq!(tail_of(&ProcessOutput::default()), "no details");
+    }
+
+    #[test]
     fn clean_run_and_no_mutants_are_empty() {
         let clean = r#"{"outcomes":[{"scenario":"Baseline","summary":"Success"}]}"#;
         assert!(parse(&paths(), &exit(0), Some(clean)).unwrap().is_empty());

@@ -32,3 +32,15 @@ impl fmt::Display for PortError {
 }
 
 impl std::error::Error for PortError {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn message_and_display_carry_the_reason() {
+        let e = PortError::new("tool missing");
+        assert_eq!(e.message(), "tool missing");
+        assert_eq!(e.to_string(), "tool missing");
+    }
+}

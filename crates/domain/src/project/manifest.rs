@@ -48,5 +48,9 @@ mod tests {
         assert_eq!(m.ecosystem, Ecosystem::Rust);
         assert_eq!(m.dir(), Path::new("/p"));
         assert!(Manifest::from_path(Path::new("/p/README.md")).is_none());
+        let node = Manifest::from_path(Path::new("/p/package.json")).unwrap();
+        assert_eq!(node.ecosystem, Ecosystem::Node);
+        let py = Manifest::from_path(Path::new("/p/pyproject.toml")).unwrap();
+        assert_eq!(py.ecosystem, Ecosystem::Python);
     }
 }

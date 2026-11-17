@@ -153,6 +153,22 @@ mod tests {
     }
 
     #[test]
+    fn single_edit_names_its_file() {
+        let single = Invocation::Edit(EditRequest::new(
+            PathBuf::from("/w/a.rs"),
+            PathBuf::from("/w"),
+        ));
+        let r = render(&single, &failing(vec![]));
+        let v = stdout_json(&r);
+        assert!(
+            v["reason"]
+                .as_str()
+                .unwrap()
+                .starts_with("hookah: 1 problem after editing a.rs - ")
+        );
+    }
+
+    #[test]
     fn edit_pass_with_rewrite_adds_context() {
         let o = Outcome {
             verdict: Verdict::Pass,

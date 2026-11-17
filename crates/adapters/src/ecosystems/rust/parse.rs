@@ -15,11 +15,12 @@
 //! sibling workspace member.
 
 use std::collections::{HashMap, HashSet};
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 
 use hookah_application::error::PortError;
 use hookah_application::ports::ProcessOutput;
 use hookah_domain::finding::{Finding, Location, Severity};
+use hookah_domain::path::normalize;
 use hookah_domain::toolchain::CheckKind;
 use serde::Deserialize;
 
@@ -61,22 +62,6 @@ fn resolve(project_root: &Path, base: &Path, file: &str) -> Option<PathBuf> {
         base.join(path)
     };
     Some(diff(project_root, &normalize(&abs)))
-}
-
-fn normalize(path: &Path) -> PathBuf {
-    let mut out = PathBuf::new();
-    for c in path.components() {
-        match c {
-            Component::CurDir => {}
-            Component::ParentDir => {
-                if !out.pop() {
-                    out.push("..");
-                }
-            }
-            other => out.push(other),
-        }
-    }
-    out
 }
 
 /// `to` relative to `from`, using `..` where needed. Both are absolute and normalized.
@@ -453,6 +438,25 @@ mod tests {
         let found = cargo_test(&paths(), &out(101, &[ERR, SUMMARY].join("\n"), "")).unwrap();
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].kind, CheckKind::Test);
+    }
+
+    #[test]
+    fn cargo_test_without_a_panic_message_says_only_that_it_failed() {
+        let blank = "test t ... FAILED\n---- t stdout ----\nthread 't' panicked at crates/core/src/lib.rs:5:3:\n\nfailures:\n    t\n";
+        let found = cargo_test(&paths(), &out(101, blank, "")).unwrap();
+        assert_eq!(found[0].message, "test t failed");
+    }
+
+    #[test]
+    fn paths_with_parent_segments_are_resolved_lexically() {
+        assert_eq!(
+            paths().relative("crates/core/../sibling/src/x.rs"),
+            Some(PathBuf::from("../sibling/src/x.rs"))
+        );
+        assert_eq!(
+            paths().relative("crates/core/src/../lib.rs"),
+            Some(PathBuf::from("lib.rs"))
+        );
     }
 
     #[test]

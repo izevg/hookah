@@ -41,7 +41,10 @@ pub fn output_dir(workspace_root: &Path) -> PathBuf {
 
 /// The `--jobs` value: half the CPUs, between 1 and [`MAX_JOBS`].
 pub fn jobs() -> usize {
-    let cpus = std::thread::available_parallelism().map_or(2, usize::from);
+    jobs_for(std::thread::available_parallelism().map_or(2, usize::from))
+}
+
+fn jobs_for(cpus: usize) -> usize {
     (cpus / 2).clamp(1, MAX_JOBS)
 }
 
@@ -132,6 +135,19 @@ mod tests {
             workspace_root: "/ws".into(),
             dependents: vec![],
         }
+    }
+
+    #[test]
+    fn jobs_are_half_the_cpus_between_one_and_the_maximum() {
+        assert_eq!(jobs_for(1), 1);
+        assert_eq!(jobs_for(2), 1);
+        assert_eq!(jobs_for(3), 1);
+        assert_eq!(jobs_for(4), 2);
+        assert_eq!(jobs_for(7), 3);
+        assert_eq!(jobs_for(8), 4);
+        assert_eq!(jobs_for(64), MAX_JOBS);
+        let cpus = std::thread::available_parallelism().map_or(2, usize::from);
+        assert_eq!(jobs(), jobs_for(cpus));
     }
 
     #[test]

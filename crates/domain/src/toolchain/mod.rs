@@ -54,3 +54,50 @@ impl Toolchain {
         self.tools.is_empty() && self.missing.is_empty()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use super::*;
+
+    fn tool(name: &str, kind: CheckKind) -> Tool {
+        Tool {
+            name: name.into(),
+            kind,
+            command: CommandSpec::new(name, vec![], "/r", Duration::from_secs(1)),
+        }
+    }
+
+    #[test]
+    fn exposes_tools_and_filters_by_kind_in_order() {
+        let t = Toolchain::new(vec![
+            tool("fmt", CheckKind::Format),
+            tool("clippy", CheckKind::Lint),
+            tool("other", CheckKind::Lint),
+        ]);
+        assert_eq!(t.tools().len(), 3);
+        let lint: Vec<_> = t
+            .of_kind(CheckKind::Lint)
+            .map(|t| t.name.as_str())
+            .collect();
+        assert_eq!(lint, ["clippy", "other"]);
+        assert_eq!(t.of_kind(CheckKind::Test).count(), 0);
+    }
+
+    #[test]
+    fn missing_tools_are_stored() {
+        let m = MissingTool::new("cargo-mutants", CheckKind::Mutation, "install it");
+        let t = Toolchain::default().with_missing(vec![m.clone()]);
+        assert_eq!(t.missing(), [m]);
+        assert!(Toolchain::default().missing().is_empty());
+    }
+
+    #[test]
+    fn empty_only_without_tools_and_without_missing() {
+        assert!(Toolchain::default().is_empty());
+        assert!(!Toolchain::new(vec![tool("fmt", CheckKind::Format)]).is_empty());
+        let missing = MissingTool::new("x", CheckKind::Lint, "h");
+        assert!(!Toolchain::default().with_missing(vec![missing]).is_empty());
+    }
+}

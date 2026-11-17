@@ -45,6 +45,13 @@ mod tests {
     use super::*;
 
     #[test]
+    fn names_are_stable() {
+        assert_eq!(Ecosystem::Node.name(), "node");
+        assert_eq!(Ecosystem::Python.name(), "python");
+        assert_eq!(Ecosystem::Rust.name(), "rust");
+    }
+
+    #[test]
     fn maps_extensions() {
         assert!(Ecosystem::Rust.can_check(Path::new("/a/b.rs")));
         assert!(Ecosystem::Node.can_check(Path::new("x.tsx")));

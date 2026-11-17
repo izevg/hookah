@@ -107,6 +107,8 @@ mod tests {
 
     #[test]
     fn range_validation_and_contains() {
+        let r = LineRange::new(2, 7).unwrap();
+        assert_eq!((r.start(), r.end()), (2, 7));
         assert!(LineRange::new(0, 3).is_none());
         assert!(LineRange::new(5, 4).is_none());
         let c = ChangedLines::Ranges(vec![
@@ -136,5 +138,6 @@ mod tests {
         let g: Vec<_> = s.groups().collect();
         assert_eq!(g.len(), 2);
         assert_eq!(g[0].files.len(), 2);
+        assert!(!s.is_empty());
     }
 }

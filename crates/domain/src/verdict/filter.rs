@@ -77,6 +77,17 @@ mod tests {
     }
 
     #[test]
+    fn lines_of_returns_tracked_lines() {
+        let f = filter();
+        assert_eq!(
+            f.lines_of(Path::new("src/new.rs")),
+            Some(&ChangedLines::All)
+        );
+        assert!(f.lines_of(Path::new("src/a.rs")).is_some());
+        assert!(f.lines_of(Path::new("nope.rs")).is_none());
+    }
+
+    #[test]
     fn errors_always_pass_even_in_unchanged_files() {
         let f = filter();
         assert!(f.keeps(&finding(Severity::Error, Location::line("src/other.rs", 1))));

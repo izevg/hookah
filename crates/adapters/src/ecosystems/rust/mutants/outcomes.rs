@@ -21,7 +21,7 @@ use hookah_domain::finding::{Finding, Location, Severity};
 use hookah_domain::toolchain::CheckKind;
 use serde::Deserialize;
 
-use super::super::parse::{Paths, tail};
+use super::super::parse::Paths;
 
 #[derive(Deserialize)]
 struct Outcomes {
@@ -70,19 +70,18 @@ pub fn parse(
     outcomes_json: Option<&str>,
 ) -> Result<Vec<Finding>, PortError> {
     if output.timed_out {
-        return Err(PortError::new("cargo-mutants timed out"));
+        return Err(PortError::new("timed out"));
     }
     match output.exit_code {
         Some(0 | 2 | 3) => {}
         Some(4) => {
-            return Err(PortError::new(format!(
-                "cargo-mutants: the unmutated baseline fails to build or pass its tests: {}",
-                tail_of(output)
-            )));
+            return Err(PortError::new(
+                "the unmutated tree fails to build or pass its tests",
+            ));
         }
         code => {
             return Err(PortError::new(format!(
-                "cargo-mutants failed (exit {}): {}",
+                "failed (exit {}): {}",
                 code.map_or_else(|| "signal".into(), |c| c.to_string()),
                 tail_of(output)
             )));
@@ -93,17 +92,17 @@ pub fn parse(
         return if output.exit_code == Some(0) {
             Ok(vec![])
         } else {
-            Err(PortError::new("cargo-mutants wrote no outcomes.json"))
+            Err(PortError::new("wrote no outcomes.json"))
         };
     };
     let parsed: Outcomes = serde_json::from_str(json)
-        .map_err(|e| PortError::new(format!("unreadable cargo-mutants outcomes: {e}")))?;
+        .map_err(|e| PortError::new(format!("unreadable outcomes: {e}")))?;
     let mut findings = Vec::new();
     for outcome in parsed.outcomes {
         match outcome.scenario {
             Scenario::Baseline(name) if outcome.summary != "Success" => {
                 return Err(PortError::new(format!(
-                    "cargo-mutants: the unmutated {} did not pass ({})",
+                    "the unmutated {} did not pass ({})",
                     name.to_lowercase(),
                     outcome.summary
                 )));
@@ -133,13 +132,17 @@ pub fn parse(
     Ok(findings)
 }
 
-/// The last lines of what the tool printed.
+/// The tool's last error line (`ERROR ...` or `Error: ...`) without its marker, or a fallback.
 fn tail_of(output: &ProcessOutput) -> String {
-    if output.stderr.trim().is_empty() {
-        tail(&output.stdout)
-    } else {
-        tail(&output.stderr)
-    }
+    let text = format!("{}\n{}", output.stderr, output.stdout);
+    text.lines()
+        .rev()
+        .find_map(|l| {
+            let l = l.trim();
+            l.strip_prefix("ERROR ")
+                .or_else(|| l.strip_prefix("Error: "))
+        })
+        .map_or_else(|| "no details".into(), |l| l.chars().take(200).collect())
 }
 
 /// The mutant's name without its `file:line:col: ` prefix, such as `replace + with - in add`.
@@ -208,7 +211,10 @@ mod tests {
     #[test]
     fn baseline_failure_is_a_port_error() {
         let e = parse(&paths(), &exit(4), Some(BASELINE_FAILED)).unwrap_err();
-        assert!(e.message().contains("baseline"), "{}", e.message());
+        assert_eq!(
+            e.message(),
+            "the unmutated tree fails to build or pass its tests"
+        );
         // Even if the exit code were lost, the outcome file says it.
         let e = parse(&paths(), &exit(2), Some(BASELINE_FAILED)).unwrap_err();
         assert!(e.message().contains("baseline"));

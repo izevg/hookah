@@ -12,8 +12,9 @@
 //! lacks become non-blocking `MissingTool` notices. Finding paths are rendered relative to the
 //! request's display root, so projects in a monorepo stay distinguishable.
 
+use hookah_domain::finding::Severity;
 use hookah_domain::project::locate_project;
-use hookah_domain::session::{ChangeSet, ChangedLines, FileRole, Phase, mutation_applies};
+use hookah_domain::session::{ChangeSet, ChangedLines, FileRole, Phase, TestRun, mutation_applies};
 use hookah_domain::toolchain::{CheckKind, MutationSelection, TestSelection};
 use hookah_domain::verdict::ReportingFilter;
 
@@ -126,7 +127,11 @@ impl<'a> CheckSession<'a> {
                 CheckKind::Mutation => mutation,
                 _ => true,
             });
+            let mut test_run = TestRun::NotRun;
             for &kind in Phase::Stop.check_kinds() {
+                if kind == CheckKind::Mutation && !test_run.allows_mutation() {
+                    continue;
+                }
                 let targets = match kind {
                     CheckKind::Test => &test_targets,
                     CheckKind::Mutation => &mutant_targets,
@@ -135,8 +140,17 @@ impl<'a> CheckSession<'a> {
                 if targets.is_empty() {
                     continue;
                 }
+                let (found_before, failed_before) = (log.findings.len(), log.failure_count());
+                let mut ran = false;
                 for tool in toolchain.of_kind(kind) {
+                    ran = true;
                     log.run_tool(&self.ports, project, tool, targets);
+                }
+                if kind == CheckKind::Test {
+                    let errors = log.findings[found_before..]
+                        .iter()
+                        .any(|f| f.kind == CheckKind::Test && f.severity == Severity::Error);
+                    test_run = TestRun::observe(ran, errors, log.failure_count() > failed_before);
                 }
             }
 
@@ -255,6 +269,74 @@ mod tests {
         w.test_files = vec!["/r/src/b.rs".into()];
         assert_eq!(run(&w), Outcome::pass());
         assert!(w.calls().is_empty());
+    }
+
+    fn mutation_world() -> World {
+        let mut w = world();
+        w.toolchain = hookah_domain::toolchain::Toolchain::new(vec![
+            tool("test", CheckKind::Test),
+            tool("mut", CheckKind::Mutation),
+        ]);
+        w.test_files = vec!["/r/src/b.rs".into()];
+        w.selection = TestSelection::Targets(vec!["t".into()]);
+        w.mutants = MutationSelection::Targets(vec!["src/a.rs".into()]);
+        w
+    }
+
+    #[test]
+    fn mutation_is_skipped_after_failed_tests() {
+        let mut w = mutation_world();
+        w.findings.insert(
+            "test".into(),
+            vec![finding(
+                CheckKind::Test,
+                Severity::Error,
+                "src/a.rs",
+                3,
+                "assertion failed",
+            )],
+        );
+        assert!(matches!(run(&w).verdict, Verdict::Fail(_)));
+        assert_eq!(w.calls(), ["test t"]);
+
+        let mut w = mutation_world();
+        w.run_fails = vec!["test".into()];
+        assert!(matches!(run(&w).verdict, Verdict::Degraded(_)));
+        assert_eq!(w.calls(), ["test t"]);
+
+        let mut w = mutation_world();
+        w.timeouts = vec!["test".into()];
+        assert!(matches!(run(&w).verdict, Verdict::Degraded(_)));
+        assert_eq!(w.calls(), ["test t"]);
+    }
+
+    #[test]
+    fn mutation_runs_after_green_tests_and_when_no_tests_ran() {
+        let w = mutation_world();
+        assert_eq!(run(&w), Outcome::pass());
+        assert_eq!(w.calls(), ["test t", "mut src/a.rs"]);
+
+        let mut w = mutation_world();
+        w.selection = TestSelection::None;
+        assert_eq!(run(&w), Outcome::pass());
+        assert_eq!(w.calls(), ["mut src/a.rs"]);
+    }
+
+    #[test]
+    fn test_warnings_do_not_block_mutation() {
+        let mut w = mutation_world();
+        w.findings.insert(
+            "test".into(),
+            vec![finding(
+                CheckKind::Test,
+                Severity::Warning,
+                "src/a.rs",
+                3,
+                "slow test",
+            )],
+        );
+        run(&w);
+        assert_eq!(w.calls(), ["test t", "mut src/a.rs"]);
     }
 
     #[test]

@@ -110,6 +110,11 @@ impl RunLog {
         }
     }
 
+    /// Number of degradation reasons recorded so far.
+    pub fn failure_count(&self) -> usize {
+        self.failures.len()
+    }
+
     /// Runs `tool` on `targets`, then parses its output. Every error becomes a failure entry.
     pub fn run_tool(
         &mut self,

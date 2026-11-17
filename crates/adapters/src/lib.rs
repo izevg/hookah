@@ -3,6 +3,7 @@
 //! - [`fs`]: project location and manifest reading on the real filesystem.
 //! - [`process`]: running external tools with timeouts and capturing output.
 //! - [`store`]: post-MVP storage stubs (baseline); nothing implemented yet.
+//! - [`vcs`]: changed files and lines as reported by `git`.
 //! - [`config`]: `.hookah.toml` loading and overrides on top of auto-detection.
 //! - [`ecosystems`]: per-ecosystem toolchain detection, output parsing, and test selection.
 
@@ -11,3 +12,4 @@ pub mod ecosystems;
 pub mod fs;
 pub mod process;
 pub mod store;
+pub mod vcs;

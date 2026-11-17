@@ -94,12 +94,30 @@ pub struct PackageInfo {
     pub manager: PackageManager,
     /// The `scripts.test` command of the package, if any.
     pub test_script: Option<String>,
+    /// The `name` of the package, if any.
+    pub name: Option<String>,
+    /// The `version` of the package, if any.
+    pub version: Option<String>,
+    /// The other workspace packages that depend on this one (see [`super::workspace`]), each read
+    /// without its own dependents.
+    pub dependents: Vec<PackageInfo>,
     declared: BTreeSet<String>,
 }
 
 impl PackageInfo {
-    /// Reads the package at `root` (the directory of its `package.json`).
+    /// Reads the package at `root` (the directory of its `package.json`) and finds the workspace
+    /// packages that depend on it.
     pub fn read(root: &Path) -> Result<Self, PortError> {
+        let mut info = Self::read_alone(root)?;
+        info.dependents = super::workspace::dependents(&info)
+            .iter()
+            .filter_map(|dir| Self::read_alone(dir).ok())
+            .collect();
+        Ok(info)
+    }
+
+    /// Reads the package at `root` without looking for its dependents.
+    fn read_alone(root: &Path) -> Result<Self, PortError> {
         let manifest = read_manifest(&root.join("package.json"))?;
         let workspace_root = find_workspace_root(root);
         let root_manifest = if workspace_root == root {
@@ -126,6 +144,9 @@ impl PackageInfo {
                 .and_then(|s| s.get("test"))
                 .and_then(Value::as_str)
                 .map(str::to_owned),
+            name: string_field(&manifest, "name"),
+            version: string_field(&manifest, "version"),
+            dependents: Vec::new(),
             declared,
         };
         let manager = info
@@ -175,7 +196,12 @@ impl PackageInfo {
     }
 }
 
-fn read_manifest(path: &Path) -> Result<Value, PortError> {
+fn string_field(manifest: &Value, key: &str) -> Option<String> {
+    manifest.get(key)?.as_str().map(str::to_owned)
+}
+
+/// Reads and parses a `package.json`.
+pub(super) fn read_manifest(path: &Path) -> Result<Value, PortError> {
     let text = fs::read_to_string(path)
         .map_err(|e| PortError::new(format!("cannot read {}: {e}", path.display())))?;
     serde_json::from_str(&text)

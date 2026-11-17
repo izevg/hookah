@@ -19,16 +19,22 @@
 //! | test         | jest       | `jest --ci --json --no-watchman --passWithNoTests --findRelatedTests {targets}` |
 //! | mutation     | stryker    | `stryker run --incremental --reporters json --mutate {targets}` (one comma-joined target) |
 //!
+//! In a workspace, typecheck and test also run for the packages that depend on the edited one (see
+//! [`workspace`]): one `tsc -b` from a workspace solution `tsconfig.json` that references them,
+//! else one `tsc` per dependent, and the test runner of each dependent from its own directory.
+//!
 //! Both biome and eslint lint when both are configured. Of vitest and jest, vitest runs unless
 //! `scripts.test` mentions jest and not vitest. Only mutation testing reports a missing tool, and
 //! only when a test runner exists. Nothing is ever installed.
 
 pub mod package;
 pub mod tsconfig;
+pub mod workspace;
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use hookah_domain::path::normalize;
 use hookah_domain::toolchain::{Arg, CheckKind, CommandSpec, MissingTool, Tool, Toolchain};
 
 use package::PackageInfo;
@@ -176,9 +182,50 @@ fn find_runner(info: &PackageInfo) -> Option<(Runner, Installed)> {
         .find_map(|r| Some((r, installed(info, r.tool_name(), r.tool_name())?)))
 }
 
-/// Whether the project has a test runner, that is, whether tests can be selected for it.
+/// Whether the project or a workspace package depending on it has a test runner, that is,
+/// whether tests can be selected.
 pub fn has_test_runner(info: &PackageInfo) -> bool {
-    find_runner(info).is_some()
+    find_runner(info).is_some() || info.dependents.iter().any(|d| find_runner(d).is_some())
+}
+
+/// The related-tests command of `runner`, run from `cwd`.
+fn test_tool(
+    runner: Runner,
+    bin: &Installed,
+    cwd: &Path,
+    cache: &impl Fn() -> Option<PathBuf>,
+) -> Tool {
+    match runner {
+        Runner::Vitest => {
+            let mut args = vec![lit("related"), lit("--run"), lit("--reporter=json")];
+            if let Some(dir) = cache() {
+                args.push(lit(&format!(
+                    "--outputFile={}",
+                    dir.join(VITEST_REPORT).to_string_lossy()
+                )));
+            }
+            args.extend([lit("--passWithNoTests"), Arg::Targets]);
+            tool(VITEST, CheckKind::Test, bin, args, cwd, TEST_TIMEOUT)
+        }
+        Runner::Jest => tool(
+            JEST,
+            CheckKind::Test,
+            bin,
+            [
+                "--ci",
+                "--json",
+                "--no-watchman",
+                "--passWithNoTests",
+                "--findRelatedTests",
+            ]
+            .iter()
+            .map(|a| lit(a))
+            .chain([Arg::Targets])
+            .collect(),
+            cwd,
+            TEST_TIMEOUT,
+        ),
+    }
 }
 
 /// Builds the toolchain of the package. `cache` yields the project cache directory when a tool
@@ -251,10 +298,8 @@ pub fn toolchain(info: &PackageInfo, cache: impl Fn() -> Option<PathBuf>) -> Too
         ));
     }
 
-    if let Some(t) = installed(info, "typescript", TSC)
-        && let Some(args) = tsc_args(info, &cache)
-    {
-        tools.push(tool(TSC, CheckKind::Typecheck, &t, args, root, TSC_TIMEOUT));
+    if let Some(t) = installed(info, "typescript", TSC) {
+        tools.extend(tsc_tools(info, &t, &cache));
     }
 
     if let Some(d) = installed(info, "dependency-cruiser", DEPCRUISE)
@@ -278,37 +323,13 @@ pub fn toolchain(info: &PackageInfo, cache: impl Fn() -> Option<PathBuf>) -> Too
 
     let runner = find_runner(info);
     if let Some((runner, bin)) = &runner {
-        tools.push(match runner {
-            Runner::Vitest => {
-                let mut args = vec![lit("related"), lit("--run"), lit("--reporter=json")];
-                if let Some(dir) = cache() {
-                    args.push(lit(&format!(
-                        "--outputFile={}",
-                        dir.join(VITEST_REPORT).to_string_lossy()
-                    )));
-                }
-                args.extend([lit("--passWithNoTests"), Arg::Targets]);
-                tool(VITEST, CheckKind::Test, bin, args, root, TEST_TIMEOUT)
-            }
-            Runner::Jest => tool(
-                JEST,
-                CheckKind::Test,
-                bin,
-                [
-                    "--ci",
-                    "--json",
-                    "--no-watchman",
-                    "--passWithNoTests",
-                    "--findRelatedTests",
-                ]
-                .iter()
-                .map(|a| lit(a))
-                .chain([Arg::Targets])
-                .collect(),
-                root,
-                TEST_TIMEOUT,
-            ),
-        });
+        tools.push(test_tool(*runner, bin, root, &cache));
+    }
+    // The tests of the workspace packages that depend on this one, each from its own directory.
+    for dependent in &info.dependents {
+        if let Some((runner, bin)) = find_runner(dependent) {
+            tools.push(test_tool(runner, &bin, &dependent.root, &cache));
+        }
     }
 
     let mut missing = Vec::new();
@@ -344,7 +365,70 @@ fn eslint_configured(info: &PackageInfo) -> bool {
             .is_some_and(|m| m.get("eslintConfig").is_some())
 }
 
-/// The `tsc` arguments for the project, or `None` without a `tsconfig.json`.
+/// The typecheck commands of an edit in the package: the package itself plus the workspace
+/// packages that depend on it, since an API change breaks them, not the package.
+///
+/// A workspace root `tsconfig.json` with `references` to the package or one of its dependents is
+/// a solution config: one `tsc -b` from the workspace root covers all of them. Otherwise the
+/// package and each dependent with a `tsconfig.json` run on their own, from their directory.
+fn tsc_tools(
+    info: &PackageInfo,
+    bin: &Installed,
+    cache: &impl Fn() -> Option<PathBuf>,
+) -> Vec<Tool> {
+    if let Some(args) = solution_args(info) {
+        return vec![tool(
+            TSC,
+            CheckKind::Typecheck,
+            bin,
+            args,
+            &info.workspace_root,
+            TSC_TIMEOUT,
+        )];
+    }
+    let own = tsc_args(&info.root, cache).map(|args| (info.root.as_path(), args));
+    let dependents = info
+        .dependents
+        .iter()
+        .filter_map(|d| Some((d.root.as_path(), tsc_args(&d.root, &|| None)?)));
+    own.into_iter()
+        .chain(dependents)
+        .map(|(dir, args)| tool(TSC, CheckKind::Typecheck, bin, args, dir, TSC_TIMEOUT))
+        .collect()
+}
+
+/// The `tsc -b` arguments for a workspace root solution config that references the package or a
+/// dependent, or `None` without dependents or such a config.
+fn solution_args(info: &PackageInfo) -> Option<Vec<Arg>> {
+    if info.dependents.is_empty() || info.workspace_root == info.root {
+        return None;
+    }
+    let text = std::fs::read_to_string(info.workspace_root.join(TSCONFIG)).ok()?;
+    let referenced: Vec<PathBuf> = tsconfig::reference_paths(&text)
+        .iter()
+        .map(|r| {
+            let path = normalize(&info.workspace_root.join(r));
+            if path.extension().is_some_and(|e| e == "json") {
+                path.parent().map(Path::to_path_buf).unwrap_or(path)
+            } else {
+                path
+            }
+        })
+        .collect();
+    std::iter::once(&info.root)
+        .chain(info.dependents.iter().map(|d| &d.root))
+        .any(|dir| referenced.contains(dir))
+        .then(build_args)
+}
+
+fn build_args() -> Vec<Arg> {
+    ["-b", "--pretty", "false", TSCONFIG]
+        .iter()
+        .map(|a| lit(a))
+        .collect()
+}
+
+/// The `tsc` arguments for the package at `dir`, or `None` without a `tsconfig.json`.
 ///
 /// Project references need `tsc -b`: a plain `-p` run fails with TS6305 for every import of a
 /// referenced project until that project has been built, and checks nothing at all for a
@@ -352,15 +436,10 @@ fn eslint_configured(info: &PackageInfo) -> bool {
 /// `--noEmit` (TypeScript rejects it for referenced projects, TS6310), so it writes the
 /// declared build outputs of the projects, as the project's own `tsc -b` would. Everything else
 /// runs `--noEmit` with incremental state kept in the cache directory.
-fn tsc_args(info: &PackageInfo, cache: &impl Fn() -> Option<PathBuf>) -> Option<Vec<Arg>> {
-    let text = std::fs::read_to_string(info.root.join(TSCONFIG)).ok()?;
+fn tsc_args(dir: &Path, cache: &impl Fn() -> Option<PathBuf>) -> Option<Vec<Arg>> {
+    let text = std::fs::read_to_string(dir.join(TSCONFIG)).ok()?;
     if tsconfig::has_references(&text) {
-        return Some(vec![
-            lit("-b"),
-            lit("--pretty"),
-            lit("false"),
-            lit(TSCONFIG),
-        ]);
+        return Some(build_args());
     }
     let mut args: Vec<Arg> = ["--noEmit", "--pretty", "false", "-p", TSCONFIG]
         .iter()
@@ -594,6 +673,145 @@ mod tests {
             argv(&detect(&s), CheckKind::Typecheck, TSC),
             ["-b", "--pretty", "false", "tsconfig.json"]
         );
+    }
+
+    /// A pnpm workspace with `typescript` and `vitest` at the root, `packages/lib`, and
+    /// `packages/app` (which depends on lib) and `packages/cli` (which does not).
+    fn workspace() -> Scratch {
+        let s = Scratch::new();
+        s.write("pnpm-workspace.yaml", "packages:\n  - packages/*\n");
+        s.write(
+            "package.json",
+            r#"{"devDependencies":{"typescript":"5","vitest":"2"}}"#,
+        );
+        s.install("", "typescript", "5.6.2", Some("tsc"));
+        s.install("", "vitest", "2.1.0", Some("vitest"));
+        s.write("packages/lib/package.json", r#"{"name":"lib"}"#);
+        s.write(
+            "packages/app/package.json",
+            r#"{"name":"app","dependencies":{"lib":"workspace:*"}}"#,
+        );
+        s.write("packages/cli/package.json", r#"{"name":"cli"}"#);
+        s
+    }
+
+    fn detect_in(s: &Scratch, dir: &str) -> Toolchain {
+        toolchain(&PackageInfo::read(&s.path(dir)).unwrap(), cache)
+    }
+
+    fn typechecks(tc: &Toolchain) -> Vec<(PathBuf, Vec<String>)> {
+        tc.of_kind(CheckKind::Typecheck)
+            .map(|t| (t.command.cwd.clone(), t.command.expand_args(&[])))
+            .collect()
+    }
+
+    #[test]
+    fn dependents_are_typechecked_from_their_own_directory() {
+        let s = workspace();
+        s.write("packages/lib/tsconfig.json", "{}");
+        s.write("packages/app/tsconfig.json", "{}");
+        s.write("packages/cli/tsconfig.json", "{}");
+        let checks = typechecks(&detect_in(&s, "packages/lib"));
+        assert_eq!(checks.len(), 2);
+        assert_eq!(checks[0].0, s.path("packages/lib"));
+        assert!(checks[0].1.contains(&"--incremental".to_string()));
+        assert_eq!(checks[1].0, s.path("packages/app"));
+        assert_eq!(
+            checks[1].1,
+            ["--noEmit", "--pretty", "false", "-p", "tsconfig.json"]
+        );
+        // A dependent with references builds; one without a tsconfig is skipped.
+        s.write(
+            "packages/app/tsconfig.json",
+            r#"{"references":[{"path":"../lib"}]}"#,
+        );
+        let checks = typechecks(&detect_in(&s, "packages/lib"));
+        assert_eq!(checks[1].1, ["-b", "--pretty", "false", "tsconfig.json"]);
+        std::fs::remove_file(s.path("packages/app/tsconfig.json")).unwrap();
+        assert_eq!(typechecks(&detect_in(&s, "packages/lib")).len(), 1);
+        // Without a tsconfig of its own, the package leaves only its dependents.
+        std::fs::remove_file(s.path("packages/lib/tsconfig.json")).unwrap();
+        s.write("packages/app/tsconfig.json", "{}");
+        let checks = typechecks(&detect_in(&s, "packages/lib"));
+        assert_eq!(checks.len(), 1);
+        assert_eq!(checks[0].0, s.path("packages/app"));
+        // No dependents, no extra runs.
+        s.write("packages/cli/tsconfig.json", "{}");
+        assert_eq!(typechecks(&detect_in(&s, "packages/cli")).len(), 1);
+    }
+
+    #[test]
+    fn a_workspace_solution_config_is_one_build_from_the_root() {
+        let s = workspace();
+        s.write("packages/lib/tsconfig.json", "{}");
+        s.write("packages/app/tsconfig.json", "{}");
+        s.write(
+            "tsconfig.json",
+            r#"{"files":[],"references":[{"path":"packages/lib"},{"path":"./packages/app/tsconfig.json"}]}"#,
+        );
+        let build = vec![
+            "-b".to_string(),
+            "--pretty".into(),
+            "false".into(),
+            "tsconfig.json".into(),
+        ];
+        assert_eq!(
+            typechecks(&detect_in(&s, "packages/lib")),
+            [(s.0.clone(), build.clone())]
+        );
+        // Referencing only a dependent is enough; referencing neither is not.
+        s.write(
+            "tsconfig.json",
+            r#"{"references":[{"path":"packages/app"}]}"#,
+        );
+        assert_eq!(
+            typechecks(&detect_in(&s, "packages/lib")),
+            [(s.0.clone(), build)]
+        );
+        s.write(
+            "tsconfig.json",
+            r#"{"references":[{"path":"packages/cli"}]}"#,
+        );
+        assert_eq!(typechecks(&detect_in(&s, "packages/lib")).len(), 2);
+        // Without dependents the package keeps its own check.
+        s.write(
+            "tsconfig.json",
+            r#"{"references":[{"path":"packages/cli"}]}"#,
+        );
+        s.write("packages/cli/tsconfig.json", "{}");
+        assert_eq!(
+            typechecks(&detect_in(&s, "packages/cli"))[0].0,
+            s.path("packages/cli")
+        );
+    }
+
+    #[test]
+    fn dependents_run_their_own_test_runner_from_their_directory() {
+        let s = workspace();
+        let tc = detect_in(&s, "packages/lib");
+        let cwds: Vec<_> = tc
+            .of_kind(CheckKind::Test)
+            .map(|t| t.command.cwd.clone())
+            .collect();
+        assert_eq!(cwds, [s.path("packages/lib"), s.path("packages/app")]);
+        assert!(has_test_runner(
+            &PackageInfo::read(&s.path("packages/lib")).unwrap()
+        ));
+        // A dependent with a runner of its own makes tests selectable, even for a package
+        // without one.
+        let only_dependent = Scratch::new();
+        only_dependent.write("pnpm-workspace.yaml", "packages:\n  - packages/*\n");
+        only_dependent.write("package.json", "{}");
+        only_dependent.write("packages/lib/package.json", r#"{"name":"lib"}"#);
+        only_dependent.write(
+            "packages/app/package.json",
+            r#"{"name":"app","dependencies":{"lib":"*"},"devDependencies":{"jest":"29"}}"#,
+        );
+        only_dependent.install("packages/app", "jest", "29.0.0", Some("jest"));
+        let info = PackageInfo::read(&only_dependent.path("packages/lib")).unwrap();
+        assert!(has_test_runner(&info));
+        let tc = toolchain(&info, cache);
+        assert_eq!(tc.of_kind(CheckKind::Test).count(), 1);
     }
 
     #[test]

@@ -111,8 +111,8 @@ is installed on the machine.
 | | `02-prettier-rewrite` | edit | Prettier rewrites the file; the agent is told to re-read it |
 | | `03-failing-test-stop` | stop | a failing Jest test fails the stop; the missing Stryker notice carries the `npm i -D` hint |
 | | `04-test-edit-no-stryker` | stop | a test edit without Stryker installed: passes, with a `tool not installed` warning carrying the `npm i -D` hint |
-| `node/pnpm-workspace` | `01-lib-api-break` | edit | a `lib` type change that breaks `app`: the edit phase only checks `lib`, so it stays silent (known gap) |
-| | `02-lib-api-break-stop` | stop | the same change at stop: the related `lib` tests run (the `app` break is not reported, known gap) |
+| `node/pnpm-workspace` | `01-lib-api-break` | edit | a `lib` type change that breaks `app`: the workspace solution `tsc -b` also covers the dependent, so the break is reported in `app` |
+| | `02-lib-api-break-stop` | stop | the same change at stop: the `lib` tests, the `app` tests (run from `packages/app`), and the `app` type error are all reported |
 | | `03-app-type-error` | edit | a type error in `app` against `lib` through `tsc -b`, shown with its workspace-relative path |
 
 `rust/crate/07-test-edit-mutation` records the answer for a machine without `cargo-mutants`, so

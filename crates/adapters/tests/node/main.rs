@@ -148,7 +148,7 @@ fn hermetic_lint_typecheck_and_test_through_fake_bins() {
     let TestSelection::Targets(targets) = eco.select_tests(&project, &changed).unwrap() else {
         panic!("expected targets");
     };
-    assert_eq!(targets, ["src/a.ts"]);
+    assert_eq!(targets, [s.0.join("src/a.ts").to_string_lossy()]);
     let refs: Vec<&str> = targets.iter().map(String::as_str).collect();
     let tests = check(&project, CheckKind::Test, "vitest", &refs).unwrap();
     assert_eq!(tests.len(), 1, "{tests:?}");

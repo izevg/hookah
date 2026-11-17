@@ -63,6 +63,26 @@ build outputs the projects declare (`outDir`, `*.tsbuildinfo`), exactly like the
 `tsc -b`. Only the project's `tsconfig.json` is considered; test-only configs such as
 `tsconfig.spec.json` are not.
 
+**Workspace dependents.** An API change breaks the packages that use it, not the package, so
+the edit's checks also cover its dependents, like the Rust adapter does for path dependents.
+Members come from `pnpm-workspace.yaml` (`packages:`) or the root `package.json` `workspaces`
+(`*`, `**`, `!` exclusions; `node_modules` and hidden directories are skipped). A member is a
+direct dependent when one of `dependencies`, `devDependencies`, `peerDependencies`, or
+`optionalDependencies` names the package with a `workspace:` spec, `*`, `latest`, or a `^`, `~`,
+or exact version the package's own `version` satisfies.
+
+- Typecheck: a workspace-root `tsconfig.json` whose `references` include the package or a
+  dependent is a solution config, and one `tsc -b tsconfig.json` from the workspace root runs
+  instead of the per-package command. Otherwise the package's own command runs plus one per
+  dependent that has a `tsconfig.json` (`tsc -b` with references, else `tsc --noEmit`, without
+  incremental state), each from the dependent's directory.
+- Test: every dependent with a test runner gets its own `vitest related` / `jest
+  --findRelatedTests` run from its directory, so the tests of a dependent that import the
+  changed files run in the stop phase. The changed files are passed as absolute paths, which
+  mean the same file to every package's runner.
+- Errors found in a dependent are reported as for any other file (never line-filtered); paths
+  are shown relative to the agent's directory, such as `packages/app/src/main.ts`.
+
 **Output.**
 
 - Biome (v1.9 and v2) and ESLint JSON; Prettier syntax errors; `tsc` `path(line,col): error
@@ -79,7 +99,7 @@ build outputs the projects declare (`outDir`, `*.tsbuildinfo`), exactly like the
   never a pass.
 
 **Test selection.** The changed files with a Node extension under the project (not in
-`node_modules`) become the targets, project-relative. The runner's `related` mode finds the tests
+`node_modules`) become the targets, absolute. The runner's `related` mode finds the tests
 that import them. No runner, or no such file, selects nothing.
 
 **Mutation.** Changed tests map to sources by name, keeping files that exist: `foo.test.ts` and

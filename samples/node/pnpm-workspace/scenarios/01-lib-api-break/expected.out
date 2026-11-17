@@ -1,3 +1,5 @@
-exit: 0
+exit: 2
 --- stdout
 --- stderr
+hookah: 1 problem after editing packages/lib/src/index.ts - fix before continuing:
+packages/app/src/main.ts:4:24: [typecheck] Object literal may only specify known properties, and 'name' does not exist in type 'User'. [TS2353]

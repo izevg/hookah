@@ -87,6 +87,17 @@ fn remove_trailing_commas(text: &str) -> String {
     out
 }
 
+/// The `path` of every project reference, as written.
+pub fn reference_paths(text: &str) -> Vec<String> {
+    serde_json::from_str::<Value>(&strip_jsonc(text))
+        .ok()
+        .and_then(|v| v.get("references")?.as_array().cloned())
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|r| r.get("path")?.as_str().map(str::to_owned))
+        .collect()
+}
+
 /// Whether the tsconfig text declares at least one project reference. Unreadable text counts as
 /// "no references": the plain `-p` command then reports whatever is wrong with it.
 pub fn has_references(text: &str) -> bool {
@@ -103,6 +114,15 @@ pub fn has_references(text: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn lists_reference_paths() {
+        let text = r#"{ // c
+          "references": [{ "path": "./a" }, { "path": "b/tsconfig.json", }, { "nopath": 1 }] }"#;
+        assert_eq!(reference_paths(text), ["./a", "b/tsconfig.json"]);
+        assert!(reference_paths("{}").is_empty());
+        assert!(reference_paths("nope").is_empty());
+    }
 
     #[test]
     fn strips_comments_and_trailing_commas() {

@@ -2,7 +2,7 @@
 //!
 //! [`parse`] sends the output of one tool to the parser that knows its format. Every parser
 //! prefers the tool's machine-readable output and returns findings with paths relative to the
-//! project root:
+//! project root (or to the tool's own directory, see [`parse`]):
 //!
 //! - [`lint`]: Biome and ESLint JSON, Prettier syntax errors (format and lint tools);
 //! - [`graph`]: `tsc` diagnostics and the dependency-cruiser JSON (whole-program checks);
@@ -27,13 +27,27 @@ use serde_json::Value;
 use super::detect;
 use crate::ecosystems::rust::parse::tail;
 
-/// Turns the output of `tool` into findings.
+/// Turns the output of `tool` into findings with paths relative to the project root. A tool that
+/// ran in another directory (a workspace package that depends on the project) reports paths
+/// relative to that directory; they are re-based onto the project root, so they read `../app/x.ts`.
 pub fn parse(
     project: &Project,
     tool: &Tool,
     output: &ProcessOutput,
 ) -> Result<Vec<Finding>, PortError> {
-    let root = project.root.as_path();
+    let cwd = tool.command.cwd.as_path();
+    let mut found = parse_in(cwd, tool, output)?;
+    if cwd != project.root {
+        for finding in &mut found {
+            let abs = normalize(&cwd.join(&finding.location.path));
+            finding.location.path = relative(&project.root, &abs.to_string_lossy());
+        }
+    }
+    Ok(found)
+}
+
+/// Parses with paths relative to `root`, the directory the tool ran in.
+fn parse_in(root: &Path, tool: &Tool, output: &ProcessOutput) -> Result<Vec<Finding>, PortError> {
     match (tool.name.as_str(), tool.kind) {
         (detect::BIOME, CheckKind::Format) => lint::biome_format(root, output),
         (detect::BIOME, _) => lint::biome_lint(root, output),
@@ -175,6 +189,42 @@ pub(crate) fn cap(text: &str, max: usize) -> String {
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
+
+    fn tsc_tool(cwd: &str) -> Tool {
+        use hookah_domain::toolchain::CommandSpec;
+        Tool {
+            name: detect::TSC.into(),
+            kind: CheckKind::Typecheck,
+            command: CommandSpec::new("tsc", vec![], cwd, std::time::Duration::from_secs(1)),
+        }
+    }
+
+    #[test]
+    fn findings_of_a_tool_in_another_directory_are_rebased_onto_the_project() {
+        use hookah_domain::project::Ecosystem;
+        let project = Project {
+            root: "/ws/packages/lib".into(),
+            ecosystem: Ecosystem::Node,
+            manifests: vec![],
+        };
+        let output = ProcessOutput {
+            exit_code: Some(2),
+            stdout: "src/main.ts(4,24): error TS2353: bad.\n".into(),
+            ..ProcessOutput::default()
+        };
+        let in_dependent = parse(&project, &tsc_tool("/ws/packages/app"), &output).unwrap();
+        assert_eq!(
+            in_dependent[0].location.path,
+            Path::new("../app/src/main.ts")
+        );
+        let in_workspace = parse(&project, &tsc_tool("/ws"), &output).unwrap();
+        assert_eq!(
+            in_workspace[0].location.path,
+            Path::new("../../src/main.ts")
+        );
+        let in_project = parse(&project, &tsc_tool("/ws/packages/lib"), &output).unwrap();
+        assert_eq!(in_project[0].location.path, Path::new("src/main.ts"));
+    }
 
     #[test]
     fn strips_ansi_sequences() {

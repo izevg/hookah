@@ -3,7 +3,7 @@
 //! - [`classify`]: a file is a test when its name has a `.test.` or `.spec.` segment
 //!   (`foo.test.ts`, `foo.spec.tsx`) or when a directory between the project root and the file is
 //!   called `__tests__`, `test`, or `tests`. Everything else is source.
-//! - [`related_tests`]: the changed JavaScript and TypeScript files under the project, as project-relative
+//! - [`related_tests`]: the changed JavaScript and TypeScript files under the project, as absolute
 //!   paths. The runner's own import graph (`vitest related`, `jest --findRelatedTests`) finds the
 //!   tests that import them, so no test file is guessed here. No runner or no such file selects
 //!   nothing.
@@ -56,7 +56,9 @@ fn test_dir_index(rel: &Path) -> Option<usize> {
     })
 }
 
-/// The changed files the runner should relate to tests, relative to the project root.
+/// The changed files the runner should relate to tests, as absolute paths. The runners of the
+/// workspace packages that depend on the project run from their own directories, so only an
+/// absolute path means the same file to all of them.
 pub fn related_tests(project: &Project, changed: &[PathBuf], has_runner: bool) -> TestSelection {
     if !has_runner {
         return TestSelection::None;
@@ -64,9 +66,8 @@ pub fn related_tests(project: &Project, changed: &[PathBuf], has_runner: bool) -
     let targets = changed
         .iter()
         .filter(|f| Ecosystem::Node.can_check(f))
-        .filter_map(|f| project.relative(f).ok())
-        .filter(|rel| !in_node_modules(rel))
-        .map(|rel| rel.to_string_lossy().into_owned())
+        .filter(|f| project.relative(f).is_ok_and(|rel| !in_node_modules(&rel)))
+        .map(|f| f.to_string_lossy().into_owned())
         .collect();
     TestSelection::from_targets(targets)
 }
@@ -247,7 +248,10 @@ mod tests {
         ];
         assert_eq!(
             related_tests(&project(&s), &changed, true),
-            TestSelection::Targets(vec!["src/a.ts".into(), "src/b.test.tsx".into()])
+            TestSelection::Targets(vec![
+                s.path("src/a.ts").to_string_lossy().into_owned(),
+                s.path("src/b.test.tsx").to_string_lossy().into_owned()
+            ])
         );
         assert_eq!(
             related_tests(&project(&s), &changed, false),

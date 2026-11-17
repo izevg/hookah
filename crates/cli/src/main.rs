@@ -16,6 +16,7 @@ use std::process::ExitCode;
 
 use clap::Parser;
 use hookah_application::{CheckEdit, CheckSession, EditRequest, Outcome};
+use hookah_domain::path::display_path;
 use hookah_domain::project::locate_project;
 use hookah_harness::claude::Claude;
 use hookah_harness::codex::Codex;
@@ -63,9 +64,14 @@ fn check(paths: &[PathBuf], limit: usize) -> i32 {
         let file = std::path::absolute(path).unwrap_or_else(|_| path.clone());
         let display_root = std::env::current_dir()
             .unwrap_or_else(|_| file.parent().map(Path::to_path_buf).unwrap_or_default());
-        let outcome = use_case.run(&EditRequest::new(file, display_root));
+        let request = match Invocation::Edit(EditRequest::new(file, display_root)).canonical() {
+            Invocation::Edit(request) => request,
+            _ => continue,
+        };
+        let outcome = use_case.run(&request);
         failed |= matches!(outcome.verdict, hookah_domain::verdict::Verdict::Fail(_));
-        print_out(&render::outcome(style, path, &outcome));
+        let shown = display_path(&request.file, &request.display_root);
+        print_out(&render::outcome(style, &shown, &outcome));
     }
     i32::from(failed)
 }

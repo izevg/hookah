@@ -5,6 +5,7 @@
 //! formatting so they match the final text. Errors anywhere never fail the verdict. Tools the
 //! project lacks become non-blocking `MissingTool` notices.
 
+use hookah_domain::path::display_path;
 use hookah_domain::project::locate_project;
 use hookah_domain::session::{ChangedLines, Phase};
 use hookah_domain::toolchain::CheckKind;
@@ -60,13 +61,9 @@ impl<'a> CheckEdit<'a> {
                 if kind == CheckKind::Format {
                     let after = self.ports.hasher.content_hash(file).ok();
                     let rewritten = matches!((before, after), (Some(b), Some(a)) if a != b);
-                    if rewritten
-                        && !log
-                            .notices
-                            .contains(&Notice::FileRewritten(request.file.clone()))
-                    {
-                        log.notices
-                            .push(Notice::FileRewritten(request.file.clone()));
+                    let notice = Notice::FileRewritten(display_path(file, &request.display_root));
+                    if rewritten && !log.notices.contains(&notice) {
+                        log.notices.push(notice);
                     }
                 }
             }
@@ -259,6 +256,16 @@ mod tests {
         w.rewrite = true;
         let out = run(&w);
         assert_eq!(out.verdict, Verdict::Pass);
+        assert_eq!(out.notices, [Notice::FileRewritten("src/a.rs".into())]);
+    }
+
+    #[test]
+    fn rewritten_file_is_shown_relative_to_the_display_root() {
+        let mut w = world();
+        w.rewrite = true;
+        let out = run_with(&w, "/r/src/a.rs", "/r/src");
+        assert_eq!(out.notices, [Notice::FileRewritten("a.rs".into())]);
+        let out = run_with(&w, "/r/src/a.rs", "/elsewhere");
         assert_eq!(out.notices, [Notice::FileRewritten("/r/src/a.rs".into())]);
     }
 

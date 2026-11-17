@@ -1,7 +1,8 @@
 //! Notices: messages for the agent that are not findings.
 //!
-//! `MissingTool` reports a tool the project lacks. The main one is `FileRewritten`: a formatter changed the file, so the agent must re-read it
-//! before the next edit. Degradation warnings (timeout, missing tool) are notices too.
+//! `FileRewritten`: a formatter changed the file, so the agent must re-read it before the next
+//! edit. `MissingTool` reports a tool the project lacks. Degradation warnings (timeout, port
+//! error) are notices too.
 
 use std::fmt;
 use std::path::PathBuf;
@@ -11,7 +12,7 @@ use crate::toolchain::MissingTool;
 /// A message for the agent that is not a finding.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Notice {
-    /// A formatter rewrote this file (absolute path); re-read it before the next edit.
+    /// A formatter rewrote this file (path as displayed to the agent, relative to the display root when inside it); re-read it before the next edit.
     FileRewritten(PathBuf),
     /// A tool the project should have is not installed. Never blocks; `hookah` installs nothing.
     MissingTool(MissingTool),

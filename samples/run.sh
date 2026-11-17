@@ -44,6 +44,9 @@ work_real=$(cd "$work" && pwd -P)
 
 export GIT_CONFIG_GLOBAL=/dev/null
 export GIT_CONFIG_SYSTEM=/dev/null
+# Python reuses a cached .pyc when the source has the same mtime (to the second) and size, which
+# a scenario reset produces. Scenario runs never write bytecode, and resets delete it.
+export PYTHONDONTWRITEBYTECODE=1
 git_() { git -c user.name=samples -c user.email=samples@example.invalid "$@"; }
 
 pass=0
@@ -132,7 +135,7 @@ for sample in "$here"/*/*/; do
       continue
     fi
 
-    (cd "$copy" && git checkout -q -- . && git clean -fdq && git apply "$s/change.patch") || {
+    (cd "$copy" && git checkout -q -- . && git clean -fdq && find . -name __pycache__ -type d -prune -exec rm -rf {} + && git apply "$s/change.patch") || {
       echo "FAIL  $name (patch does not apply)"
       fail=$((fail + 1))
       failed="$failed $name"

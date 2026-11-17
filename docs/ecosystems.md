@@ -220,6 +220,10 @@ it but the environment lacks it. The hint matches the package manager, judged by
   `mutmut run` runs the suite once to collect stats and copies the project into `mutants/`. Both
   are project-local caches; add them (and `.mypy_cache`, `.ruff_cache`, `.pytest_cache`,
   `.import_linter_cache`) to `.gitignore`.
+- Python's bytecode cache (`__pycache__`) trusts the source's mtime and size. A file rewritten
+  within the same second to a different version of the same size keeps its stale `.pyc`, and
+  pytest then runs the old code. Scripts that restore files quickly (such as `samples/run.sh`)
+  should set `PYTHONDONTWRITEBYTECODE=1` and delete `__pycache__`.
 - mutmut only mutates files under its configured `source_paths` (by default `src/`, `lib/`, or the
   package named like the directory). A glob that matches nothing is a clean result, not an error.
 - mutmut aborts when the baseline test run fails (`failed to collect stats`); that is reported as

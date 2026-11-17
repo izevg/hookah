@@ -1,2 +1,4 @@
 [tools]
 rust = { version = "stable", components = "rustfmt,clippy", profile = "minimal" }
+# No prebuilt arm64 macOS release exists, so this compiles once into ~/.local.
+"cargo:cargo-mutants" = "27.1.0"

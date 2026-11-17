@@ -1,0 +1,13 @@
+# cargo-mutants settings for this workspace; see docs/mutation.md.
+# Nothing is excluded: every mutant is either caught by a test or a gap to close. Add an
+# `exclude_re` entry here, with the reason, only for a mutant that cannot be tested.
+
+# Same directory hookah uses for its own mutation runs, so both share one `--iterate` cache.
+output = "target/hookah-mutants"
+
+# Debug info only slows the mutant builds down (see `[profile.mutants]` in Cargo.toml).
+profile = "mutants"
+
+# Several tests spawn real `cargo` processes, so give mutants room under parallel load.
+timeout_multiplier = 3
+minimum_test_timeout = 60

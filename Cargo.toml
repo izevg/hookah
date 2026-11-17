@@ -30,3 +30,8 @@ expect_used = "deny"
 lto = true
 codegen-units = 1
 strip = true
+
+# Used by cargo-mutants (.cargo/mutants.toml): no debug info, faster builds of each mutant.
+[profile.mutants]
+inherits = "dev"
+debug = 0

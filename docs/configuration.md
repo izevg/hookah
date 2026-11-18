@@ -150,13 +150,14 @@ checks, time budgets, report limits, and ignore globs.
 
 `hookah` is light by default (see "Light by default" in `architecture.md`): it runs light tests
 only, and skips tests and mutation testing when the change is too big. Until `.hookah.toml` can
-set them, three environment variables in the environment of the hook change the budgets. Each
+set them, these environment variables in the environment of the hook change the budgets. Each
 takes a whole number; anything else is ignored and the default stays.
 
 | Variable | Default | Meaning |
 |----------|---------|---------|
 | `HOOKAH_TEST_BUDGET` | `25` | The most related test targets that run at stop. More are not run, and the agent gets the notice `N related tests selected; above the light budget of M, run them yourself`. `0` runs no tests at all. |
 | `HOOKAH_MUTATION_MAX_FILES` | `3` | The most changed code files (tests and sources) of a project mutation testing accepts. `0` switches mutation testing off. |
+| `HOOKAH_DOWNSTREAM_BUDGET` | `10` | Maven reactors only: the most modules that depend on the edited module (the dependents) that the compile check and the lint runs build along with it. With more, only the module and its upstream compile, and the agent gets the notice `javac: the N modules that depend on this one were not compiled ...`. `0` compiles no dependents, silently. |
 | `HOOKAH_MUTATION_MAX_LINES` | `150` | The most changed lines in them (versus `HEAD`) mutation testing accepts; a new file counts as long as the file. `0` switches mutation testing off. |
 
 Over a mutation budget the run is skipped with `mutation testing skipped: change too large (X

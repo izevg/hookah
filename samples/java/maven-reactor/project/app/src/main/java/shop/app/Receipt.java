@@ -1,6 +1,7 @@
 package shop.app;
 
 import shop.Money;
+import shop.shared.Labels;
 
 /** Prints a total. */
 public final class Receipt {
@@ -8,6 +9,6 @@ public final class Receipt {
 
   /** The line shown under the items. */
   public static String totalLine(Money total) {
-    return "Total: " + total.format();
+    return Labels.total() + ": " + total.format();
   }
 }

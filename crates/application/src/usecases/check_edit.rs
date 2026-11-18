@@ -103,7 +103,7 @@ mod tests {
 
     use hookah_domain::finding::{Finding, Location, Severity};
     use hookah_domain::session::LineRange;
-    use hookah_domain::toolchain::MissingTool;
+    use hookah_domain::toolchain::{MissingTool, ToolNote};
     use hookah_domain::verdict::Verdict;
 
     use super::*;
@@ -268,6 +268,21 @@ mod tests {
                 CheckKind::Typecheck,
                 "npm i -D typescript"
             ))]
+        );
+    }
+
+    #[test]
+    fn tool_notes_become_notices_but_only_for_edit_kinds() {
+        let mut w = world();
+        w.toolchain = w.toolchain.clone().with_notes(vec![
+            ToolNote::new(CheckKind::Typecheck, "dependents left out"),
+            ToolNote::new(CheckKind::Mutation, "not for the edit phase"),
+        ]);
+        let out = run(&w);
+        assert_eq!(out.verdict, Verdict::Pass);
+        assert_eq!(
+            out.notices,
+            [Notice::Degraded("dependents left out".into())]
         );
     }
 

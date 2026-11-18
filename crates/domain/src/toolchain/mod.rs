@@ -9,13 +9,14 @@ pub mod tool;
 
 pub use check::CheckKind;
 pub use selection::{MutationSelection, TestSelection};
-pub use tool::{Arg, CommandSpec, MissingTool, Tool};
+pub use tool::{Arg, CommandSpec, MissingTool, Tool, ToolNote};
 
 /// The tools configured for a project.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Toolchain {
     tools: Vec<Tool>,
     missing: Vec<MissingTool>,
+    notes: Vec<ToolNote>,
 }
 
 impl Toolchain {
@@ -24,6 +25,7 @@ impl Toolchain {
         Self {
             tools,
             missing: vec![],
+            notes: vec![],
         }
     }
 
@@ -31,6 +33,17 @@ impl Toolchain {
     pub fn with_missing(mut self, missing: Vec<MissingTool>) -> Self {
         self.missing = missing;
         self
+    }
+
+    /// Sets the heads-ups about how the tools run.
+    pub fn with_notes(mut self, notes: Vec<ToolNote>) -> Self {
+        self.notes = notes;
+        self
+    }
+
+    /// Heads-ups about how the tools run. Use cases turn each into a non-blocking notice.
+    pub fn notes(&self) -> &[ToolNote] {
+        &self.notes
     }
 
     /// Tools the project should have but does not. Use cases turn each into a non-blocking
@@ -91,6 +104,15 @@ mod tests {
         let t = Toolchain::default().with_missing(vec![m.clone()]);
         assert_eq!(t.missing(), [m]);
         assert!(Toolchain::default().missing().is_empty());
+    }
+
+    #[test]
+    fn notes_are_stored_and_do_not_make_a_toolchain_non_empty() {
+        let note = ToolNote::new(CheckKind::Typecheck, "left out");
+        let t = Toolchain::default().with_notes(vec![note.clone()]);
+        assert_eq!(t.notes(), [note]);
+        assert!(Toolchain::default().notes().is_empty());
+        assert!(t.is_empty());
     }
 
     #[test]

@@ -17,6 +17,7 @@
 
 pub mod gradle;
 pub mod maven;
+mod reactor;
 
 use std::path::{Path, PathBuf};
 
@@ -66,8 +67,12 @@ pub struct Build {
     pub selector: Option<String>,
     /// The program that runs the build: an absolute wrapper path, or `mvn`/`gradle` on `PATH`.
     pub program: String,
-    /// Gradle only: paths of the projects that depend on this one, directly or not.
+    /// The projects that depend on this one, directly or not. Gradle: project paths (`:app`).
+    /// Maven: module directories relative to the root, within the budget (see
+    /// [`maven::DOWNSTREAM_BUDGET`]); empty when there are none or when they are over it.
     pub dependents: Vec<String>,
+    /// Maven: how many dependents were left out because they are over the budget.
+    pub skipped_dependents: usize,
     /// The configured tools.
     pub features: Features,
 }
@@ -87,17 +92,22 @@ impl Build {
     }
 
     /// The `-pl` selection of a Maven reactor build; empty for a single module. With `also`,
-    /// the modules this one needs (`-am`) and the modules that need it (`-amd`) are included.
+    /// the modules this one needs (`-am`) and the modules that need it are included.
+    ///
+    /// The dependents are named in `-pl` instead of asking for `-amd`: `-am` then adds what they
+    /// need as well, so none of their reactor dependencies is looked up in `~/.m2`. For the same
+    /// reason a run with dependents always has `-am`.
     pub fn reactor_args(&self, also: Also) -> Vec<String> {
         let Some(path) = &self.selector else {
             return vec![];
         };
-        let mut args = vec!["-pl".to_string(), path.clone()];
-        if also.upstream {
-            args.push("-am".into());
-        }
+        let mut modules = vec![path.as_str()];
         if also.downstream {
-            args.push("-amd".into());
+            modules.extend(self.dependents.iter().map(String::as_str));
+        }
+        let mut args = vec!["-pl".to_string(), modules.join(",")];
+        if also.upstream || also.downstream {
+            args.push("-am".into());
         }
         args
     }
@@ -108,7 +118,7 @@ impl Build {
 pub struct Also {
     /// The modules this one depends on (`-am`), which resolve from the reactor, not `~/.m2`.
     pub upstream: bool,
-    /// The modules that depend on this one (`-amd`).
+    /// The modules that depend on it, and, with them, what those depend on.
     pub downstream: bool,
 }
 
@@ -222,6 +232,7 @@ pub(super) mod tests {
             selector: Some(":app".into()),
             program: "gradle".into(),
             dependents: vec![],
+            skipped_dependents: 0,
             features: Features::default(),
         };
         assert_eq!(b.task("test"), ":app:test");
@@ -248,14 +259,24 @@ pub(super) mod tests {
             }),
             ["-pl", "a/b", "-am"]
         );
+        // Dependents go into -pl, and -am then covers their upstream too.
+        b.dependents = vec!["c".into(), "d/e".into()];
+        assert_eq!(b.reactor_args(both), ["-pl", "a/b,c,d/e", "-am"]);
         assert_eq!(
             b.reactor_args(Also {
                 upstream: false,
                 downstream: true
             }),
-            ["-pl", "a/b", "-amd"]
+            ["-pl", "a/b,c,d/e", "-am"]
         );
-        assert_eq!(b.reactor_args(both), ["-pl", "a/b", "-am", "-amd"]);
+        assert_eq!(
+            b.reactor_args(Also {
+                upstream: true,
+                downstream: false
+            }),
+            ["-pl", "a/b", "-am"]
+        );
+        assert_eq!(b.reactor_args(none), ["-pl", "a/b"]);
     }
 
     #[cfg(unix)]

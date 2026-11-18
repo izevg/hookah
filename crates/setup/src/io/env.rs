@@ -106,6 +106,7 @@ fn dir_name(target: Target) -> &'static str {
         Target::Codex => ".codex",
         Target::Qoder => ".qoder",
         Target::Kimi => ".kimi-code",
+        Target::Cursor => ".cursor",
         Target::Opencode => ".opencode",
     }
 }
@@ -114,6 +115,7 @@ fn file_name(target: Target) -> &'static str {
     match target {
         Target::Claude | Target::Qoder => "settings.json",
         Target::Codex | Target::Kimi => "config.toml",
+        Target::Cursor => "hooks.json",
         Target::Opencode => "plugins/hookah.ts",
     }
 }
@@ -142,6 +144,7 @@ mod tests {
         assert_eq!(p(Target::Claude), Path::new("/p/.claude/settings.json"));
         assert_eq!(p(Target::Codex), Path::new("/p/.codex/config.toml"));
         assert_eq!(p(Target::Qoder), Path::new("/p/.qoder/settings.json"));
+        assert_eq!(p(Target::Cursor), Path::new("/p/.cursor/hooks.json"));
         assert_eq!(
             p(Target::Opencode),
             Path::new("/p/.opencode/plugins/hookah.ts")
@@ -155,6 +158,9 @@ mod tests {
         assert_eq!(u(Target::Codex), Path::new("/h/.codex/config.toml"));
         assert_eq!(u(Target::Qoder), Path::new("/h/.qoder/settings.json"));
         assert_eq!(u(Target::Kimi), Path::new("/h/.kimi-code/config.toml"));
+        assert_eq!(u(Target::Cursor), Path::new("/h/.cursor/hooks.json"));
+        assert_eq!(env().user_dir(Target::Cursor), Some("/h/.cursor".into()));
+        assert_eq!(Scope::default_for(Target::Cursor), Scope::Project);
         assert_eq!(
             u(Target::Opencode),
             Path::new("/h/.config/opencode/plugins/hookah.ts")

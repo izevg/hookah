@@ -109,7 +109,7 @@ mod tests {
     fn an_empty_machine_has_nothing() {
         let root = root("none");
         let found = detect(&env(&root));
-        assert_eq!(found.len(), 5);
+        assert_eq!(found.len(), Target::ALL.len());
         for d in &found {
             assert!(!d.installed());
             assert!(!d.user);
@@ -136,6 +136,35 @@ mod tests {
         assert!(codex.binary.is_none() && codex.config_dir && codex.installed());
         assert!(get(&found, Target::Opencode).installed());
         assert!(!get(&found, Target::Kimi).installed());
+    }
+
+    #[test]
+    fn cursor_is_found_by_either_binary_or_by_its_config_directory() {
+        for bin in ["cursor-agent", "cursor.cmd"] {
+            let root = root("cursor-bin");
+            write(&root.join("bin").join(bin), "");
+            assert!(get(&detect(&env(&root)), Target::Cursor).binary.is_some());
+        }
+        let root = root("cursor-dir");
+        fs::create_dir_all(root.join("home/.cursor")).unwrap();
+        let cursor = detect(&env(&root))
+            .into_iter()
+            .find(|d| d.target == Target::Cursor)
+            .unwrap();
+        assert!(cursor.binary.is_none() && cursor.config_dir && cursor.installed());
+    }
+
+    #[test]
+    fn a_cursor_hooks_json_with_hookah_is_configured() {
+        let root = root("cursor-cfg");
+        write(
+            &root.join("project/.cursor/hooks.json"),
+            r#"{"version": 1, "hooks": {"stop": [{"command": "hookah hook cursor"}]}}"#,
+        );
+        let found = detect(&env(&root));
+        let cursor = get(&found, Target::Cursor);
+        assert_eq!(cursor.project, Some(true));
+        assert!(!cursor.user);
     }
 
     #[test]

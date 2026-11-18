@@ -124,6 +124,8 @@ pub enum HarnessKind {
     Qoder,
     /// Kimi Code command hooks.
     Kimi,
+    /// Cursor (the IDE agent and `cursor-agent`) command hooks.
+    Cursor,
     /// opencode, through the bundled plugin (`hookah plugin opencode`).
     Opencode,
 }

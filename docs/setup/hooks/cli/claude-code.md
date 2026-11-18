@@ -6,7 +6,7 @@ Command hooks. Claude Code runs `hookah hook claude` and sends a JSON payload on
 
 - `SessionStart` with matcher `startup|resume` records the problems the project already has, in
   the background, so later reports show only what the agent introduced (the baseline; see
-  [architecture](../../architecture.md#baseline)). The hook returns at once and prints nothing.
+  [architecture](../../../architecture.md#baseline)). The hook returns at once and prints nothing.
 - `PostToolUse` with matcher `Edit|Write|MultiEdit|NotebookEdit` runs the edit phase (format and
   lint of the edited file).
 - `Stop` and `SubagentStop` run the stop phase (checks over the files changed in the session,
@@ -113,7 +113,7 @@ This repository runs `hookah` on itself. Install the binary into `~/.local`:
 cargo install --path crates/cli --root ~/.local --locked
 ```
 
-The committed [`.claude/settings.json`](../../../.claude/settings.json) calls
+The committed [`.claude/settings.json`](../../../../.claude/settings.json) calls
 `$HOME/.local/bin/mise exec -- $HOME/.local/bin/hookah hook claude` on `SessionStart`
 (timeout 30), `PostToolUse` (timeout 180), and `Stop` (timeout 900). Re-run the install after changing `hookah` to pick up
 the new build.

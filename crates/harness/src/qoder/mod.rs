@@ -1,7 +1,7 @@
 //! Qoder CLI harness adapter.
 //!
 //! Command hooks configured in `.qoder/settings.json`: `PostToolUse` (matcher `Write|Edit`)
-//! runs the edit phase and `Stop` runs the stop phase. See `docs/setup/hooks/qoder.md`.
+//! runs the edit phase and `Stop` runs the stop phase. See `docs/setup/hooks/cli/qoder.md`.
 
 pub mod payload;
 pub mod response;

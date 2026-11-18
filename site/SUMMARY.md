@@ -8,10 +8,11 @@
 
 # Set up your harness
 
-- [Claude Code](setup/hooks/claude-code.md)
-- [Codex CLI](setup/hooks/codex.md)
-- [Qoder](setup/hooks/qoder.md)
-- [Kimi Code](setup/hooks/kimi.md)
+- [Claude Code](setup/hooks/cli/claude-code.md)
+- [Codex CLI](setup/hooks/cli/codex.md)
+- [Cursor](setup/hooks/ide/cursor.md)
+- [Qoder](setup/hooks/cli/qoder.md)
+- [Kimi Code](setup/hooks/cli/kimi.md)
 - [opencode](setup/plugins/opencode.md)
 - [Orca](setup/plugins/orca.md)
 

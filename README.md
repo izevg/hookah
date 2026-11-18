@@ -25,11 +25,11 @@ feeds failures straight back to the agent, so it fixes them immediately.
 > <https://izevg.github.io/hookah/llms.txt>).
 
 > **Status:** works for Rust, Node (TypeScript/JavaScript), and Python projects, with the Claude
-> Code, Codex, Qoder, Kimi, and opencode harnesses (`hookah check`, `hookah detect`, `hookah hook
+> Code, Codex, Cursor, Qoder, Kimi, and opencode harnesses (`hookah check`, `hookah detect`, `hookah hook
 > <harness>`, `hookah plugin opencode`, `hookah setup`), including mutation testing at stop. Orca is still to come.
 > End-to-end [samples](samples/README.md) cover the behavior. Prebuilt binaries and the install
 > scripts ship with each [release](https://github.com/izevg/hookah/releases). This repository runs `hookah` on itself; see
-> [Claude Code setup](docs/setup/hooks/claude-code.md#dogfooding).
+> [Claude Code setup](docs/setup/hooks/cli/claude-code.md#dogfooding).
 
 ## Why
 
@@ -77,7 +77,7 @@ old warnings from code it did not touch.
 
    ```sh
    hookah setup --detect     # which harnesses are installed and configured
-   hookah setup claude       # or: codex, qoder, kimi, opencode (add --scope user for every project)
+   hookah setup claude       # or: codex, cursor, qoder, kimi, opencode (add --scope user for every project)
    ```
 
    Setup merges into existing settings, is safe to repeat, and backs the original up once. Use
@@ -89,10 +89,11 @@ Per-harness details and the manual snippets:
 
 | Harness     | Setup |
 |-------------|-------|
-| Claude Code | [docs/setup/hooks/claude-code.md](docs/setup/hooks/claude-code.md) |
-| Codex CLI   | [docs/setup/hooks/codex.md](docs/setup/hooks/codex.md) |
-| Qoder       | [docs/setup/hooks/qoder.md](docs/setup/hooks/qoder.md) |
-| Kimi Code   | [docs/setup/hooks/kimi.md](docs/setup/hooks/kimi.md) |
+| Claude Code | [docs/setup/hooks/cli/claude-code.md](docs/setup/hooks/cli/claude-code.md) |
+| Codex CLI   | [docs/setup/hooks/cli/codex.md](docs/setup/hooks/cli/codex.md) |
+| Cursor      | [docs/setup/hooks/ide/cursor.md](docs/setup/hooks/ide/cursor.md) |
+| Qoder       | [docs/setup/hooks/cli/qoder.md](docs/setup/hooks/cli/qoder.md) |
+| Kimi Code   | [docs/setup/hooks/cli/kimi.md](docs/setup/hooks/cli/kimi.md) |
 | opencode    | [docs/setup/plugins/opencode.md](docs/setup/plugins/opencode.md) |
 | Orca        | [docs/setup/plugins/orca.md](docs/setup/plugins/orca.md) (planned) |
 
@@ -124,6 +125,7 @@ is still planned.
 | opencode    | bundled plugin (`hookah plugin opencode`): `tool.execute.after`, `session.idle` | appended tool output (edit), injected message (stop) |
 | Kimi Code   | `PostToolUse` (`Write\|Edit`) `[[hooks]]` in `config.toml` (beta); no stop phase | stdout (may reach the model) |
 | Qoder       | `PostToolUse` (`Write\|Edit`), `Stop` in `.qoder/settings.json` | `additionalContext` (edit), exit 2 + stderr (stop) |
+| Cursor      | `afterFileEdit`, `stop`, `sessionStart` in `.cursor/hooks.json` (IDE and `cursor-agent`) | `followup_message` (stop); the edit hook cannot reach the model |
 | Orca        | through the hooks of the agent it runs; Orca plugin for workspace-level events | per hosted agent |
 
 Each harness is configured by `hookah setup <harness>`, and the manual steps are written down per
@@ -180,7 +182,7 @@ They run once, when the agent says it's done, and a red result blocks the finish
 | [Configuration](docs/configuration.md) | `.hookah.toml` and the cache (in progress) |
 | [Mutation testing](docs/mutation.md) | mutation-testing `hookah` itself |
 | [Changelog](https://izevg.github.io/hookah/changelog.html) | every release, generated from Conventional Commits |
-| [Harness setup](docs/setup/hooks/claude-code.md) | one page per harness, linked in Quick start |
+| [Harness setup](docs/setup/hooks/cli/claude-code.md) | one page per harness, linked in Quick start |
 | [Setup for agents](docs/setup/agents.md) | the exact procedure an agent follows to install and configure `hookah` |
 
 The same pages are published as a searchable site at <https://izevg.github.io/hookah/>.

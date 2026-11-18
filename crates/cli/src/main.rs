@@ -23,6 +23,7 @@ use hookah_domain::path::display_path;
 use hookah_domain::project::locate_project;
 use hookah_harness::claude::Claude;
 use hookah_harness::codex::Codex;
+use hookah_harness::cursor::Cursor;
 use hookah_harness::kimi::Kimi;
 use hookah_harness::opencode::{Opencode, PLUGIN_SOURCE};
 use hookah_harness::protocol::{Harness, Invocation, Response, merge_outcomes};
@@ -156,6 +157,7 @@ fn hook(harness: HarnessKind, limit: usize) -> Response {
         HarnessKind::Codex => run_harness(&Codex, &stdin, limit),
         HarnessKind::Qoder => run_harness(&Qoder, &stdin, limit),
         HarnessKind::Kimi => run_harness(&Kimi, &stdin, limit),
+        HarnessKind::Cursor => run_harness(&Cursor, &stdin, limit),
         HarnessKind::Opencode => run_harness(&Opencode, &stdin, limit),
     }
 }

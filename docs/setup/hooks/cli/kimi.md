@@ -7,7 +7,7 @@ Code runs `hookah hook kimi` and sends a JSON payload on stdin.
 
 - `SessionStart` with matcher `startup|resume` records the problems the project already has, in
   the background, so later reports show only what the agent introduced (the baseline; see
-  [architecture](../../architecture.md#baseline)). The hook returns at once and prints nothing.
+  [architecture](../../../architecture.md#baseline)). The hook returns at once and prints nothing.
 - `PostToolUse` with matcher `Write|Edit` runs the edit phase for `tool_input.path`.
 - `Stop` is not supported; see the limitations.
 

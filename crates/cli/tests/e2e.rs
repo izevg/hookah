@@ -298,6 +298,58 @@ fn claude_stop_hook_never_blocks_twice() {
 }
 
 #[test]
+fn cursor_edit_hook_reports_to_the_user_and_never_blocks() {
+    let f = Fixture::new("cursoredit", CLEAN_LIB);
+    f.write("src/lib.rs", "pub fn answer() -> i32 {\n    \"nope\"\n}\n");
+    let payload = format!(
+        r#"{{"conversation_id":"c1","hook_event_name":"afterFileEdit","workspace_roots":[{root}],"file_path":{file},"edits":[]}}"#,
+        root = json_str(&f.root),
+        file = json_str(&f.path("src/lib.rs")),
+    );
+    let out = f.hookah(&["hook", "cursor"], &payload);
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "{}{}",
+        stdout(&out),
+        stderr(&out)
+    );
+    assert!(stdout(&out).is_empty(), "{}", stdout(&out));
+    let err = stderr(&out);
+    assert!(err.contains("after editing"), "{err}");
+    assert!(err.contains("src/lib.rs:2"), "{err}");
+}
+
+#[test]
+fn cursor_stop_hook_continues_the_agent_once_with_a_followup_message() {
+    let f = Fixture::new("cursorstop", CLEAN_LIB);
+    f.write("src/lib.rs", FAILING_TEST_LIB);
+    let stop = |loop_count: u32| {
+        format!(
+            r#"{{"hook_event_name":"stop","workspace_roots":[{root}],"status":"completed","loop_count":{loop_count}}}"#,
+            root = json_str(&f.root),
+        )
+    };
+    let out = f.hookah(&["hook", "cursor"], &stop(0));
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "{}{}",
+        stdout(&out),
+        stderr(&out)
+    );
+    let json = stdout(&out);
+    assert!(
+        json.starts_with("{\"followup_message\":\"hookah: "),
+        "{json}"
+    );
+    let again = f.hookah(&["hook", "cursor"], &stop(1));
+    assert_eq!(again.status.code(), Some(0));
+    assert!(stdout(&again).is_empty(), "{}", stdout(&again));
+    assert!(stderr(&again).contains("not asking the agent to continue again"));
+}
+
+#[test]
 fn detect_prints_the_crate_and_its_tools() {
     let f = Fixture::new("detect", CLEAN_LIB);
     let out = f.hookah(&["detect", "src/lib.rs"], "");

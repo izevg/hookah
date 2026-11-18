@@ -6,7 +6,7 @@ Command hooks. Qoder CLI runs `hookah hook qoder` and sends a JSON payload on st
 
 - `SessionStart` records the problems the project already has, in the background, so later
   reports show only what the agent introduced (the baseline; see
-  [architecture](../../architecture.md#baseline)). The hook returns at once and prints nothing.
+  [architecture](../../../architecture.md#baseline)). The hook returns at once and prints nothing.
 - `PostToolUse` with matcher `Write|Edit` runs the edit phase for `tool_input.file_path`.
 - `Stop` runs the stop phase (checks over the files changed in the session, including related
   tests).

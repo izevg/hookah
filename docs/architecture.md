@@ -146,6 +146,7 @@ is our own plugin.
 | Claude Code | `SessionStart` (matchers `startup`, `resume`, `clear`, `compact`) | verified |
 | Codex CLI | `SessionStart` (same matchers, plus `fork`) | verified |
 | Qoder | `SessionStart` | verified: the event exists and every payload has `session_id` and `cwd`; its matcher values are not documented |
+| Cursor | `sessionStart` (`session_id` equals `conversation_id`; fire-and-forget) | verified in the docs; not run live, and `cursor-agent` is reported not to send `conversation_id` |
 | Kimi Code | `SessionStart` (matchers `startup`, `resume`) | verified |
 | opencode | the plugin's `session.created` event, sent as `event: "start"` (contract v1, backward compatible) | plugin written against the SDK types; not run live |
 

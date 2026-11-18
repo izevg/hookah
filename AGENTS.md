@@ -113,6 +113,9 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 ```
 
+- CI (`.github/workflows/ci.yml`) runs the same gates on Linux, macOS, and Windows, plus the
+  sample runner (Linux and macOS), the rule-of-four check (`.github/scripts/rule-of-four.sh`), and
+  `cargo mutants --in-diff` on pull requests. A commit that fails them locally fails there too.
 - Domain and application code are unit-tested without I/O, using in-memory fakes of the ports.
 - Adapters get integration tests against fixture projects (each fixture follows the rule of
   four too).

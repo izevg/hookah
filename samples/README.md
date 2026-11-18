@@ -16,6 +16,10 @@ Without `HOOKAH_BIN`, the runner builds `target/release/hookah` once. Tools come
 repository's pinned toolchain through `mise exec` (`MISE=/path/to/mise` overrides
 `~/.local/bin/mise`; without mise the runner uses the `PATH` as is).
 
+The runner is a bash script that relies on POSIX tools, so it runs on Linux and macOS, in CI
+as well. Windows is covered by the unit and integration tests
+of `cargo test --workspace`.
+
 ## Layout
 
 ```

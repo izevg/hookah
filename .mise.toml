@@ -8,3 +8,5 @@ uv = "0.13.8"
 # Node samples (samples/node/*); pnpm for the workspace sample.
 node = "26"
 pnpm = "12"
+# Lints the GitHub Actions workflow: `mise exec -- actionlint`.
+"aqua:rhysd/actionlint" = "1.7.12"

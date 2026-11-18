@@ -1,0 +1,118 @@
+name: ci
+
+# The same gates as AGENTS.md "Quality gates", on every push to main and every pull request.
+# Tools come from .mise.toml through mise, so that file stays the single source of truth; each job
+# installs only the tools it needs (`install_args`), because cargo-mutants compiles from source.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  rule-of-four:
+    name: rule of four
+    runs-on: ubuntu-latest
+    steps:
+      # actions/checkout v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - run: .github/scripts/rule-of-four.sh
+
+  test:
+    name: test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      # Test fixtures compare file contents byte for byte: no CRLF conversion on Windows.
+      - name: Keep line endings as they are
+        run: git config --global core.autocrlf false
+      # actions/checkout v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      # jdx/mise-action v5.2.9
+      - uses: jdx/mise-action@236a21c3b91f5db6d4e174b348674a0f0caac06d
+        with:
+          install_args: rust
+      # Swatinem/rust-cache v2.9.3
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0
+      - name: Format
+        if: matrix.os == 'ubuntu-latest'
+        run: cargo fmt --all --check
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Test
+        run: cargo test --workspace
+
+  # The sample runner (samples/run.sh) is a bash script that applies patches and replays hook
+  # events against Rust, Node, and Python projects. It runs on Linux and macOS only.
+  samples:
+    name: samples (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      # actions/checkout v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      # jdx/mise-action v5.2.9
+      - uses: jdx/mise-action@236a21c3b91f5db6d4e174b348674a0f0caac06d
+        with:
+          install_args: rust node pnpm python uv
+      # Swatinem/rust-cache v2.9.3
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0
+      - name: Run the samples
+        # run.sh looks for mise at ~/.local/bin/mise by default.
+        run: MISE="$(command -v mise)" samples/run.sh
+
+  # Only on pull requests: mutate what the branch changed. Any missed mutant fails the job.
+  mutation:
+    name: mutation (changed code)
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      # actions/checkout v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+      # jdx/mise-action v5.2.9
+      - uses: jdx/mise-action@236a21c3b91f5db6d4e174b348674a0f0caac06d
+        with:
+          install_args: rust cargo:cargo-mutants
+      # Swatinem/rust-cache v2.9.3
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0
+      # `--iterate` skips mutants an earlier run already settled. The cache is per branch, with
+      # the latest entry of the base branch as the fallback.
+      # actions/cache v6.1.0
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
+        with:
+          path: target/hookah-mutants
+          key: mutants-${{ github.head_ref }}-${{ github.sha }}
+          restore-keys: |
+            mutants-${{ github.head_ref }}-
+            mutants-${{ github.base_ref }}-
+      - name: Diff against the base branch
+        run: git diff "origin/${{ github.base_ref }}...HEAD" > "$RUNNER_TEMP/pr.diff"
+      - name: Mutate the changed code
+        # A standard runner has 4 cores. Settings come from .cargo/mutants.toml.
+        run: cargo mutants --workspace -j 3 --iterate --in-diff "$RUNNER_TEMP/pr.diff"

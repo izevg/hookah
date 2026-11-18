@@ -94,13 +94,15 @@ fn header(plan: &Plan, suffix: &str) -> String {
 }
 
 fn what(target: Target, program: &str) -> String {
-    if target == Target::Opencode {
-        return "installed the bundled opencode plugin (the same text as `hookah plugin opencode`)\n"
-            .to_owned();
-    }
     if target == Target::Hermes {
         return "installed the bundled Hermes plugin (the same text as `hookah plugin hermes`) and enabled it in plugins.enabled\n"
             .to_owned();
+    }
+    if target.hooks().is_empty() {
+        return format!(
+            "installed the bundled {name} plugin (the same text as `hookah plugin {name}`)\n",
+            name = target.name()
+        );
     }
     let events: Vec<_> = target.hooks().iter().map(|h| h.event).collect();
     format!(
@@ -242,6 +244,20 @@ mod tests {
         assert!(!out.contains("hooks:"));
         let dry = dry_run(&p, Path::new("/h"));
         assert!(dry.contains("would create .hermes/plugins/hookah/plugin.yaml\nwould update .hermes/plugins/hookah/__init__.py\nwould keep .hermes/plugins/hookah/same.py\n"));
+    }
+
+    #[test]
+    fn pi_says_it_installed_the_plugin() {
+        let p = plan(Target::Pi, None, "// plugin");
+        let w = Written {
+            wrote: true,
+            backup: None,
+            companion_backups: vec![],
+        };
+        let out = applied(&p, &w, Path::new(CWD), "hookah");
+        assert!(
+            out.contains("installed the bundled pi plugin (the same text as `hookah plugin pi`)")
+        );
     }
 
     #[test]

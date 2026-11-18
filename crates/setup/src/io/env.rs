@@ -43,6 +43,8 @@ pub struct Env {
     pub home: Option<PathBuf>,
     /// `XDG_CONFIG_HOME`, when set and not empty.
     pub xdg_config: Option<PathBuf>,
+    /// `PI_CODING_AGENT_DIR` (Pi's config directory), when set and not empty.
+    pub pi_agent_dir: Option<PathBuf>,
     /// The directories of `PATH`.
     pub path: Vec<PathBuf>,
     /// Hermes's home directory when the environment names it: `HERMES_HOME`, else on Windows
@@ -61,6 +63,7 @@ impl Env {
         "PATH",
         "HERMES_HOME",
         "LOCALAPPDATA",
+        "PI_CODING_AGENT_DIR",
     ];
 
     /// Reads the real process environment.
@@ -78,6 +81,7 @@ impl Env {
                 .or_else(|| var("USERPROFILE"))
                 .map(PathBuf::from),
             xdg_config: var("XDG_CONFIG_HOME").map(PathBuf::from),
+            pi_agent_dir: var("PI_CODING_AGENT_DIR").map(PathBuf::from),
             path: var("PATH")
                 .map(|p| std::env::split_paths(&p).collect())
                 .unwrap_or_default(),
@@ -105,11 +109,20 @@ impl Env {
         }
     }
 
+    /// Pi's user config directory: `$PI_CODING_AGENT_DIR`, else `~/.pi/agent`.
+    fn pi_dir(&self) -> Result<PathBuf, SetupError> {
+        match &self.pi_agent_dir {
+            Some(dir) => Ok(dir.clone()),
+            None => Ok(self.home()?.join(".pi").join("agent")),
+        }
+    }
+
     /// The harness's user-level config directory, for detection. `None` without a home.
     pub fn user_dir(&self, target: Target) -> Option<PathBuf> {
         match target {
             Target::Opencode => self.opencode_dir().ok(),
             Target::Hermes => self.hermes_dir().ok(),
+            Target::Pi => self.pi_dir().ok(),
             _ => self.home().ok().map(|h| h.join(dir_name(target))),
         }
     }
@@ -130,6 +143,8 @@ impl Env {
             (Target::Hermes, Scope::User) => Ok(self.hermes_dir()?.join("config.yaml")),
             (Target::Opencode, Scope::Project) => Ok(self.cwd.join(".opencode").join(PLUGIN_PATH)),
             (Target::Opencode, Scope::User) => Ok(self.opencode_dir()?.join(PLUGIN_PATH)),
+            (Target::Pi, Scope::Project) => Ok(self.cwd.join(".pi").join(PI_EXTENSION_PATH)),
+            (Target::Pi, Scope::User) => Ok(self.pi_dir()?.join(PI_EXTENSION_PATH)),
             (_, Scope::Project) => Ok(self.cwd.join(dir_name(target)).join(file_name(target))),
             (_, Scope::User) => Ok(self.home()?.join(dir_name(target)).join(file_name(target))),
         }
@@ -151,6 +166,7 @@ fn hermes_home_from(
 }
 
 const PLUGIN_PATH: &str = "plugins/hookah.ts";
+const PI_EXTENSION_PATH: &str = "extensions/hookah.ts";
 
 fn dir_name(target: Target) -> &'static str {
     match target {
@@ -161,6 +177,7 @@ fn dir_name(target: Target) -> &'static str {
         Target::Cursor => ".cursor",
         Target::Opencode => ".opencode",
         Target::Hermes => ".hermes",
+        Target::Pi => ".pi",
     }
 }
 
@@ -171,6 +188,7 @@ fn file_name(target: Target) -> &'static str {
         Target::Cursor => "hooks.json",
         Target::Opencode => "plugins/hookah.ts",
         Target::Hermes => "config.yaml",
+        Target::Pi => PI_EXTENSION_PATH,
     }
 }
 
@@ -184,6 +202,7 @@ mod tests {
             cwd: "/p".into(),
             home: Some("/h".into()),
             xdg_config: None,
+            pi_agent_dir: None,
             path: vec![],
             hermes_home: None,
         }
@@ -204,6 +223,7 @@ mod tests {
             p(Target::Opencode),
             Path::new("/p/.opencode/plugins/hookah.ts")
         );
+        assert_eq!(p(Target::Pi), Path::new("/p/.pi/extensions/hookah.ts"));
     }
 
     #[test]
@@ -220,6 +240,22 @@ mod tests {
             u(Target::Opencode),
             Path::new("/h/.config/opencode/plugins/hookah.ts")
         );
+        assert_eq!(
+            u(Target::Pi),
+            Path::new("/h/.pi/agent/extensions/hookah.ts")
+        );
+    }
+
+    #[test]
+    fn pi_honors_pi_coding_agent_dir() {
+        let mut e = env();
+        e.pi_agent_dir = Some("/cfg".into());
+        assert_eq!(
+            e.config_path(Target::Pi, Scope::User).unwrap(),
+            Path::new("/cfg/extensions/hookah.ts")
+        );
+        assert_eq!(e.user_dir(Target::Pi), Some("/cfg".into()));
+        assert_eq!(env().user_dir(Target::Pi), Some("/h/.pi/agent".into()));
     }
 
     #[test]
@@ -292,6 +328,10 @@ mod tests {
         ));
         assert!(matches!(
             e.config_path(Target::Opencode, Scope::User),
+            Err(SetupError::NoHome)
+        ));
+        assert!(matches!(
+            e.config_path(Target::Pi, Scope::User),
             Err(SetupError::NoHome)
         ));
         assert!(e.config_path(Target::Claude, Scope::Project).is_ok());

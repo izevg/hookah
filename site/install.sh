@@ -227,4 +227,4 @@ esac
 
 say "next steps:"
 say "  hookah setup --detect      # which agent harnesses are installed"
-say "  hookah setup <harness>     # claude, codex, cursor, qoder, kimi, opencode, or hermes"
+say "  hookah setup <harness>     # claude, codex, cursor, qoder, kimi, opencode, hermes, or pi"

@@ -183,6 +183,56 @@ fn plugin_hermes_prints_the_embedded_source() {
 }
 
 #[test]
+fn pi_garbage_and_stale_versions_fail_open() {
+    let out = run(&["hook", "pi"], "not json at all");
+    assert_eq!(out.status.code(), Some(0));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("hookah: warning"));
+    let stale = r#"{"v":9,"event":"edit","cwd":"/nonexistent","files":["a.ts"]}"#;
+    let out = run(&["hook", "pi"], stale);
+    assert_eq!(out.status.code(), Some(0));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("reinstall the extension"));
+}
+
+#[test]
+fn pi_edit_start_and_stop_answer_with_json() {
+    let edit = format!(
+        r#"{{"v":1,"event":"edit","cwd":"{NOWHERE}","files":["a.ts"],
+        "session_id":"s","already_continuing":false}}"#
+    );
+    let quiet = r#"{"v":1,"block":false}"#;
+    let out = run(&["hook", "pi"], &edit);
+    assert_eq!(out.status.code(), Some(0));
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), quiet);
+    let start = format!(r#"{{"v":1,"event":"start","cwd":"{NOWHERE}","session_id":"s"}}"#);
+    let out = run(&["hook", "pi"], &start);
+    assert_eq!(out.status.code(), Some(0));
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), quiet);
+    let stop = format!(r#"{{"v":1,"event":"stop","cwd":"{NOWHERE}","already_continuing":true}}"#);
+    let out = run(&["hook", "pi"], &stop);
+    assert_eq!(out.status.code(), Some(0));
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.starts_with(r#"{"v":1,"block":false,"user_text":"hookah: checks incomplete"#));
+}
+
+#[test]
+fn plugin_pi_refuses_out_because_it_is_one_file() {
+    let out = run(&["plugin", "pi", "--out", "somewhere"], "");
+    assert_eq!(out.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("the Pi extension is one file"));
+}
+
+#[test]
+fn plugin_pi_prints_the_embedded_source() {
+    let out = run(&["plugin", "pi"], "");
+    assert_eq!(out.status.code(), Some(0));
+    let source = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(
+        source,
+        include_str!("../../harness/src/plugins/pi/extension.ts")
+    );
+}
+
+#[test]
 fn plugin_opencode_prints_the_embedded_source() {
     let out = run(&["plugin", "opencode"], "");
     assert_eq!(out.status.code(), Some(0));

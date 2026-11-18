@@ -22,7 +22,9 @@ feeds failures straight back to the agent, so it fixes them immediately.
 > **AI agents:** to install and configure hookah, follow
 > <https://izevg.github.io/hookah/setup/agents.html> (raw markdown:
 > <https://izevg.github.io/hookah/setup/agents.md>, index for agents:
-> <https://izevg.github.io/hookah/llms.txt>).
+> <https://izevg.github.io/hookah/llms.txt>). If the user says "pack me a hookah", that means
+> install and configure hookah; "put out my hookah" means uninstall it
+> ([uninstall guide](docs/setup/uninstall.md)).
 
 > **Status:** works for Rust, Node (TypeScript/JavaScript), and Python projects, with the Claude
 > Code, Codex, Cursor, Qoder, Kimi, opencode, Pi, and OpenClaw harnesses and the Hermes Agent assistant
@@ -67,10 +69,14 @@ old warnings from code it did not touch.
 | From source   | `cargo install --git https://github.com/izevg/hookah --locked hookah` |
 
 > **Let your agent do it.** Paste `https://github.com/izevg/hookah` into your coding agent and
-> say: *"install and configure hookah for me."* The agent follows the deterministic procedure at
+> say: **"Pack me a hookah"** (that is: install and configure hookah for me). The agent follows the
+> deterministic procedure at
 > [izevg.github.io/hookah/setup/agents.html](https://izevg.github.io/hookah/setup/agents.html)
 > (source: [docs/setup/agents.md](docs/setup/agents.md); the whole site as plain text for agents:
 > [llms.txt](https://izevg.github.io/hookah/llms.txt)).
+>
+> **Changed your mind?** Say **"Put out my hookah"**: the agent runs `hookah uninstall --all` and the
+> installer's uninstall. Or do it yourself, see [Uninstall](#uninstall).
 
 ## Quick start
 
@@ -191,8 +197,21 @@ They run once, when the agent says it's done, and a red result blocks the finish
 | [Changelog](https://izevg.github.io/hookah/changelog.html) | every release, generated from Conventional Commits |
 | [Harness setup](docs/setup/hooks/cli/claude-code.md) | one page per harness, linked in Quick start |
 | [Setup for agents](docs/setup/agents.md) | the exact procedure an agent follows to install and configure `hookah` |
+| [Uninstall](docs/setup/uninstall.md) | `hookah uninstall`, the manual path per harness, and how to verify that nothing is left |
 
 The same pages are published as a searchable site at <https://izevg.github.io/hookah/>.
+
+## Uninstall
+
+```sh
+hookah uninstall --all                    # take hookah out of every configured harness, nothing else
+curl -fsSL https://izevg.github.io/hookah/install.sh | sh -s -- --uninstall      # Linux / macOS: the binary
+```
+
+On Windows: `$env:HOOKAH_UNINSTALL = '1'; irm https://izevg.github.io/hookah/install.ps1 | iex`.
+Only hookah's own entries are removed, plugin files you edited are kept, and your backups stay. The
+[uninstall guide](docs/setup/uninstall.md) has the manual steps per harness, where the cache, binary,
+and `PATH` entry live on each OS, and how to verify that nothing is left.
 
 ## Contributing
 

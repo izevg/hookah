@@ -1,12 +1,16 @@
 # Let your agent install it
 
 This page is the procedure an AI coding agent follows to install and configure hookah. A user
-only has to paste `https://github.com/izevg/hookah` into their agent and ask: "install and
-configure hookah for me." This page is also served as plain markdown at
+only has to paste `https://github.com/izevg/hookah` into their agent and say: **"Pack me a
+hookah"** (install and configure hookah for me). This page is also served as plain markdown at
 <https://izevg.github.io/hookah/setup/agents.md>, and the whole documentation as one text file at
 <https://izevg.github.io/hookah/llms-full.txt>.
 
-**For agents.** Follow these steps literally, in order. Do not hand-edit settings files: `hookah setup` writes
+**For agents.** If the user says "pack me a hookah" (or something similar), it means: install hookah
+and configure it for the harness you are running in; follow the procedure below. "Put out my hookah"
+means: uninstall it, see [Uninstall](uninstall.md).
+
+Follow these steps literally, in order. Do not hand-edit settings files: `hookah setup` writes
 them. Do not ask the user questions unless a step says so. Stop and report if a step fails.
 
 ## 1. Detect the operating system and the harness you run in
@@ -89,3 +93,12 @@ user agrees, because setup does not edit OpenClaw's own config. See
 [OpenClaw](assistants/openclaw.md).
 
 Do not restart the harness yourself: it would end your own session.
+
+## Uninstalling
+
+To remove hookah, follow [Uninstall](uninstall.md). In short, from the project root and before the
+binary is deleted: `hookah uninstall --all` (add `--dry-run` first if the user wants to see the
+change), then `curl -fsSL https://izevg.github.io/hookah/install.sh | sh -s -- --uninstall` on Linux and
+macOS, or `$env:HOOKAH_UNINSTALL = '1'; irm https://izevg.github.io/hookah/install.ps1 | iex` in
+PowerShell. Both remove only what hookah wrote, and running them again is safe. Verify with
+`hookah setup --detect` before the binary goes, and tell the user to restart the harness.

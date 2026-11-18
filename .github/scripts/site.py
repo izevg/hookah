@@ -32,6 +32,7 @@ EXTERNAL = re.compile(r"^(?:[a-z][a-z0-9+.-]*:|//|#)", re.I)
 DESCRIPTIONS = {
     "README.md": "what hookah is, install commands, and a quick start",
     "setup/agents.md": "the exact procedure an agent follows to install and configure hookah",
+    "setup/uninstall.md": "hookah uninstall, the manual removal per harness, and how to verify that nothing is left",
     "configuration.md": ".hookah.toml and the cache",
     "ecosystems.md": "detection, commands, output parsing, and test selection for Rust, Node, and Python",
     "architecture.md": "layers, request flow, baseline, and failure handling",
@@ -198,6 +199,10 @@ def finish():
         f"(`curl -fsSL {SITE_URL}/install.sh | sh` on Linux and macOS, "
         f"`irm {SITE_URL}/install.ps1 | iex` on Windows), then run `hookah setup --detect` and "
         "`hookah setup <harness>`. Every page below is plain markdown.",
+        "",
+        "If the user says \"pack me a hookah\", that means: install and configure hookah (the procedure above). "
+        f"\"Put out my hookah\" means: uninstall it, following [Uninstall]({SITE_URL}/setup/uninstall.md) "
+        "(`hookah uninstall --all`, then the installer's `--uninstall`).",
     ]
     current = None
     for section, title, path in entries:

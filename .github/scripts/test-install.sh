@@ -195,6 +195,62 @@ assert "nothing installed after a mismatch" test ! -e "$dest/hookah"
 go Linux aarch64 --dir "$dest" --version 1.2.3
 check "aborts when SHA256SUMS lacks the archive" 1 "no entry for"
 
+# --- uninstall (install.sh) -------------------------------------------------------------------
+# A fake hookah that logs how it was called and exits with $FAKE_UNINSTALL_STATUS.
+fake_hookah() { # fake_hookah DIR
+  mkdir -p "$1"
+  cat > "$1/hookah" << 'EOF'
+#!/bin/sh
+echo "$*" >> "$HOOKAH_TEST_LOG"
+exit "${FAKE_UNINSTALL_STATUS:-0}"
+EOF
+  chmod 755 "$1/hookah"
+}
+log="$work/uninstall.log"
+export HOOKAH_TEST_LOG="$log"
+
+dest="$work/un1"
+fake_hookah "$dest"
+echo keep > "$dest/other-tool"
+: > "$log"
+go Linux x86_64 --uninstall --dir "$dest" --dry-run
+check "uninstall dry run says what it would do" 0 "would remove $dest/hookah"
+assert "uninstall dry run removes nothing" test -e "$dest/hookah"
+assert_eq "uninstall dry run runs nothing" "$(cat "$log")" ""
+
+go Linux x86_64 --uninstall --dir "$dest"
+check "uninstall removes the binary" 0 "removed $dest/hookah"
+assert "the binary is gone" test ! -e "$dest/hookah"
+assert "other files in the install dir stay" test -e "$dest/other-tool"
+assert_eq "uninstall first runs hookah uninstall --all" "$(cat "$log")" "uninstall --all"
+assert "uninstall downloads nothing" test -z "$(grep -i 'download\|checksum' "$work/out")"
+
+go Linux x86_64 --uninstall --dir "$dest"
+check "uninstall twice is a clean no-op" 0 "nothing to uninstall"
+
+dest="$work/un2"
+fake_hookah "$dest"
+: > "$log"
+go Linux x86_64 --uninstall --keep-config --dir "$dest"
+check "--keep-config removes the binary" 0 "keep-config"
+assert "--keep-config leaves the configs alone" test ! -s "$log"
+assert "--keep-config still removes the binary" test ! -e "$dest/hookah"
+
+dest="$work/un3"
+fake_hookah "$dest"
+status=0
+FAKE_UNINSTALL_STATUS=1 HOOKAH_INSTALL_DIR="$dest" HOME="$work/home" sh "$sh_installer" --uninstall > "$work/out" 2>&1 || status=$?
+check "HOOKAH_INSTALL_DIR is honored and a failing hookah uninstall only warns" 0 "did not finish"
+assert "the binary goes even when the config removal did not finish" test ! -e "$dest/hookah"
+
+dest="$work/un4"
+mkdir -p "$dest"
+go Linux x86_64 --uninstall --dir "$dest"
+check "uninstall without a binary says so" 0 "nothing to uninstall"
+status=0
+HOME="$work/home" sh "$sh_installer" --uninstall --dir > "$work/out" 2>&1 || status=$?
+check "uninstall still validates its options" 1 "needs a value"
+
 # --- wget instead of curl (only where wget exists) ----------------------------------------------
 if command -v wget > /dev/null; then
   only="$work/only-wget"
@@ -235,6 +291,44 @@ if command -v pwsh > /dev/null; then
   PROCESSOR_ARCHITECTURE=AMD64 PROCESSOR_ARCHITEW6432="" HOOKAH_VERSION="" HOOKAH_INSTALL_DIR="$work/ps5" HOOKAH_NO_MODIFY_PATH=1 \
     HOOKAH_DOWNLOAD_BASE="$base" HOOKAH_API_URL="$base/api" pwsh -NoProfile -NonInteractive -File "$ps_installer" > "$work/out" 2>&1 || status=$?
   check "install.ps1 resolves the latest version" 0 "version: 1.2.3"
+
+  # Uninstall: a fake hookah.exe (a shell script) that logs its arguments.
+  fake_exe() { # fake_exe DIR
+    mkdir -p "$1"
+    # shellcheck disable=SC2016  # the script text is meant to expand when the fake runs
+    printf '#!/bin/sh\necho "$*" >> "$HOOKAH_TEST_LOG"\nexit "${FAKE_UNINSTALL_STATUS:-0}"\n' > "$1/hookah.exe"
+    chmod 755 "$1/hookah.exe"
+  }
+  run_ps_un() { # run_ps_un DIR [ENV=VALUE...]: uninstall through the env var, the `irm | iex` way
+    local dir="$1"
+    shift
+    status=0
+    env "$@" HOOKAH_UNINSTALL=1 HOOKAH_INSTALL_DIR="$dir" HOOKAH_NO_MODIFY_PATH=1 \
+      pwsh -NoProfile -NonInteractive -Command "Get-Content -Raw '$ps_installer' | Invoke-Expression" > "$work/out" 2>&1 || status=$?
+  }
+  : > "$log"
+  fake_exe "$work/psu1"
+  run_ps_un "$work/psu1"
+  check "install.ps1 uninstalls through HOOKAH_UNINSTALL with iex" 0 "removed"
+  assert_eq "install.ps1 runs hookah uninstall --all first" "$(cat "$log")" "uninstall --all"
+  assert "install.ps1 removes the binary and the empty install dir" test ! -e "$work/psu1"
+  run_ps_un "$work/psu1"
+  check "install.ps1 uninstall twice is a no-op" 0 "nothing to uninstall"
+
+  : > "$log"
+  fake_exe "$work/psu2"
+  echo keep > "$work/psu2/other.exe"
+  run_ps_un "$work/psu2" HOOKAH_KEEP_CONFIG=1
+  check "install.ps1 honors HOOKAH_KEEP_CONFIG" 0 "keeping the harness configs"
+  assert "install.ps1 keep-config runs nothing" test ! -s "$log"
+  assert "install.ps1 keeps a shared install dir" test -e "$work/psu2/other.exe"
+  assert "install.ps1 removes only its binary" test ! -e "$work/psu2/hookah.exe"
+
+  fake_exe "$work/psu3"
+  status=0
+  HOOKAH_INSTALL_DIR="$work/psu3" HOOKAH_NO_MODIFY_PATH=1 pwsh -NoProfile -NonInteractive -File "$ps_installer" -Uninstall -KeepConfig > "$work/out" 2>&1 || status=$?
+  check "install.ps1 takes -Uninstall -KeepConfig when run as a file" 0 "removed"
+  assert "install.ps1 -Uninstall removes the binary" test ! -e "$work/psu3/hookah.exe"
 else
   echo "skip install.ps1 tests: pwsh not installed"
 fi

@@ -4,6 +4,7 @@
 
 use serde_json::{Map, Value, json};
 
+use super::{Unmerged, json};
 use crate::target::{HookSpec, Target, mentions_hookah};
 
 /// The `version` Cursor requires at the top of the file.
@@ -34,6 +35,19 @@ pub fn merge(target: Target, existing: Option<&str>, command: &str) -> Result<St
     let mut text = serde_json::to_string_pretty(&root).map_err(|e| e.to_string())?;
     text.push('\n');
     Ok(text)
+}
+
+pub fn unmerge(target: Target, text: &str) -> Result<Unmerged, String> {
+    json::unmerge_with(
+        text,
+        |entries| {
+            let before = entries.len();
+            entries.retain(|entry| !json::is_ours(entry, target.name()));
+            entries.len() != before
+        },
+        // Setup adds `version` when it is missing; a file with nothing else is setup's alone.
+        |top| top.keys().all(|key| key == "version"),
+    )
 }
 
 /// Updates every hookah entry of the event in place, or appends one when there is none.
@@ -127,5 +141,44 @@ mod tests {
         assert!(merge(Target::Cursor, Some("[]"), CMD).is_err());
         assert!(merge(Target::Cursor, Some(r#"{"hooks": []}"#), CMD).is_err());
         assert!(merge(Target::Cursor, Some(r#"{"hooks": {"stop": {}}}"#), CMD).is_err());
+    }
+
+    fn removed(text: &str) -> (String, bool) {
+        match unmerge(Target::Cursor, text).unwrap() {
+            Unmerged::Removed { text, empty } => (text, empty),
+            Unmerged::Unchanged => panic!("nothing removed from {text}"),
+        }
+    }
+
+    #[test]
+    fn unmerge_is_the_exact_inverse_of_merge_on_a_pretty_file() {
+        let original = "{\n  \"version\": 1,\n  \"hooks\": {\n    \"stop\": [\n      {\n        \"command\": \"mine.sh\"\n      }\n    ]\n  },\n  \"other\": true\n}\n";
+        let merged = merge(Target::Cursor, Some(original), CMD).unwrap();
+        assert_eq!(removed(&merged), (original.to_owned(), false));
+    }
+
+    #[test]
+    fn unmerge_of_a_file_setup_created_is_empty_and_keeps_only_the_version() {
+        let merged = merge(Target::Cursor, None, CMD).unwrap();
+        assert_eq!(
+            removed(&merged),
+            ("{\n  \"version\": 1\n}\n".to_owned(), true)
+        );
+    }
+
+    #[test]
+    fn unmerge_keeps_foreign_entries_and_reports_nothing_to_do_without_ours() {
+        let text = r#"{"version": 1, "hooks": {"stop": [{"command": "hookah hook cursor"}, {"command": "hookah hook claude"}, {"x": 1}]}}"#;
+        let (out, empty) = removed(text);
+        let got: Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(
+            got["hooks"]["stop"],
+            json!([{"command": "hookah hook claude"}, {"x": 1}])
+        );
+        assert!(!empty);
+        assert_eq!(
+            unmerge(Target::Cursor, r#"{"version": 1}"#).unwrap(),
+            Unmerged::Unchanged
+        );
     }
 }

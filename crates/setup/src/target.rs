@@ -126,6 +126,21 @@ impl Target {
         }
     }
 
+    /// The harness as its users call it, for messages.
+    pub fn title(self) -> &'static str {
+        match self {
+            Self::Claude => "Claude Code",
+            Self::Codex => "Codex",
+            Self::Qoder => "Qoder",
+            Self::Kimi => "Kimi Code",
+            Self::Cursor => "Cursor",
+            Self::Opencode => "opencode",
+            Self::Hermes => "Hermes",
+            Self::Pi => "Pi",
+            Self::Openclaw => "OpenClaw",
+        }
+    }
+
     /// What the user must do after the config is written.
     pub fn restart_hint(self) -> &'static str {
         match self {
@@ -302,9 +317,12 @@ mod tests {
         assert!(Target::Hermes.hooks().is_empty());
         assert!(Target::Pi.hooks().is_empty());
         assert!(Target::Openclaw.hooks().is_empty());
+        assert_eq!(Target::Claude.title(), "Claude Code");
+        assert_eq!(Target::Openclaw.title(), "OpenClaw");
         for t in Target::ALL {
             assert!(!t.binaries().is_empty());
             assert!(t.restart_hint().contains("estart"), "{t:?}");
+            assert!(!t.title().is_empty());
         }
     }
 }

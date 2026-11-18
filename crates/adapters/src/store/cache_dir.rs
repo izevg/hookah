@@ -21,7 +21,7 @@
 //! functions return an error and callers work without a cache.
 
 use std::ffi::OsString;
-use std::fs::DirBuilder;
+use std::fs::{self, DirBuilder};
 use std::path::{Path, PathBuf};
 
 use hookah_application::error::PortError;
@@ -44,6 +44,69 @@ impl Platform {
             Self::Unix
         }
     }
+}
+
+/// What `hookah uninstall --purge-cache` removes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CachePurge {
+    /// The directory under which `hookah` keeps its caches.
+    pub base: PathBuf,
+    /// The paths to delete: `base` itself, or, when the user chose the directory with
+    /// `HOOKAH_CACHE_DIR` (it may hold anything), only the per-project directories inside it.
+    pub paths: Vec<PathBuf>,
+    /// True when `base` is the user's own directory: it is removed only if purging leaves it empty.
+    pub shared: bool,
+}
+
+impl CachePurge {
+    /// Deletes [`CachePurge::paths`], then a shared `base` that is now empty.
+    pub fn run(&self) -> std::io::Result<()> {
+        for path in &self.paths {
+            fs::remove_dir_all(path)?;
+        }
+        if self.shared && !self.paths.is_empty() {
+            // Not empty means the user keeps something there; that is fine.
+            let _ = fs::remove_dir(&self.base);
+        }
+        Ok(())
+    }
+}
+
+/// The cache that exists now and would be purged; `None` when there is no cache directory.
+pub fn cache_purge() -> Option<CachePurge> {
+    let base = cache_base(|key| std::env::var_os(key), Platform::current())?;
+    let shared = std::env::var_os("HOOKAH_CACHE_DIR")
+        .map(PathBuf::from)
+        .is_some_and(|p| p.is_absolute());
+    Some(purge_in(base, shared))
+}
+
+fn purge_in(base: PathBuf, shared: bool) -> CachePurge {
+    let paths = if shared {
+        let mut dirs: Vec<PathBuf> = fs::read_dir(&base)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .filter(|entry| is_project_dir_name(&entry.file_name()))
+            .map(|entry| entry.path())
+            .filter(|path| path.is_dir())
+            .collect();
+        dirs.sort();
+        dirs
+    } else {
+        vec![base.clone()]
+    };
+    CachePurge {
+        paths: paths.into_iter().filter(|p| p.exists()).collect(),
+        base,
+        shared,
+    }
+}
+
+/// True for the 16 lowercase hex digits of [`root_hash`].
+fn is_project_dir_name(name: &std::ffi::OsStr) -> bool {
+    name.to_str()
+        .is_some_and(|n| n.len() == 16 && n.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')))
 }
 
 /// The cache directory of the project at `project_root`; created when missing.
@@ -269,5 +332,93 @@ mod tests {
         fs::write(&file, "x").unwrap();
         assert!(project_dir_in(&file, Path::new("/p")).is_err());
         let _ = fs::remove_file(&file);
+    }
+
+    fn scratch(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("hookah-purge-{name}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn purging_the_default_location_removes_the_whole_directory() {
+        let base = scratch("whole").join("hookah");
+        fs::create_dir_all(base.join("0123456789abcdef")).unwrap();
+        fs::write(base.join("other"), "x").unwrap();
+        let purge = purge_in(base.clone(), false);
+        assert_eq!(purge.paths, std::slice::from_ref(&base));
+        purge.run().unwrap();
+        assert!(!base.exists());
+        assert!(base.parent().unwrap().exists());
+        // Nothing there: nothing to purge, and running it is fine.
+        let again = purge_in(base.clone(), false);
+        assert!(again.paths.is_empty());
+        again.run().unwrap();
+    }
+
+    #[test]
+    fn purging_a_user_chosen_directory_removes_only_project_directories() {
+        let base = scratch("shared");
+        for name in [
+            "0123456789abcdef",
+            "fedcba9876543210",
+            "0123456789ABCDEF",
+            "0123456789abcde",
+            "0123456789abcdeg",
+        ] {
+            fs::create_dir_all(base.join(name)).unwrap();
+        }
+        fs::write(base.join("aaaaaaaaaaaaaaaa"), "a file named like a project").unwrap();
+        fs::write(base.join("notes.txt"), "mine").unwrap();
+        let purge = purge_in(base.clone(), true);
+        assert_eq!(
+            purge.paths,
+            [base.join("0123456789abcdef"), base.join("fedcba9876543210")]
+        );
+        purge.run().unwrap();
+        assert!(base.join("notes.txt").is_file());
+        assert!(base.join("0123456789abcde").is_dir());
+        assert!(base.join("0123456789abcdeg").is_dir());
+        assert!(base.join("aaaaaaaaaaaaaaaa").is_file());
+        assert!(!base.join("0123456789abcdef").exists());
+        assert!(!base.join("fedcba9876543210").exists());
+    }
+
+    #[test]
+    fn a_user_chosen_directory_that_ends_up_empty_goes_too_but_an_untouched_one_stays() {
+        let base = scratch("empty");
+        fs::create_dir_all(base.join("0123456789abcdef")).unwrap();
+        purge_in(base.clone(), true).run().unwrap();
+        assert!(!base.exists());
+        let base = scratch("untouched");
+        let purge = purge_in(base.clone(), true);
+        assert!(purge.paths.is_empty());
+        purge.run().unwrap();
+        assert!(base.is_dir());
+        assert!(purge_in(base.join("missing"), true).paths.is_empty());
+    }
+
+    #[test]
+    fn a_failing_delete_is_an_error() {
+        let base = scratch("fail");
+        let purge = CachePurge {
+            base: base.clone(),
+            paths: vec![base.join("nope")],
+            shared: false,
+        };
+        assert!(purge.run().is_err());
+    }
+
+    #[test]
+    fn the_public_entry_point_follows_the_environment() {
+        let base = cache_base(|key| std::env::var_os(key), Platform::current());
+        assert_eq!(cache_purge().is_some(), base.is_some());
+        if let Some(purge) = cache_purge() {
+            let explicit =
+                std::env::var_os("HOOKAH_CACHE_DIR").is_some_and(|v| Path::new(&v).is_absolute());
+            assert_eq!(purge.shared, explicit);
+            assert!(purge.paths.iter().all(|p| p.starts_with(&purge.base)));
+        }
     }
 }

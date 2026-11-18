@@ -54,7 +54,18 @@ impl Scratch {
         );
         let script = format!("#!/bin/sh\ncat <<'HOOKAH_EOF'\n{stdout}\nHOOKAH_EOF\nexit {code}\n");
         let path = self.write(&format!("node_modules/.bin/{name}"), &script);
-        fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
+        // Run it once so that it is executable for good: while this thread's write handle was
+        // open, another test thread may have forked and still hold it until its `exec`, and
+        // exec-ing the file meanwhile fails with ETXTBSY. The script has no side effects.
+        for _ in 0..200 {
+            match std::process::Command::new(&path).output() {
+                Err(e) if e.raw_os_error() == Some(26) => {
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                }
+                _ => break,
+            }
+        }
     }
 
     fn project(&self) -> Project {

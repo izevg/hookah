@@ -4,6 +4,10 @@
 //! that rewrites the file yields a `FileRewritten` notice. Changed lines are read after
 //! formatting so they match the final text. Errors anywhere never fail the verdict. Tools the
 //! project lacks become non-blocking `MissingTool` notices.
+//!
+//! With a session baseline, only static findings that are new against it are reported (any
+//! severity, anywhere); otherwise the changed-lines filter decides. A session without a baseline
+//! gets its baseline job started by its first edit, which is itself not baseline-filtered.
 
 use hookah_domain::path::display_path;
 use hookah_domain::project::locate_project;
@@ -11,6 +15,7 @@ use hookah_domain::session::{ChangedLines, Phase};
 use hookah_domain::toolchain::CheckKind;
 use hookah_domain::verdict::{Notice, ReportingFilter};
 
+use super::baseline::lookup;
 use super::request::{EditRequest, Outcome, RunLog};
 use crate::ports::Ports;
 
@@ -51,6 +56,9 @@ impl<'a> CheckEdit<'a> {
             Err(e) => return Outcome::degraded(format!("detecting toolchain: {e}")),
         };
         let targets = [rel.to_string_lossy().into_owned()];
+        // Looked up before the tools run: a baseline job started by this very edit must not
+        // finish in time to be used for it.
+        let baseline = lookup(&self.ports, &project, request.session.as_deref(), true);
 
         let mut log = RunLog::default();
         log.report_missing(&toolchain, |k| Phase::Edit.check_kinds().contains(&k));
@@ -70,6 +78,9 @@ impl<'a> CheckEdit<'a> {
         }
 
         let mut filter = ReportingFilter::new();
+        if let Some(baseline) = baseline {
+            filter = filter.with_baseline(baseline);
+        }
         match self.ports.changes.changed_lines(&project.root, file) {
             Ok(lines) => filter.track(rel, lines),
             Err(e) => {
@@ -330,5 +341,152 @@ mod tests {
         };
         assert_eq!(report.findings().len(), 1);
         assert_eq!(out.notices.len(), 1);
+    }
+
+    mod baseline {
+        use hookah_domain::finding::baseline::Baseline;
+
+        use super::*;
+        use crate::ports::BaselineState;
+
+        fn run_in_session(w: &World, session: Option<&str>) -> Outcome {
+            let request =
+                EditRequest::new("/r/src/a.rs", "/r").with_session(session.map(Into::into));
+            CheckEdit::new(w.ports(), 20).run(&request)
+        }
+
+        fn lines(out: Outcome) -> Vec<String> {
+            match out.verdict {
+                Verdict::Fail(r) => r.lines(),
+                Verdict::Pass => vec![],
+                Verdict::Degraded(d) => panic!("degraded: {d}"),
+            }
+        }
+
+        fn ready(w: &World, old: &[Finding]) {
+            w.set_baseline("s", BaselineState::Ready(Baseline::from_findings(old)));
+        }
+
+        #[test]
+        fn a_pre_existing_error_elsewhere_is_hidden() {
+            let mut w = world();
+            let old = lint(Severity::Error, "src/other.rs", 1);
+            w.findings.insert("lint".into(), vec![old.clone()]);
+            assert_eq!(
+                lines(run_in_session(&w, Some("s"))),
+                ["src/other.rs:1: msg"]
+            );
+            ready(&w, &[old]);
+            assert!(lines(run_in_session(&w, Some("s"))).is_empty());
+        }
+
+        #[test]
+        fn a_new_error_is_reported_and_an_old_one_after_a_line_shift_is_not() {
+            let mut w = world();
+            let old = lint(Severity::Error, "src/other.rs", 1);
+            ready(&w, &[old]);
+            let mut fresh = lint(Severity::Error, "src/a.rs", 4);
+            fresh.message = "brand new".into();
+            w.findings.insert(
+                "lint".into(),
+                vec![lint(Severity::Error, "src/other.rs", 25), fresh],
+            );
+            assert_eq!(
+                lines(run_in_session(&w, Some("s"))),
+                ["src/a.rs:4: brand new"]
+            );
+        }
+
+        #[test]
+        fn warnings_anywhere_are_reported_when_new_and_hidden_when_old() {
+            let mut w = world();
+            w.lines = ChangedLines::Ranges(vec![LineRange::new(5, 6).unwrap()]);
+            let old = lint(Severity::Warning, "src/a.rs", 50);
+            ready(&w, std::slice::from_ref(&old));
+            let mut fresh = lint(Severity::Warning, "src/other.rs", 2);
+            fresh.message = "fresh".into();
+            w.findings.insert("lint".into(), vec![old, fresh]);
+            assert_eq!(
+                lines(run_in_session(&w, Some("s"))),
+                ["src/other.rs:2: warning: fresh"]
+            );
+        }
+
+        #[test]
+        fn one_more_occurrence_than_the_baseline_is_one_new_finding() {
+            let mut w = world();
+            ready(&w, &[lint(Severity::Error, "src/a.rs", 1)]);
+            w.findings.insert(
+                "lint".into(),
+                vec![
+                    lint(Severity::Error, "src/a.rs", 1),
+                    lint(Severity::Error, "src/a.rs", 8),
+                ],
+            );
+            assert_eq!(lines(run_in_session(&w, Some("s"))), ["src/a.rs:8: msg"]);
+        }
+
+        #[test]
+        fn an_absent_baseline_starts_the_job_once_and_the_edit_uses_the_fallback() {
+            let mut w = world();
+            w.findings.insert(
+                "lint".into(),
+                vec![lint(Severity::Error, "src/other.rs", 1)],
+            );
+            assert_eq!(
+                lines(run_in_session(&w, Some("s"))),
+                ["src/other.rs:1: msg"]
+            );
+            assert_eq!(*w.spawned.borrow(), [("/r".into(), "s".to_string())]);
+            assert_eq!(w.baseline_state("s"), BaselineState::InProgress);
+            assert_eq!(
+                lines(run_in_session(&w, Some("s"))),
+                ["src/other.rs:1: msg"]
+            );
+            assert_eq!(w.spawned.borrow().len(), 1);
+        }
+
+        #[test]
+        fn no_session_id_means_no_baseline_and_no_job() {
+            let mut w = world();
+            w.findings.insert(
+                "lint".into(),
+                vec![lint(Severity::Error, "src/other.rs", 1)],
+            );
+            assert_eq!(lines(run_in_session(&w, None)), ["src/other.rs:1: msg"]);
+            assert_eq!(lines(run_in_session(&w, Some(""))), ["src/other.rs:1: msg"]);
+            assert!(w.spawned.borrow().is_empty());
+        }
+
+        #[test]
+        fn a_failed_or_running_baseline_falls_back_without_a_new_job() {
+            let mut w = world();
+            w.lines = ChangedLines::Ranges(vec![]);
+            w.findings.insert(
+                "lint".into(),
+                vec![
+                    lint(Severity::Error, "src/other.rs", 1),
+                    lint(Severity::Warning, "src/a.rs", 1),
+                ],
+            );
+            for state in [BaselineState::InProgress, BaselineState::Failed("x".into())] {
+                w.set_baseline("s", state);
+                assert_eq!(
+                    lines(run_in_session(&w, Some("s"))),
+                    ["src/other.rs:1: msg"]
+                );
+            }
+            assert!(w.spawned.borrow().is_empty());
+        }
+
+        #[test]
+        fn a_job_that_cannot_start_never_blocks_the_edit() {
+            let mut w = world();
+            w.spawn_fails = true;
+            w.findings
+                .insert("lint".into(), vec![lint(Severity::Error, "src/a.rs", 1)]);
+            assert_eq!(lines(run_in_session(&w, Some("s"))), ["src/a.rs:1: msg"]);
+            assert!(matches!(w.baseline_state("s"), BaselineState::Failed(_)));
+        }
     }
 }

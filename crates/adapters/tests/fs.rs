@@ -31,6 +31,43 @@ fn paths(found: Vec<hookah_domain::project::Manifest>) -> Vec<PathBuf> {
 }
 
 #[test]
+fn nested_roots_finds_manifest_directories_shallowest_first_within_the_depth() {
+    let root = temp_dir("nested");
+    touch(&root.join("Cargo.toml")); // the root itself is not nested
+    touch(&root.join("b/package.json"));
+    touch(&root.join("a/Cargo.toml"));
+    touch(&root.join("a/deep/inner/Cargo.toml"));
+    touch(&root.join("a/deep/inner/more/pyproject.toml")); // 4 levels down
+    touch(&root.join("c/src/readme.md"));
+    touch(&root.join("c/src/pkg/pyproject.toml")); // 3 levels down
+    for skipped in ["node_modules", "target", ".hidden", "venv", "vendor"] {
+        touch(&root.join(skipped).join("Cargo.toml"));
+    }
+
+    let loc = FsLocator::with_home(None);
+    let found = loc.nested_roots(&root, 3).unwrap();
+    assert_eq!(
+        found,
+        vec![
+            root.join("a"),
+            root.join("b"),
+            root.join("a/deep/inner"),
+            root.join("c/src/pkg"),
+        ]
+    );
+    assert_eq!(
+        loc.nested_roots(&root, 1).unwrap(),
+        vec![root.join("a"), root.join("b")]
+    );
+    assert!(loc.nested_roots(&root, 0).unwrap().is_empty());
+    assert!(
+        loc.nested_roots(&root.join("missing"), 3)
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[test]
 fn collects_manifests_up_to_the_git_root_inclusive() {
     let root = temp_dir("git");
     fs::create_dir_all(root.join("outer/.git")).unwrap();

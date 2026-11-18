@@ -7,6 +7,7 @@
 //! Rust toolchain detection goes through the detection [`cache`]: the result is kept between hook
 //! calls until one of the inputs that the Rust module declares changes.
 
+mod baseline;
 pub mod cache;
 pub mod node;
 pub mod python;
@@ -123,6 +124,10 @@ impl ToolchainDetector for Ecosystems {
             Ecosystem::Node => self.node.select_tests(project, changed),
             Ecosystem::Python => self.python.select_tests(project, changed),
         }
+    }
+
+    fn baseline_targets(&self, project: &Project, tool: &Tool) -> Vec<String> {
+        baseline::targets(project, tool)
     }
 
     fn parse(

@@ -5,6 +5,9 @@
 //!   harness's protocol.
 //! - `hookah detect <path>`: print the detected project and toolchain, for debugging.
 //! - `hookah plugin <harness>`: print the plugin source of a plugin-based harness.
+//! - `hookah baseline --session <id> --root <dir>`: the background job that a session-start hook
+//!   spawns (hidden). It records the project's existing findings so later reports show only new
+//!   ones.
 //! - `--report-limit <N>` (global): cap on findings shown per report.
 //!
 //! `hookah init`, a post-MVP setup wizard, is not implemented yet.
@@ -46,6 +49,17 @@ pub enum Command {
     Plugin {
         /// The harness the plugin is for.
         harness: PluginKind,
+    },
+    /// Compute the finding baseline of a project for an agent session. Spawned by `hookah hook`
+    /// on a session start; not meant to be run by hand.
+    #[command(hide = true)]
+    Baseline {
+        /// The agent session id.
+        #[arg(long)]
+        session: String,
+        /// The project root.
+        #[arg(long)]
+        root: PathBuf,
     },
     /// Print the project and toolchain found for a path.
     Detect {
@@ -117,6 +131,19 @@ mod tests {
                 harness: HarnessKind::Opencode
             }
         ));
+    }
+
+    #[test]
+    fn parses_the_hidden_baseline_job() {
+        let cli = Cli::try_parse_from(["hookah", "baseline", "--session=-odd id", "--root", "/p"])
+            .unwrap();
+        match cli.command {
+            Command::Baseline { session, root } => {
+                assert_eq!(session, "-odd id");
+                assert_eq!(root, PathBuf::from("/p"));
+            }
+            other => panic!("expected baseline, got {other:?}"),
+        }
     }
 
     #[test]

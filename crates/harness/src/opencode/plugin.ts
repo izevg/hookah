@@ -3,6 +3,10 @@
  * agent edits. Install it with `hookah plugin opencode > .opencode/plugins/hookah.ts` (project)
  * or into `~/.config/opencode/plugins/` (global). See docs/setup/plugins/opencode.md.
  *
+ * Start: when a session is created it runs `hookah hook opencode` with `event: "start"`, which
+ * records the problems the project already has (in the background) so later reports only show
+ * what the agent introduced.
+ *
  * Edit phase: after a file-writing tool (`write`, `edit`, `multiedit`, `apply_patch`) it runs
  * `hookah hook opencode` and appends hookah's report to the tool output the model reads.
  *
@@ -22,6 +26,7 @@ import type { Plugin } from "@opencode-ai/plugin"
 const CONTRACT = 1
 const EDIT_TIMEOUT_MS = 30_000
 const STOP_TIMEOUT_MS = 120_000
+const START_TIMEOUT_MS = 10_000
 const MAX_TOAST = 600
 
 /** hookah's answer: `block` means the model must act on `model_text`; `user_text` is for people. */
@@ -162,6 +167,21 @@ export const HookahPlugin: Plugin = async ({ client, directory }) => {
     },
 
     event: async ({ event }) => {
+      if (event.type === "session.created") {
+        try {
+          const info = event.properties.info
+          // Subagent sessions work on the parent's project: they get a baseline lazily if needed.
+          if (!info?.id || info.parentID) return
+          const reply = await callHookah(
+            { event: "start", session_id: info.id, already_continuing: false },
+            START_TIMEOUT_MS,
+          )
+          if (reply?.user_text) await warnUser(reply.user_text)
+        } catch (e) {
+          await log("warn", `hookah session start failed: ${e}`)
+        }
+        return
+      }
       if (event.type !== "session.idle") return
       const id = event.properties.sessionID
       const injected = continuing.has(id)

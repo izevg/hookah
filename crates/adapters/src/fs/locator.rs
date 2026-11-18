@@ -66,4 +66,55 @@ impl ProjectLocator for FsLocator {
         }
         Ok(found)
     }
+
+    fn nested_roots(&self, dir: &Path, max_depth: usize) -> Result<Vec<PathBuf>, PortError> {
+        let dir = std::path::absolute(dir)
+            .map_err(|e| PortError::new(format!("cannot resolve {}: {e}", dir.display())))?;
+        let mut found = Vec::new();
+        let mut level = vec![dir];
+        for _ in 0..max_depth {
+            let mut next = Vec::new();
+            for parent in &level {
+                for child in subdirectories(parent) {
+                    if !manifests_in(&child).is_empty() {
+                        found.push(child.clone());
+                    }
+                    next.push(child);
+                }
+            }
+            level = next;
+        }
+        Ok(found)
+    }
+}
+
+/// Directory names never searched for nested projects: dependencies, build output, caches.
+const SKIPPED: [&str; 7] = [
+    "node_modules",
+    "target",
+    "venv",
+    "dist",
+    "build",
+    "__pycache__",
+    "vendor",
+];
+
+/// The subdirectories of `dir` worth searching, sorted by name; hidden ones and `SKIPPED` are
+/// left out, and so are symlinks (they could loop).
+fn subdirectories(dir: &Path) -> Vec<PathBuf> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    let mut dirs: Vec<PathBuf> = entries
+        .flatten()
+        .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()))
+        .filter(|e| {
+            let name = e.file_name();
+            let name = name.to_string_lossy();
+            !name.starts_with('.') && !SKIPPED.contains(&name.as_ref())
+        })
+        .map(|e| e.path())
+        .collect();
+    dirs.sort();
+    dirs
 }

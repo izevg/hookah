@@ -12,12 +12,15 @@ use hookah_application::Outcome;
 
 use crate::protocol::{
     Invocation, Response, blocking_report, degraded_warnings, edit_context, problems, report_text,
+    start_response,
 };
 
 /// Renders `outcome` for Kimi Code.
 pub fn render(invocation: &Invocation, outcome: &Outcome) -> Response {
-    let Invocation::Edit(request) = invocation else {
-        return Response::silent();
+    let request = match invocation {
+        Invocation::Edit(request) => request,
+        Invocation::Start(_) => return start_response(outcome),
+        _ => return Response::silent(),
     };
     let stdout = match blocking_report(outcome) {
         Some(report) => format!(
@@ -112,5 +115,15 @@ mod tests {
         assert_eq!(r.exit_code, 0);
         assert!(r.stdout.is_empty());
         assert!(r.stderr.contains("ruff timed out"));
+    }
+
+    #[test]
+    fn a_session_start_is_silent_on_stdout_and_warns_on_degradation() {
+        let start = Invocation::Start(hookah_application::StartRequest::new("/w", "s"));
+        assert_eq!(render(&start, &Outcome::pass()), Response::silent());
+        let r = render(&start, &Outcome::degraded("no store"));
+        assert_eq!(r.exit_code, 0);
+        assert!(r.stdout.is_empty());
+        assert!(r.stderr.contains("no store"));
     }
 }

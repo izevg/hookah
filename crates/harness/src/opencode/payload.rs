@@ -1,7 +1,7 @@
 //! opencode plugin payload: the JSON the bundled plugin sends on stdin.
 //!
 //! ```json
-//! {"v": 1, "event": "edit" | "stop", "cwd": "/abs/dir", "files": ["a.ts"],
+//! {"v": 1, "event": "start" | "edit" | "stop", "cwd": "/abs/dir", "files": ["a.ts"],
 //!  "session_id": "ses_...", "already_continuing": false}
 //! ```
 //!
@@ -10,14 +10,17 @@
 //!   resolve against `cwd`. An edit without files is ignored.
 //! - `stop` becomes a stop request rooted at the absolute `cwd`. `already_continuing` is true
 //!   when this stop attempt follows a feedback message the plugin injected itself.
-//! - `session_id` is informational; the plugin owns the per-session loop state.
+//! - `start` (the plugin's `session.created` event, added backward-compatibly to contract v1)
+//!   becomes a start request for the absolute `cwd` and `session_id`: it starts the baseline.
+//! - `session_id` tags every edit and stop request, so they find the session's baseline. The
+//!   plugin owns the per-session loop state.
 
 use std::path::PathBuf;
 
 use hookah_application::{EditRequest, StopRequest};
 use serde::Deserialize;
 
-use crate::protocol::{Invocation, PayloadError, display_root, resolve_path};
+use crate::protocol::{Invocation, PayloadError, display_root, resolve_path, start_invocation};
 
 /// The contract version this build understands.
 pub const VERSION: u32 = 1;
@@ -27,6 +30,7 @@ struct Payload {
     v: u32,
     event: Event,
     cwd: Option<PathBuf>,
+    session_id: Option<String>,
     #[serde(default)]
     files: Vec<PathBuf>,
     #[serde(default)]
@@ -36,6 +40,7 @@ struct Payload {
 #[derive(Deserialize)]
 #[serde(rename_all = "lowercase")]
 enum Event {
+    Start,
     Edit,
     Stop,
 }
@@ -51,6 +56,7 @@ pub fn parse(stdin: &str) -> Result<Invocation, PayloadError> {
         )));
     }
     match p.event {
+        Event::Start => Ok(start_invocation(p.cwd, p.session_id)),
         Event::Edit => edit(&p),
         Event::Stop => {
             let root = p
@@ -58,7 +64,7 @@ pub fn parse(stdin: &str) -> Result<Invocation, PayloadError> {
                 .filter(|c| c.is_absolute())
                 .ok_or_else(|| PayloadError("stop event without an absolute cwd".into()))?;
             Ok(Invocation::Stop {
-                request: StopRequest::new(root),
+                request: StopRequest::new(root).with_session(p.session_id),
                 already_continuing: p.already_continuing,
             })
         }
@@ -70,7 +76,7 @@ fn edit(p: &Payload) -> Result<Invocation, PayloadError> {
     for path in &p.files {
         let file = resolve_path(path, p.cwd.as_deref())?;
         let root = display_root(&file, p.cwd.as_deref());
-        requests.push(EditRequest::new(file, root));
+        requests.push(EditRequest::new(file, root).with_session(p.session_id.clone()));
     }
     Ok(match requests.len() {
         0 => Invocation::Ignore,
@@ -83,6 +89,7 @@ fn edit(p: &Payload) -> Result<Invocation, PayloadError> {
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
+    use hookah_application::StartRequest;
 
     fn edit_files(json: &str) -> Vec<PathBuf> {
         match parse(json).unwrap() {
@@ -139,7 +146,7 @@ mod tests {
         assert_eq!(
             parse(json).unwrap(),
             Invocation::Stop {
-                request: StopRequest::new(PathBuf::from("/w/app")),
+                request: StopRequest::new(PathBuf::from("/w/app")).with_session(Some("s".into())),
                 already_continuing: true,
             }
         );
@@ -166,5 +173,30 @@ mod tests {
         assert!(parse(r#"{"v":1,"event":"idle","cwd":"/w"}"#).is_err());
         assert!(parse(r#"{"event":"edit","cwd":"/w"}"#).is_err());
         assert!(parse("not json").is_err());
+    }
+
+    #[test]
+    fn start_event_needs_a_session_id_and_an_absolute_cwd() {
+        let ok = r#"{"v":1,"event":"start","cwd":"/w/app","session_id":"ses_1"}"#;
+        assert_eq!(
+            parse(ok).unwrap(),
+            Invocation::Start(StartRequest::new("/w/app", "ses_1"))
+        );
+        for json in [
+            r#"{"v":1,"event":"start","cwd":"/w/app"}"#,
+            r#"{"v":1,"event":"start","session_id":"s"}"#,
+            r#"{"v":1,"event":"start","cwd":"rel","session_id":"s"}"#,
+        ] {
+            assert_eq!(parse(json).unwrap(), Invocation::Ignore, "{json}");
+        }
+    }
+
+    #[test]
+    fn edits_carry_the_session_id() {
+        let json = r#"{"v":1,"event":"edit","cwd":"/w","files":["a.ts"],"session_id":"ses_9"}"#;
+        let Invocation::Edit(r) = parse(json).unwrap() else {
+            panic!("expected edit");
+        };
+        assert_eq!(r.session.as_deref(), Some("ses_9"));
     }
 }

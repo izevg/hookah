@@ -18,12 +18,14 @@ use serde_json::json;
 
 use crate::protocol::{
     Invocation, Response, blocking_report, degraded_warnings, edit_context, problems, report_text,
+    start_response,
 };
 
 /// Renders `outcome` for Qoder CLI.
 pub fn render(invocation: &Invocation, outcome: &Outcome) -> Response {
     match invocation {
         Invocation::Ignore | Invocation::EditBatch(_) => Response::silent(),
+        Invocation::Start(_) => start_response(outcome),
         Invocation::Edit(request) => match blocking_report(outcome) {
             Some(report) => context(format!(
                 "hookah: {} after editing {} - fix before continuing:\n{}",
@@ -195,5 +197,15 @@ mod tests {
         let r = render(&stop(true), &failing(vec![]));
         assert_eq!(r.exit_code, 0);
         assert!(r.stderr.contains("not blocking again"));
+    }
+
+    #[test]
+    fn a_session_start_is_silent_on_stdout_and_warns_on_degradation() {
+        let start = Invocation::Start(hookah_application::StartRequest::new("/w", "s"));
+        assert_eq!(render(&start, &Outcome::pass()), Response::silent());
+        let r = render(&start, &Outcome::degraded("no store"));
+        assert_eq!(r.exit_code, 0);
+        assert!(r.stdout.is_empty());
+        assert!(r.stderr.contains("no store"));
     }
 }

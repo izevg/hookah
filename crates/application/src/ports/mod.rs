@@ -1,7 +1,6 @@
 //! Ports: the traits adapters implement.
 //!
-//! Grouped by what they abstract: finding things, running things, and (post-MVP) remembering
-//! things. All traits are object-safe; use cases borrow them as `&dyn` through [`Ports`].
+//! Grouped by what they abstract: finding things, running things, and remembering things. All traits are object-safe; use cases borrow them as `&dyn` through [`Ports`].
 
 pub mod discovery;
 pub mod execution;
@@ -9,6 +8,7 @@ pub mod storage;
 
 pub use discovery::{ChangeSource, ProjectLocator, ToolchainDetector};
 pub use execution::{CheckRunner, ContentHasher, ProcessOutput};
+pub use storage::{BaselineSpawner, BaselineState, BaselineStore};
 
 /// All ports the use cases need, borrowed. Built by the composition root.
 #[derive(Clone, Copy)]
@@ -23,6 +23,10 @@ pub struct Ports<'a> {
     pub changes: &'a dyn ChangeSource,
     /// Hashes file content.
     pub hasher: &'a dyn ContentHasher,
+    /// Remembers finding baselines.
+    pub baselines: &'a dyn BaselineStore,
+    /// Starts baseline jobs in the background.
+    pub spawner: &'a dyn BaselineSpawner,
 }
 
 #[cfg(test)]
@@ -36,6 +40,7 @@ pub(crate) mod fakes {
     use std::time::Duration;
 
     use hookah_domain::finding::Finding;
+    use hookah_domain::finding::baseline::Baseline;
     use hookah_domain::project::{Manifest, Project};
     use hookah_domain::session::{ChangedLines, FileRole};
     use hookah_domain::toolchain::{
@@ -48,6 +53,8 @@ pub(crate) mod fakes {
     pub struct World {
         pub manifests: Vec<Manifest>,
         pub locate_fails: bool,
+        /// Directories `nested_roots` reports.
+        pub nested: Vec<PathBuf>,
         pub toolchain: Toolchain,
         pub detect_fails: bool,
         pub selection: TestSelection,
@@ -68,6 +75,12 @@ pub(crate) mod fakes {
         pub lines_fail: bool,
         pub files: Vec<PathBuf>,
         pub files_fail: bool,
+        /// Baseline states by `root|session`.
+        pub baseline_states: RefCell<HashMap<String, BaselineState>>,
+        pub begin_fails: bool,
+        pub spawn_fails: bool,
+        /// `(root, session)` of every `spawn` call.
+        pub spawned: RefCell<Vec<(PathBuf, String)>>,
     }
 
     impl World {
@@ -75,6 +88,7 @@ pub(crate) mod fakes {
             Self {
                 manifests: vec![Manifest::from_path(Path::new(manifest)).unwrap()],
                 locate_fails: false,
+                nested: vec![],
                 toolchain: Toolchain::new(tools),
                 detect_fails: false,
                 selection: TestSelection::None,
@@ -92,6 +106,10 @@ pub(crate) mod fakes {
                 lines_fail: false,
                 files: vec![],
                 files_fail: false,
+                baseline_states: RefCell::new(HashMap::new()),
+                begin_fails: false,
+                spawn_fails: false,
+                spawned: RefCell::new(vec![]),
             }
         }
 
@@ -102,11 +120,37 @@ pub(crate) mod fakes {
                 runner: self,
                 changes: self,
                 hasher: self,
+                baselines: self,
+                spawner: self,
             }
         }
 
         pub fn calls(&self) -> Vec<String> {
             self.calls.borrow().clone()
+        }
+
+        /// Sets the state for the project at `/r`.
+        pub fn set_baseline(&self, session: &str, state: BaselineState) {
+            self.set_baseline_at(Path::new("/r"), session, state);
+        }
+
+        pub fn set_baseline_at(&self, root: &Path, session: &str, state: BaselineState) {
+            self.baseline_states
+                .borrow_mut()
+                .insert(format!("{}|{session}", root.display()), state);
+        }
+
+        /// The state for the project at `/r`.
+        pub fn baseline_state(&self, session: &str) -> BaselineState {
+            self.baseline_state_at(Path::new("/r"), session)
+        }
+
+        pub fn baseline_state_at(&self, root: &Path, session: &str) -> BaselineState {
+            self.baseline_states
+                .borrow()
+                .get(&format!("{}|{session}", root.display()))
+                .cloned()
+                .unwrap_or(BaselineState::Absent)
         }
     }
 
@@ -125,6 +169,10 @@ pub(crate) mod fakes {
                 return Err(PortError::new("walk failed"));
             }
             Ok(self.manifests.clone())
+        }
+
+        fn nested_roots(&self, _: &Path, _: usize) -> Result<Vec<PathBuf>, PortError> {
+            Ok(self.nested.clone())
         }
     }
 
@@ -211,6 +259,45 @@ pub(crate) mod fakes {
                 self.hashes.set(self.hashes.get() + 1);
             }
             Ok(self.hashes.get())
+        }
+    }
+
+    impl BaselineStore for World {
+        fn state(&self, root: &Path, session: &str) -> BaselineState {
+            self.baseline_state_at(root, session)
+        }
+
+        fn begin(&self, root: &Path, session: &str) -> Result<bool, PortError> {
+            if self.begin_fails {
+                return Err(PortError::new("store unavailable"));
+            }
+            if self.baseline_state_at(root, session) != BaselineState::Absent {
+                return Ok(false);
+            }
+            self.set_baseline_at(root, session, BaselineState::InProgress);
+            Ok(true)
+        }
+
+        fn save(&self, root: &Path, session: &str, baseline: &Baseline) -> Result<(), PortError> {
+            self.set_baseline_at(root, session, BaselineState::Ready(baseline.clone()));
+            Ok(())
+        }
+
+        fn fail(&self, root: &Path, session: &str, reason: &str) -> Result<(), PortError> {
+            self.set_baseline_at(root, session, BaselineState::Failed(reason.into()));
+            Ok(())
+        }
+    }
+
+    impl BaselineSpawner for World {
+        fn spawn(&self, root: &Path, session: &str) -> Result<(), PortError> {
+            if self.spawn_fails {
+                return Err(PortError::new("cannot spawn"));
+            }
+            self.spawned
+                .borrow_mut()
+                .push((root.to_path_buf(), session.into()));
+            Ok(())
         }
     }
 }

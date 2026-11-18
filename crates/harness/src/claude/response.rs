@@ -19,12 +19,13 @@ use hookah_domain::toolchain::MissingTool;
 use hookah_domain::verdict::{Notice, Report};
 use serde_json::{Value, json};
 
-use crate::protocol::{Invocation, Response, blocking_report, degraded_warnings};
+use crate::protocol::{Invocation, Response, blocking_report, degraded_warnings, start_response};
 
 /// Renders `outcome` for Claude Code.
 pub fn render(invocation: &Invocation, outcome: &Outcome) -> Response {
     match invocation {
         Invocation::Ignore | Invocation::EditBatch(_) => Response::silent(),
+        Invocation::Start(_) => start_response(outcome),
         Invocation::Edit(request) => match blocking_report(outcome) {
             Some(report) => block(
                 format!(
@@ -304,5 +305,15 @@ mod tests {
         let v = stdout_json(&r);
         let msg = v["systemMessage"].as_str().unwrap();
         assert!(msg.contains("not blocking again") && msg.contains("a.rs:3"));
+    }
+
+    #[test]
+    fn a_session_start_is_silent_on_stdout_and_warns_on_degradation() {
+        let start = Invocation::Start(hookah_application::StartRequest::new("/w", "s"));
+        assert_eq!(render(&start, &Outcome::pass()), Response::silent());
+        let r = render(&start, &Outcome::degraded("no store"));
+        assert_eq!(r.exit_code, 0);
+        assert!(r.stdout.is_empty());
+        assert!(r.stderr.contains("no store"));
     }
 }

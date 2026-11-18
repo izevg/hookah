@@ -6,6 +6,8 @@
 //!   (the built-in tools take `path`, not `file_path`). The older names `WriteFile` and
 //!   `StrReplaceFile` are accepted too. Relative paths resolve against `cwd`. Other tools are
 //!   ignored.
+//! - `SessionStart` (matchers `startup` and `resume`) becomes a start request for `cwd` and
+//!   `session_id`: it starts the baseline. `session_id` also tags every edit request.
 //! - Every other event, `Stop` included, is ignored: Kimi's `Stop` hook has no documented
 //!   loop guard, so `hookah` does not block there.
 
@@ -14,11 +16,12 @@ use std::path::PathBuf;
 use hookah_application::EditRequest;
 use serde::Deserialize;
 
-use crate::protocol::{Invocation, PayloadError, display_root, resolve_path};
+use crate::protocol::{Invocation, PayloadError, display_root, resolve_path, start_invocation};
 
 #[derive(Deserialize)]
 struct Payload {
     hook_event_name: Option<String>,
+    session_id: Option<String>,
     cwd: Option<PathBuf>,
     tool_name: Option<String>,
     tool_input: Option<ToolInput>,
@@ -32,6 +35,9 @@ struct ToolInput {
 /// Parses a Kimi Code hook payload.
 pub fn parse(stdin: &str) -> Result<Invocation, PayloadError> {
     let p: Payload = serde_json::from_str(stdin).map_err(|e| PayloadError(e.to_string()))?;
+    if p.hook_event_name.as_deref() == Some("SessionStart") {
+        return Ok(start_invocation(p.cwd, p.session_id));
+    }
     if p.hook_event_name.as_deref() != Some("PostToolUse") {
         return Ok(Invocation::Ignore);
     }
@@ -46,13 +52,16 @@ pub fn parse(stdin: &str) -> Result<Invocation, PayloadError> {
     };
     let file = resolve_path(path, p.cwd.as_deref())?;
     let root = display_root(&file, p.cwd.as_deref());
-    Ok(Invocation::Edit(EditRequest::new(file, root)))
+    Ok(Invocation::Edit(
+        EditRequest::new(file, root).with_session(p.session_id),
+    ))
 }
 
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
+    use hookah_application::StartRequest;
 
     const WRITE: &str = r#"{
       "hook_event_name": "PostToolUse",
@@ -106,5 +115,30 @@ mod tests {
     #[test]
     fn garbage_is_an_error() {
         assert!(parse("not json").is_err());
+    }
+
+    #[test]
+    fn session_start_needs_a_session_id_and_an_absolute_cwd() {
+        let ok = r#"{"session_id":"ses 1","cwd":"/w/app","hook_event_name":"SessionStart","source":"startup"}"#;
+        assert_eq!(
+            parse(ok).unwrap(),
+            Invocation::Start(StartRequest::new("/w/app", "ses 1"))
+        );
+        for json in [
+            r#"{"cwd":"/w/app","hook_event_name":"SessionStart"}"#,
+            r#"{"session_id":"","cwd":"/w/app","hook_event_name":"SessionStart"}"#,
+            r#"{"session_id":"s","hook_event_name":"SessionStart"}"#,
+            r#"{"session_id":"s","cwd":"rel","hook_event_name":"SessionStart"}"#,
+        ] {
+            assert_eq!(parse(json).unwrap(), Invocation::Ignore, "{json}");
+        }
+    }
+
+    #[test]
+    fn edits_carry_the_session_id() {
+        let Invocation::Edit(r) = parse(WRITE).unwrap() else {
+            panic!("expected edit");
+        };
+        assert_eq!(r.session.as_deref(), Some("session_abc"));
     }
 }

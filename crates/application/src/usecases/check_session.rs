@@ -8,7 +8,8 @@
 //! 2. Test, on the tests the detector selects as related. Without related tests nothing runs.
 //! 3. Mutation, only if at least one changed file is a test; the detector picks the targets.
 //!
-//! Findings of kind `Test` and `Mutation` are never filtered by changed lines. Tools the project
+//! Findings of kind `Test` and `Mutation` are never filtered by changed lines or a baseline. With
+//! a ready session baseline, the static findings reported are exactly the new ones. Tools the project
 //! lacks become non-blocking `MissingTool` notices. Finding paths are rendered relative to the
 //! request's display root, so projects in a monorepo stay distinguishable.
 
@@ -18,6 +19,7 @@ use hookah_domain::session::{ChangeSet, ChangedLines, FileRole, Phase, TestRun, 
 use hookah_domain::toolchain::{CheckKind, MutationSelection, TestSelection};
 use hookah_domain::verdict::ReportingFilter;
 
+use super::baseline::lookup;
 use super::request::{Outcome, RunLog, StopRequest};
 use crate::ports::Ports;
 
@@ -71,6 +73,10 @@ impl<'a> CheckSession<'a> {
 
             // Changed lines drive both the reporting filter and the file roles.
             let mut filter = ReportingFilter::new();
+            if let Some(baseline) = lookup(&self.ports, project, request.session.as_deref(), false)
+            {
+                filter = filter.with_baseline(baseline);
+            }
             let mut static_targets = Vec::new();
             let (mut tests, mut sources) = (Vec::new(), Vec::new());
             for file in &group.files {
@@ -550,5 +556,64 @@ mod tests {
         w.selection = TestSelection::Targets(vec!["t".into()]);
         w.timeouts = vec!["test".into()];
         assert!(matches!(run(&w).verdict, Verdict::Degraded(_)));
+    }
+
+    mod baseline {
+        use hookah_domain::finding::baseline::Baseline;
+
+        use super::*;
+        use crate::ports::BaselineState;
+
+        fn lint_world() -> World {
+            let mut w = World::new(
+                "/r/Cargo.toml",
+                vec![tool("lint", CheckKind::Lint), tool("test", CheckKind::Test)],
+            );
+            w.files = vec!["/r/src/a.rs".into()];
+            w.selection = TestSelection::Targets(vec!["t".into()]);
+            w
+        }
+
+        fn run_in_session(w: &World, session: Option<&str>) -> Outcome {
+            let request = StopRequest::new("/r").with_session(session.map(Into::into));
+            CheckSession::new(w.ports(), 20).run(&request)
+        }
+
+        fn lines(out: Outcome) -> Vec<String> {
+            match out.verdict {
+                Verdict::Fail(r) => r.lines(),
+                _ => vec![],
+            }
+        }
+
+        #[test]
+        fn only_new_static_findings_are_reported_and_tests_never_filtered() {
+            let mut w = lint_world();
+            let old = finding(CheckKind::Lint, Severity::Error, "src/other.rs", 1, "old");
+            let new = finding(CheckKind::Lint, Severity::Warning, "src/other.rs", 2, "new");
+            let test = finding(CheckKind::Test, Severity::Error, "src/other.rs", 1, "boom");
+            w.findings.insert("lint".into(), vec![old.clone(), new]);
+            w.findings.insert("test".into(), vec![test.clone()]);
+            assert_eq!(
+                lines(run_in_session(&w, None)),
+                ["src/other.rs:1: old", "src/other.rs:1: boom"]
+            );
+            w.set_baseline(
+                "s",
+                BaselineState::Ready(Baseline::from_findings([&old, &test])),
+            );
+            assert_eq!(
+                lines(run_in_session(&w, Some("s"))),
+                ["src/other.rs:1: boom", "src/other.rs:2: warning: new"]
+            );
+        }
+
+        #[test]
+        fn the_stop_phase_never_starts_a_baseline_job() {
+            let w = lint_world();
+            run_in_session(&w, Some("s"));
+            assert!(w.spawned.borrow().is_empty());
+            assert_eq!(w.baseline_state("s"), BaselineState::Absent);
+        }
     }
 }

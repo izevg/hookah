@@ -7,6 +7,8 @@
 //!   against `cwd`. Other tools are ignored.
 //! - `Stop` and `SubagentStop` become a stop request rooted at `cwd`; `stop_hook_active` tells
 //!   whether the agent is already continuing because of an earlier blocked stop.
+//! - `SessionStart` becomes a start request for `cwd` and `session_id`: it starts the baseline.
+//! - `session_id` tags every edit and stop request, so they find the session's baseline.
 //! - Any other event is ignored.
 
 use std::path::{Path, PathBuf};
@@ -14,11 +16,12 @@ use std::path::{Path, PathBuf};
 use hookah_application::{EditRequest, StopRequest};
 use serde::Deserialize;
 
-use crate::protocol::{Invocation, PayloadError};
+use crate::protocol::{Invocation, PayloadError, start_invocation};
 
 #[derive(Deserialize)]
 struct Payload {
     hook_event_name: Option<String>,
+    session_id: Option<String>,
     cwd: Option<PathBuf>,
     tool_name: Option<String>,
     tool_input: Option<ToolInput>,
@@ -36,13 +39,14 @@ pub fn parse(stdin: &str) -> Result<Invocation, PayloadError> {
     let p: Payload = serde_json::from_str(stdin).map_err(|e| PayloadError(e.to_string()))?;
     match p.hook_event_name.as_deref() {
         Some("PostToolUse") => edit(&p),
+        Some("SessionStart") => Ok(start_invocation(p.cwd, p.session_id)),
         Some("Stop" | "SubagentStop") => {
             let root = p
                 .cwd
                 .filter(|c| c.is_absolute())
                 .ok_or_else(|| PayloadError("stop event without an absolute cwd".into()))?;
             Ok(Invocation::Stop {
-                request: StopRequest::new(root),
+                request: StopRequest::new(root).with_session(p.session_id),
                 already_continuing: p.stop_hook_active.unwrap_or(false),
             })
         }
@@ -67,7 +71,9 @@ fn edit(p: &Payload) -> Result<Invocation, PayloadError> {
         Some(cwd) => cwd.to_path_buf(),
         None => file.parent().map(Path::to_path_buf).unwrap_or_default(),
     };
-    Ok(Invocation::Edit(EditRequest::new(file, display_root)))
+    Ok(Invocation::Edit(
+        EditRequest::new(file, display_root).with_session(p.session_id.clone()),
+    ))
 }
 
 fn resolve(path: &Path, cwd: Option<&Path>) -> Result<PathBuf, PayloadError> {
@@ -87,6 +93,7 @@ fn resolve(path: &Path, cwd: Option<&Path>) -> Result<PathBuf, PayloadError> {
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
+    use hookah_application::StartRequest;
 
     const WRITE: &str = r#"{
       "session_id": "abc123",
@@ -178,7 +185,7 @@ mod tests {
             assert_eq!(
                 parse(&json).unwrap(),
                 Invocation::Stop {
-                    request: StopRequest::new("/w/app"),
+                    request: StopRequest::new("/w/app").with_session(Some("s".into())),
                     already_continuing: active,
                 }
             );
@@ -201,5 +208,30 @@ mod tests {
     fn garbage_is_an_error() {
         assert!(parse("not json").is_err());
         assert!(parse("").is_err());
+    }
+
+    #[test]
+    fn session_start_needs_a_session_id_and_an_absolute_cwd() {
+        let ok = r#"{"session_id":"ses 1","cwd":"/w/app","hook_event_name":"SessionStart","source":"startup"}"#;
+        assert_eq!(
+            parse(ok).unwrap(),
+            Invocation::Start(StartRequest::new("/w/app", "ses 1"))
+        );
+        for json in [
+            r#"{"cwd":"/w/app","hook_event_name":"SessionStart"}"#,
+            r#"{"session_id":"","cwd":"/w/app","hook_event_name":"SessionStart"}"#,
+            r#"{"session_id":"s","hook_event_name":"SessionStart"}"#,
+            r#"{"session_id":"s","cwd":"rel","hook_event_name":"SessionStart"}"#,
+        ] {
+            assert_eq!(parse(json).unwrap(), Invocation::Ignore, "{json}");
+        }
+    }
+
+    #[test]
+    fn edits_carry_the_session_id() {
+        let Invocation::Edit(r) = parse(WRITE).unwrap() else {
+            panic!("expected edit");
+        };
+        assert_eq!(r.session.as_deref(), Some("abc123"));
     }
 }

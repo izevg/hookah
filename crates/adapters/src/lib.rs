@@ -1,8 +1,9 @@
 //! Driven adapters: concrete implementations of the application ports.
 //!
 //! - [`fs`]: project location and manifest reading on the real filesystem.
-//! - [`process`]: running external tools with timeouts and capturing output.
-//! - [`store`]: the per-project cache directory. Baseline and session storage are post-MVP stubs.
+//! - [`process`]: running external tools with timeouts and capturing output, and starting the
+//!   detached baseline job.
+//! - [`store`]: the per-project cache directory and the session finding baselines in it.
 //! - [`vcs`]: changed files and lines as reported by `git`.
 //! - [`config`]: `.hookah.toml` loading and overrides on top of auto-detection.
 //! - [`ecosystems`]: the `Ecosystems` registry plus per-ecosystem toolchain detection, output

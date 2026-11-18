@@ -11,7 +11,7 @@
 use std::fmt;
 use std::path::{Path, PathBuf};
 
-use hookah_application::{EditRequest, Outcome, StopRequest};
+use hookah_application::{EditRequest, Outcome, StartRequest, StopRequest};
 use hookah_domain::path::normalize;
 use hookah_domain::toolchain::MissingTool;
 use hookah_domain::verdict::{Notice, Report, Verdict};
@@ -32,6 +32,10 @@ pub enum Invocation {
         /// could loop forever, so adapters must not block in this state.
         already_continuing: bool,
     },
+    /// The agent session started: start the session baseline in the background. The answer
+    /// must stay silent on stdout; some harnesses add a session-start hook's stdout to the model
+    /// context.
+    Start(StartRequest),
     /// An event `hookah` does not care about.
     Ignore,
 }
@@ -43,6 +47,7 @@ impl Invocation {
     pub fn canonical(self) -> Self {
         let edit = |r: EditRequest| {
             EditRequest::new(canonical_file(&r.file), canonical_dir(&r.display_root))
+                .with_session(r.session)
         };
         match self {
             Invocation::Edit(r) => Invocation::Edit(edit(r)),
@@ -52,9 +57,13 @@ impl Invocation {
                 already_continuing,
             } => Invocation::Stop {
                 request: StopRequest::new(canonical_dir(&request.root))
-                    .with_display_root(canonical_dir(&request.display_root)),
+                    .with_display_root(canonical_dir(&request.display_root))
+                    .with_session(request.session),
                 already_continuing,
             },
+            Invocation::Start(r) => {
+                Invocation::Start(StartRequest::new(canonical_dir(&r.cwd), r.session))
+            }
             Invocation::Ignore => Invocation::Ignore,
         }
     }
@@ -128,6 +137,29 @@ pub trait Harness {
 
     /// Renders the use case outcome in this harness's protocol.
     fn render(&self, invocation: &Invocation, outcome: &Outcome) -> Response;
+}
+
+/// The session-start invocation for a payload's `cwd` and session id; both must be usable, or
+/// the event is ignored (a baseline is keyed by the session and needs a directory to start in).
+pub fn start_invocation(cwd: Option<PathBuf>, session: Option<String>) -> Invocation {
+    match (
+        cwd.filter(|c| c.is_absolute()),
+        session.filter(|s| !s.is_empty()),
+    ) {
+        (Some(cwd), Some(session)) => Invocation::Start(StartRequest::new(cwd, session)),
+        _ => Invocation::Ignore,
+    }
+}
+
+/// The answer to a session start, the same for every harness: nothing on stdout, and a warning on
+/// stderr when the baseline could not be started. Never blocks.
+pub fn start_response(outcome: &Outcome) -> Response {
+    let warnings = degraded_warnings(outcome);
+    Response {
+        exit_code: 0,
+        stdout: String::new(),
+        stderr: warnings.iter().map(|w| format!("{w}\n")).collect(),
+    }
 }
 
 /// The report that may block the agent, if any. This is the shared fail-open rule: `Pass` and
@@ -390,5 +422,56 @@ mod tests {
             }
         );
         std::fs::remove_dir_all(&base).unwrap();
+    }
+
+    #[test]
+    fn start_needs_an_absolute_cwd_and_a_session() {
+        assert_eq!(
+            start_invocation(Some("/w".into()), Some("s".into())),
+            Invocation::Start(StartRequest::new("/w", "s"))
+        );
+        assert_eq!(start_invocation(None, Some("s".into())), Invocation::Ignore);
+        assert_eq!(
+            start_invocation(Some("w".into()), Some("s".into())),
+            Invocation::Ignore
+        );
+        assert_eq!(
+            start_invocation(Some("/w".into()), Some(String::new())),
+            Invocation::Ignore
+        );
+        assert_eq!(
+            start_invocation(Some("/w".into()), None),
+            Invocation::Ignore
+        );
+    }
+
+    #[test]
+    fn a_start_answer_is_silent_on_stdout_and_never_blocks() {
+        assert_eq!(start_response(&Outcome::pass()), Response::silent());
+        let r = start_response(&Outcome::degraded("no store"));
+        assert_eq!(r.exit_code, 0);
+        assert!(r.stdout.is_empty());
+        assert_eq!(r.stderr, "hookah: checks incomplete: no store\n");
+    }
+
+    #[test]
+    fn canonical_keeps_sessions_and_resolves_the_start_directory() {
+        let edit =
+            Invocation::Edit(EditRequest::new("/w/a.rs", "/w").with_session(Some("s".into())));
+        assert_eq!(edit.clone().canonical(), edit);
+        let batch = Invocation::EditBatch(vec![
+            EditRequest::new("/w/a.rs", "/w").with_session(Some("s".into())),
+        ]);
+        assert_eq!(batch.clone().canonical(), batch);
+        let stop = Invocation::Stop {
+            request: StopRequest::new("/w").with_session(Some("s".into())),
+            already_continuing: false,
+        };
+        assert_eq!(stop.clone().canonical(), stop);
+        let start = Invocation::Start(StartRequest::new("/w/x/..", "s"));
+        assert_eq!(
+            start.canonical(),
+            Invocation::Start(StartRequest::new("/w", "s"))
+        );
     }
 }

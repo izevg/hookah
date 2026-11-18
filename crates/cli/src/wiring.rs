@@ -5,7 +5,8 @@
 
 use hookah_adapters::ecosystems::Ecosystems;
 use hookah_adapters::fs::{FileHasher, FsLocator};
-use hookah_adapters::process::ProcessRunner;
+use hookah_adapters::process::{BackgroundSpawner, ProcessRunner};
+use hookah_adapters::store::baseline::FileBaselineStore;
 use hookah_adapters::vcs::GitChanges;
 use hookah_application::Ports;
 
@@ -16,6 +17,8 @@ pub struct Adapters {
     runner: ProcessRunner,
     changes: GitChanges,
     hasher: FileHasher,
+    baselines: FileBaselineStore,
+    spawner: BackgroundSpawner,
 }
 
 impl Adapters {
@@ -32,6 +35,8 @@ impl Adapters {
             runner: &self.runner,
             changes: &self.changes,
             hasher: &self.hasher,
+            baselines: &self.baselines,
+            spawner: &self.spawner,
         }
     }
 }
@@ -44,5 +49,18 @@ pub fn build() -> Adapters {
         runner: ProcessRunner,
         changes: GitChanges::new(),
         hasher: FileHasher,
+        baselines: FileBaselineStore::new(),
+        spawner: BackgroundSpawner::new(
+            std::env::current_exe().unwrap_or_else(|_| "hookah".into()),
+            foreground_baseline(),
+        ),
     }
+}
+
+/// Environment switch that makes the baseline job run to completion before the hook returns.
+/// Tests and the sample runner set it to get a baseline synchronously.
+pub const FOREGROUND_BASELINE: &str = "HOOKAH_BASELINE_FOREGROUND";
+
+fn foreground_baseline() -> bool {
+    std::env::var_os(FOREGROUND_BASELINE).is_some_and(|v| !v.is_empty())
 }

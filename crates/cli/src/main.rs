@@ -15,7 +15,9 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use clap::Parser;
-use hookah_application::{CheckEdit, CheckSession, EditRequest, Outcome};
+use hookah_application::{
+    CheckEdit, CheckSession, ComputeBaseline, EditRequest, Outcome, StartSession,
+};
 use hookah_domain::path::display_path;
 use hookah_domain::project::locate_project;
 use hookah_harness::claude::Claude;
@@ -47,6 +49,7 @@ fn main() -> ExitCode {
     match cli.command {
         Command::Check { paths } => exit(check(&paths, limit)),
         Command::Detect { path } => exit(detect(&path)),
+        Command::Baseline { session, root } => exit(baseline(&root, &session)),
         Command::Hook { harness } => exit(guarded_hook(harness, limit)),
         Command::Plugin { harness } => exit(plugin(harness)),
     }
@@ -76,6 +79,14 @@ fn check(paths: &[PathBuf], limit: usize) -> i32 {
         print_out(&render::outcome(style, &shown, &outcome));
     }
     i32::from(failed)
+}
+
+/// `hookah baseline`: the background job. Failures are recorded in the store; the exit code is
+/// always 0, and nothing is printed because nobody reads the output.
+fn baseline(root: &Path, session: &str) -> i32 {
+    let adapters = wiring::build();
+    let _ = ComputeBaseline::new(adapters.ports()).run(root, session);
+    0
 }
 
 /// `hookah plugin <harness>`: print the embedded plugin source.
@@ -161,6 +172,7 @@ fn run_harness(harness: &dyn Harness, stdin: &str, limit: usize) -> Response {
             merge_outcomes(requests.iter().map(|r| use_case.run(r)).collect(), limit)
         }
         Invocation::Stop { request, .. } => CheckSession::new(ports, limit).run(request),
+        Invocation::Start(request) => StartSession::new(ports).run(request),
         Invocation::Ignore => Outcome::pass(),
     };
     harness.render(&invocation, &outcome)

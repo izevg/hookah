@@ -46,7 +46,7 @@ pub fn render(invocation: &Invocation, outcome: &Outcome) -> Response {
         user_text,
     };
     match invocation {
-        Invocation::Ignore => {}
+        Invocation::Ignore | Invocation::Start(_) => {}
         Invocation::Edit(_) | Invocation::EditBatch(_) => match blocking_report(outcome) {
             Some(report) => {
                 reply.block = true;
@@ -239,5 +239,12 @@ mod tests {
         let text = v["user_text"].as_str().unwrap();
         assert!(text.contains("1 problem still failing; not blocking again."));
         assert!(text.contains("a.rs:3: unused variable"));
+    }
+
+    #[test]
+    fn a_session_start_gets_a_quiet_reply() {
+        let start = Invocation::Start(hookah_application::StartRequest::new("/w", "s"));
+        let quiet = json_of(&render(&Invocation::Ignore, &Outcome::pass()));
+        assert_eq!(json_of(&render(&start, &Outcome::pass())), quiet);
     }
 }

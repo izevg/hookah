@@ -3,7 +3,10 @@
 //! `EditRequest` (changed file) and `StopRequest` (repository root) come in, and an `Outcome`
 //! (verdict plus notices) goes out. Harness adapters translate to and from these.
 //!
-//! Both requests carry a display root, the directory where the agent stands (the harness `cwd`).
+//! A `StartRequest` (session start) asks for the session baseline.
+//!
+//! The edit and stop requests carry the agent session id when the harness provides one; it keys
+//! the baseline. Both requests carry a display root, the directory where the agent stands (the harness `cwd`).
 //! Finding paths are rendered relative to it, or absolute when they lie outside it. Filtering
 //! works on project-relative paths; only the final rendering uses the display root.
 
@@ -24,6 +27,8 @@ pub struct EditRequest {
     pub file: PathBuf,
     /// Absolute directory finding paths are rendered relative to.
     pub display_root: PathBuf,
+    /// The agent session id, if the harness provides one.
+    pub session: Option<String>,
 }
 
 impl EditRequest {
@@ -32,7 +37,15 @@ impl EditRequest {
         Self {
             file: file.into(),
             display_root: display_root.into(),
+            session: None,
         }
+    }
+
+    /// Tags the request with the agent session id.
+    #[must_use]
+    pub fn with_session(mut self, session: Option<String>) -> Self {
+        self.session = session;
+        self
     }
 
     /// The edited file as shown to the agent: the same rule as for finding paths.
@@ -48,6 +61,8 @@ pub struct StopRequest {
     pub root: PathBuf,
     /// Absolute directory finding paths are rendered relative to.
     pub display_root: PathBuf,
+    /// The agent session id, if the harness provides one.
+    pub session: Option<String>,
 }
 
 impl StopRequest {
@@ -57,13 +72,40 @@ impl StopRequest {
         Self {
             display_root: root.clone(),
             root,
+            session: None,
         }
+    }
+
+    /// Tags the request with the agent session id.
+    #[must_use]
+    pub fn with_session(mut self, session: Option<String>) -> Self {
+        self.session = session;
+        self
     }
 
     /// Renders finding paths relative to `display_root` instead of `root`.
     pub fn with_display_root(mut self, display_root: impl Into<PathBuf>) -> Self {
         self.display_root = display_root.into();
         self
+    }
+}
+
+/// Input of the session start: the agent session began in `cwd`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StartRequest {
+    /// Absolute directory the agent works in.
+    pub cwd: PathBuf,
+    /// The agent session id.
+    pub session: String,
+}
+
+impl StartRequest {
+    /// Builds a request.
+    pub fn new(cwd: impl Into<PathBuf>, session: impl Into<String>) -> Self {
+        Self {
+            cwd: cwd.into(),
+            session: session.into(),
+        }
     }
 }
 
@@ -108,6 +150,11 @@ impl RunLog {
         if !self.failures.contains(&reason) {
             self.failures.push(reason);
         }
+    }
+
+    /// The degradation reasons recorded so far.
+    pub fn failures(&self) -> &[String] {
+        &self.failures
     }
 
     /// Number of degradation reasons recorded so far.

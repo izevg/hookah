@@ -14,7 +14,7 @@ them. Do not ask the user questions unless a step says so. Stop and report if a 
 - Operating system: `uname -s` prints `Linux` or `Darwin`. On Windows (PowerShell) use
   `$env:OS`, which is `Windows_NT`.
 - Harness: you are one of `claude` (Claude Code), `codex` (Codex CLI), `qoder` (Qoder CLI), `cursor`
-  (Cursor IDE or `cursor-agent`), `kimi` (Kimi Code), `opencode`. If you are not sure, skip this: step 3 lists what is installed.
+  (Cursor IDE or `cursor-agent`), `kimi` (Kimi Code), `opencode`, `hermes` (Hermes Agent). If you are not sure, skip this: step 3 lists what is installed.
 
 ## 2. Install the binary
 
@@ -49,15 +49,18 @@ From the project root:
 hookah setup <harness>
 ```
 
-where `<harness>` is `claude`, `codex`, `qoder`, `cursor`, `kimi`, or `opencode`. This edits the project's
-config (for `kimi`, the user's, because Kimi Code has no project config). Use `--scope user` to
+where `<harness>` is `claude`, `codex`, `qoder`, `cursor`, `kimi`, `opencode`, or `hermes`. This edits the
+project's config (for `kimi` and `hermes`, the user's, because they have no project config; for
+`hermes` it installs a plugin under `~/.hermes` and enables it in `config.yaml`). Use `--scope user` to
 configure every project of this user instead. Add `--dry-run` first if the user wants to see the
 change. Rules you can rely on:
 
 - Running it again is safe: it changes nothing when the config is up to date.
 - Existing settings are kept. The original file is copied once to `<file>.hookah.bak`.
 - If the existing config file does not parse, setup exits with code 1, prints the reason, and
-  leaves the file untouched. Tell the user, and do not try to fix the file yourself.
+  leaves the file untouched. Tell the user, and do not try to fix the file yourself. (For `hermes`, setup also refuses a
+  `plugins` or `plugins.enabled` written as an inline list or map; tell the user to add `hookah`
+  to `plugins.enabled` and run setup again.)
 - If the project pins its tools with mise, add `--command "mise exec -- hookah"`.
 
 ## 5. Verify

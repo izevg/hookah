@@ -15,7 +15,14 @@ pub fn applied(plan: &Plan, written: &Written, cwd: &Path, program: &str) -> Str
         (Some(_), true) => format!("updated {path}\n"),
         (Some(_), false) => format!("already up to date, nothing written: {path}\n"),
     });
-    if let Some(backup) = &written.backup {
+    for file in &plan.companions {
+        out.push_str(&match (&file.before, file.changed()) {
+            (None, _) => format!("created {}\n", shown(&file.path, cwd)),
+            (Some(_), true) => format!("updated {}\n", shown(&file.path, cwd)),
+            (Some(_), false) => format!("already up to date: {}\n", shown(&file.path, cwd)),
+        });
+    }
+    for backup in written.backup.iter().chain(&written.companion_backups) {
         out.push_str(&format!("backup of the original: {}\n", shown(backup, cwd)));
     }
     out.push_str(&what(plan.target, program));
@@ -37,6 +44,14 @@ pub fn dry_run(plan: &Plan, cwd: &Path) -> String {
         (Some(_), false) => format!("{path} is already up to date and would stay:\n"),
     });
     out.push_str(&plan.after);
+    for file in &plan.companions {
+        let action = match (&file.before, file.changed()) {
+            (None, _) => "would create",
+            (Some(_), true) => "would update",
+            (Some(_), false) => "would keep",
+        };
+        out.push_str(&format!("{action} {}\n", shown(&file.path, cwd)));
+    }
     out
 }
 
@@ -83,6 +98,10 @@ fn what(target: Target, program: &str) -> String {
         return "installed the bundled opencode plugin (the same text as `hookah plugin opencode`)\n"
             .to_owned();
     }
+    if target == Target::Hermes {
+        return "installed the bundled Hermes plugin (the same text as `hookah plugin hermes`) and enabled it in plugins.enabled\n"
+            .to_owned();
+    }
     let events: Vec<_> = target.hooks().iter().map(|h| h.event).collect();
     format!(
         "hooks: {} run `{program} hook {}`\n",
@@ -100,7 +119,7 @@ fn shown(path: &Path, cwd: &Path) -> String {
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
-    use hookah_setup::Scope;
+    use hookah_setup::{Companion, Scope};
 
     use super::*;
 
@@ -111,6 +130,7 @@ mod tests {
             path: "/p/.claude/settings.json".into(),
             before: before.map(str::to_owned),
             after: after.to_owned(),
+            companions: vec![],
         }
     }
 
@@ -122,6 +142,7 @@ mod tests {
         let w = Written {
             wrote: true,
             backup: None,
+            companion_backups: vec![],
         };
         let out = applied(&p, &w, Path::new(CWD), "/b/hookah");
         assert_eq!(
@@ -142,6 +163,7 @@ mod tests {
             &Written {
                 wrote: true,
                 backup: Some("/p/.claude/settings.json.hookah.bak".into()),
+                companion_backups: vec![],
             },
             Path::new(CWD),
             "hookah",
@@ -153,6 +175,7 @@ mod tests {
             &Written {
                 wrote: false,
                 backup: None,
+                companion_backups: vec![],
             },
             Path::new(CWD),
             "hookah",
@@ -167,6 +190,7 @@ mod tests {
         let w = Written {
             wrote: true,
             backup: None,
+            companion_backups: vec![],
         };
         let out = applied(&p, &w, Path::new("/elsewhere"), "hookah");
         assert!(out.contains("created /p/.claude/settings.json\n"));
@@ -178,10 +202,46 @@ mod tests {
         let w = Written {
             wrote: true,
             backup: None,
+            companion_backups: vec![],
         };
         let out = applied(&p, &w, Path::new(CWD), "hookah");
         assert!(out.contains("installed the bundled opencode plugin"));
         assert!(!out.contains("hooks:"));
+    }
+
+    #[test]
+    fn hermes_lists_the_plugin_files_and_their_backups() {
+        let mut p = plan(Target::Hermes, Some("model: x\n"), "model: x\nplugins:\n");
+        p.path = "/h/.hermes/config.yaml".into();
+        p.companions = vec![
+            Companion {
+                path: "/h/.hermes/plugins/hookah/plugin.yaml".into(),
+                before: None,
+                after: "name: hookah\n".into(),
+            },
+            Companion {
+                path: "/h/.hermes/plugins/hookah/__init__.py".into(),
+                before: Some("old".into()),
+                after: "new".into(),
+            },
+            Companion {
+                path: "/h/.hermes/plugins/hookah/same.py".into(),
+                before: Some("same".into()),
+                after: "same".into(),
+            },
+        ];
+        let w = Written {
+            wrote: true,
+            backup: Some("/h/.hermes/config.yaml.hookah.bak".into()),
+            companion_backups: vec!["/h/.hermes/plugins/hookah/__init__.py.hookah.bak".into()],
+        };
+        let out = applied(&p, &w, Path::new("/h"), "hookah");
+        assert!(out.contains("updated .hermes/config.yaml\ncreated .hermes/plugins/hookah/plugin.yaml\nupdated .hermes/plugins/hookah/__init__.py\nalready up to date: .hermes/plugins/hookah/same.py\n"));
+        assert!(out.contains("backup of the original: .hermes/config.yaml.hookah.bak\nbackup of the original: .hermes/plugins/hookah/__init__.py.hookah.bak\n"));
+        assert!(out.contains("installed the bundled Hermes plugin"));
+        assert!(!out.contains("hooks:"));
+        let dry = dry_run(&p, Path::new("/h"));
+        assert!(dry.contains("would create .hermes/plugins/hookah/plugin.yaml\nwould update .hermes/plugins/hookah/__init__.py\nwould keep .hermes/plugins/hookah/same.py\n"));
     }
 
     #[test]

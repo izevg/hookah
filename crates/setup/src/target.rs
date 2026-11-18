@@ -15,6 +15,8 @@ pub enum Target {
     Cursor,
     /// opencode: a plugin file.
     Opencode,
+    /// Hermes Agent: a plugin directory, enabled in `config.yaml`, user-level only.
+    Hermes,
 }
 
 /// One hook entry: the agent event, an optional tool matcher, and the timeout in seconds.
@@ -65,13 +67,14 @@ const CURSOR: &[HookSpec] = &[
 
 impl Target {
     /// Every harness, in the order `hookah setup --detect` lists them.
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 7] = [
         Self::Claude,
         Self::Codex,
         Self::Qoder,
         Self::Kimi,
         Self::Cursor,
         Self::Opencode,
+        Self::Hermes,
     ];
 
     /// The name used on the command line and in `hookah hook <name>`.
@@ -83,10 +86,12 @@ impl Target {
             Self::Kimi => "kimi",
             Self::Cursor => "cursor",
             Self::Opencode => "opencode",
+            Self::Hermes => "hermes",
         }
     }
 
-    /// The hooks hookah registers. Empty for opencode, whose plugin carries them itself.
+    /// The hooks hookah registers. Empty for opencode and Hermes, whose plugins carry them
+    /// themselves.
     pub fn hooks(self) -> &'static [HookSpec] {
         match self {
             Self::Claude => CLAUDE,
@@ -94,7 +99,7 @@ impl Target {
             Self::Qoder => QODER,
             Self::Kimi => KIMI,
             Self::Cursor => CURSOR,
-            Self::Opencode => &[],
+            Self::Opencode | Self::Hermes => &[],
         }
     }
 
@@ -107,6 +112,7 @@ impl Target {
             Self::Kimi => &["kimi", "kimi-code"],
             Self::Cursor => &["cursor-agent", "cursor"],
             Self::Opencode => &["opencode"],
+            Self::Hermes => &["hermes"],
         }
     }
 
@@ -126,6 +132,9 @@ impl Target {
             }
             Self::Opencode => {
                 "Restart opencode. The plugin runs `hookah` from PATH, or from HOOKAH_BIN if set."
+            }
+            Self::Hermes => {
+                "Restart Hermes so it loads the plugin. The plugin runs `hookah` from PATH, or from HOOKAH_BIN if set."
             }
         }
     }
@@ -261,7 +270,9 @@ mod tests {
         let names: Vec<_> = Target::ALL.iter().map(|t| t.name()).collect();
         assert_eq!(
             names,
-            ["claude", "codex", "qoder", "kimi", "cursor", "opencode"]
+            [
+                "claude", "codex", "qoder", "kimi", "cursor", "opencode", "hermes"
+            ]
         );
         assert_eq!(Target::Claude.hooks().len(), 4);
         assert_eq!(Target::Codex.hooks().len(), 3);
@@ -269,6 +280,7 @@ mod tests {
         assert_eq!(Target::Kimi.hooks().len(), 2);
         assert_eq!(Target::Cursor.hooks().len(), 3);
         assert!(Target::Opencode.hooks().is_empty());
+        assert!(Target::Hermes.hooks().is_empty());
         for t in Target::ALL {
             assert!(!t.binaries().is_empty());
             assert!(t.restart_hint().contains("Restart"), "{t:?}");

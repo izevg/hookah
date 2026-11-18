@@ -4,7 +4,7 @@
 
 How `domain`, `application`, `adapters`, `harness`, and `cli` fit together, and which way
 dependencies may point. A sixth crate, `setup`, is an install-time adapter: it owns the file formats
-of the harness configs (JSON, TOML, the opencode plugin file) for `hookah setup` and writes the
+of the harness configs (JSON, TOML, YAML, the opencode and Hermes plugin files) for `hookah setup` and writes the
 files of a multi-file plugin (`hookah plugin orca --out`), which keeps
 config-file editing out of the crates that run on every hook call. The rules themselves are in [AGENTS.md](../AGENTS.md#architecture-ddd--clean--hexagonal).
 
@@ -169,6 +169,7 @@ is our own plugin.
 | Cursor | `sessionStart` (`session_id` equals `conversation_id`; fire-and-forget) | verified in the docs; not run live, and `cursor-agent` is reported not to send `conversation_id` |
 | Kimi Code | `SessionStart` (matchers `startup`, `resume`) | verified |
 | opencode | the plugin's `session.created` event, sent as `event: "start"` (contract v1, backward compatible) | plugin written against the SDK types; not run live |
+| Hermes Agent | the plugin's `on_session_start` hook (new sessions only), sent as `event: "start"` | verified live against a mock model server |
 
 Where a harness has no session start, or the hook is not configured, the **first edit** of a
 session starts the job lazily: the first edit of a (project, session) pair finds no baseline,

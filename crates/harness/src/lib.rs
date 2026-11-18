@@ -13,6 +13,7 @@ pub mod cursor;
 pub mod kimi;
 pub mod opencode;
 pub mod orca;
+pub mod plugins;
 pub mod protocol;
 pub mod qoder;
 

@@ -81,6 +81,18 @@ fn qoder_garbage_fails_open_and_unrelated_tool_is_ignored() {
 }
 
 #[test]
+fn cursor_garbage_fails_open_and_unrelated_events_are_ignored() {
+    let out = run(&["hook", "cursor"], "not json at all");
+    assert_eq!(out.status.code(), Some(0));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("hookah: warning"));
+    let shell = r#"{"hook_event_name":"beforeShellExecution","workspace_roots":["/nonexistent"],
+        "command":"ls"}"#;
+    let out = run(&["hook", "cursor"], shell);
+    assert_eq!(out.status.code(), Some(0));
+    assert!(out.stdout.is_empty() && out.stderr.is_empty());
+}
+
+#[test]
 fn kimi_garbage_fails_open_and_unrelated_tool_is_ignored() {
     let out = run(&["hook", "kimi"], "not json at all");
     assert_eq!(out.status.code(), Some(0));

@@ -1,7 +1,7 @@
 //! Claude Code harness adapter.
 //!
 //! Command hooks configured in `.claude/settings.json`: `PostToolUse` runs the edit phase and
-//! `Stop` / `SubagentStop` run the stop phase. See `docs/setup/hooks/claude-code.md`.
+//! `Stop` / `SubagentStop` run the stop phase. See `docs/setup/hooks/cli/claude-code.md`.
 
 pub mod payload;
 pub mod response;

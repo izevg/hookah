@@ -58,6 +58,7 @@ fn target(kind: HarnessKind) -> Target {
         HarnessKind::Codex => Target::Codex,
         HarnessKind::Qoder => Target::Qoder,
         HarnessKind::Kimi => Target::Kimi,
+        HarnessKind::Cursor => Target::Cursor,
         HarnessKind::Opencode => Target::Opencode,
     }
 }

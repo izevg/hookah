@@ -39,6 +39,14 @@ that does not parse is refused and left untouched. `--dry-run` shows the result 
 
 Then restart Qoder.
 
+### Windows
+
+`hookah setup qoder` writes the path of `hookah.exe` with forward slashes and quotes it when it
+contains a space. The Qoder hooks reference does not say which shell runs a hook command on
+Windows, so setup uses the one spelling that works in Git Bash, `cmd.exe`, and PowerShell: a
+drive-qualified path with `/`, quoted only when it has whitespace. If the hooks do not fire, run
+`hookah setup --detect`, then pipe a payload to the written command by hand.
+
 ### Manual setup
 
 Put `hookah` at `$HOME/.local/bin/hookah`. Add this to `.qoder/settings.json` in the project (or

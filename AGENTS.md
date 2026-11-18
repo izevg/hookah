@@ -146,6 +146,8 @@ cargo test --workspace
 - CI (`.github/workflows/ci.yml`) runs the same gates on Linux, macOS, and Windows, plus the
   sample runner (Linux, macOS, and the Rust samples on Windows under Git Bash), the rule-of-four check (`.github/scripts/rule-of-four.sh`), and
   `cargo mutants --in-diff` on pull requests. A commit that fails them locally fails there too.
+- The docs site build and its link check run in CI (the `site` job) and locally via
+  `.github/scripts/build-site.sh`.
 - Domain and application code are unit-tested without I/O, using in-memory fakes of the ports.
 - Adapters get integration tests against fixture projects (each fixture follows the rule of
   four too).

@@ -30,7 +30,9 @@ pub mod maven;
 use std::path::Path;
 use std::time::Duration;
 
-use hookah_domain::toolchain::{Arg, CheckKind, CommandSpec, MissingTool, Tool, Toolchain};
+use hookah_domain::toolchain::{
+    Arg, CheckKind, CommandSpec, MissingTool, Tool, ToolNote, Toolchain,
+};
 
 use super::build::{Build, BuildKind};
 
@@ -85,7 +87,24 @@ pub fn toolchain(build: &Build) -> Toolchain {
         BuildKind::Maven => maven::tools(build),
         BuildKind::Gradle => gradle::tools(build),
     };
-    Toolchain::new(tools).with_missing(missing(build))
+    Toolchain::new(tools)
+        .with_missing(missing(build))
+        .with_notes(notes(build))
+}
+
+/// What the agent should know about how the tools run.
+fn notes(build: &Build) -> Vec<ToolNote> {
+    if build.skipped_dependents == 0 {
+        return vec![];
+    }
+    vec![ToolNote::new(
+        CheckKind::Typecheck,
+        format!(
+            "javac: the {} modules that depend on this one were not compiled (over the {} limit); run the full reactor build to check them",
+            build.skipped_dependents,
+            super::build::maven::DOWNSTREAM_BUDGET
+        ),
+    )]
 }
 
 fn missing(build: &Build) -> Vec<MissingTool> {
@@ -155,8 +174,21 @@ mod tests {
             selector: None,
             program: "prog".into(),
             dependents: vec![],
+            skipped_dependents: 0,
             features,
         }
+    }
+
+    #[test]
+    fn skipped_dependents_are_a_note_on_the_compile_check() {
+        let mut b = build(BuildKind::Maven, Path::new("/r"), Features::default());
+        assert!(toolchain(&b).notes().is_empty());
+        b.skipped_dependents = 12;
+        let tc = toolchain(&b);
+        assert_eq!(tc.notes().len(), 1);
+        assert_eq!(tc.notes()[0].kind, CheckKind::Typecheck);
+        assert!(tc.notes()[0].text.contains("12 modules"));
+        assert!(tc.notes()[0].text.contains("HOOKAH_DOWNSTREAM_BUDGET"));
     }
 
     #[test]

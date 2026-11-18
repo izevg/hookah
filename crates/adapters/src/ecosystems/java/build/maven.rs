@@ -5,6 +5,10 @@
 //! sibling modules resolve from the reactor and not from `~/.m2`. A module whose parent does not
 //! aggregate it is its own root and runs from its own directory.
 //!
+//! The modules that depend on the module (its dependents) are computed from the poms (see
+//! [`super::reactor`]) and named in `-pl` as well. They are limited by a budget: over it, none of
+//! them is compiled and the build says so (`skipped_dependents`).
+//!
 //! A tool counts as configured when its plugin is in `<build><plugins>` or `<reporting><plugins>`
 //! of the module's pom, of an aggregator above it, or of a parent reachable through
 //! `<relativePath>`. A plugin that only a parent outside the checkout configures is not seen.
@@ -13,11 +17,41 @@ use std::path::{Path, PathBuf};
 
 use hookah_domain::path::normalize;
 
-use super::{BuildKind, Features, ancestors_to_repo, program, relative_slashed};
+use super::{BuildKind, Features, ancestors_to_repo, program, reactor, relative_slashed};
 use crate::ecosystems::java::xml::{self, Node};
 
 /// How far up `<relativePath>` parents are followed.
 const MAX_PARENTS: usize = 6;
+
+/// Environment variable: the most dependent modules a Maven check compiles along with the
+/// changed one. More are left out, and the agent gets a notice. `0` compiles no dependents at all.
+pub const DOWNSTREAM_BUDGET: &str = "HOOKAH_DOWNSTREAM_BUDGET";
+/// The default of [`DOWNSTREAM_BUDGET`].
+pub const DEFAULT_DOWNSTREAM_BUDGET: usize = 10;
+
+/// The budget from the environment; a value that is not a whole number is ignored.
+fn downstream_budget() -> usize {
+    budget_from(std::env::var(DOWNSTREAM_BUDGET).ok().as_deref())
+}
+
+fn budget_from(value: Option<&str>) -> usize {
+    value
+        .and_then(|v| v.trim().parse().ok())
+        .unwrap_or(DEFAULT_DOWNSTREAM_BUDGET)
+}
+
+/// The dependents to compile and how many were left out: all of them within `budget`, else none.
+fn within_budget(dependents: Vec<String>, budget: usize) -> (Vec<String>, usize) {
+    if dependents.len() <= budget {
+        (dependents, 0)
+    } else if budget == 0 {
+        // Switched off on purpose: nothing to tell.
+        (vec![], 0)
+    } else {
+        let left_out = dependents.len();
+        (vec![], left_out)
+    }
+}
 
 pub(super) fn load(module_dir: &Path) -> Option<super::Build> {
     let (root, mut dirs) = reactor(module_dir);
@@ -30,13 +64,22 @@ pub(super) fn load(module_dir: &Path) -> Option<super::Build> {
     let mut features = features(&poms);
     features.spotbugs_xml = features.spotbugs;
     features.pitest_xml = features.pitest;
+    let selector = relative_slashed(module_dir, &root);
+    let (dependents, skipped_dependents) = match &selector {
+        Some(path) => within_budget(
+            reactor::downstream(&reactor::modules(&root), path),
+            downstream_budget(),
+        ),
+        None => (vec![], 0),
+    };
     Some(super::Build {
         kind: BuildKind::Maven,
         program: program(BuildKind::Maven, &[&root, module_dir]),
-        selector: relative_slashed(module_dir, &root),
+        selector,
         root,
         module_dir: module_dir.to_path_buf(),
-        dependents: vec![],
+        dependents,
+        skipped_dependents,
         features,
     })
 }
@@ -151,6 +194,53 @@ mod tests {
 <build><plugins>
   <plugin><groupId>com.diffplug.spotless</groupId><artifactId>spotless-maven-plugin</artifactId></plugin>
 </plugins></build></project>"#;
+
+    #[test]
+    fn the_budget_comes_from_the_environment_or_the_default() {
+        assert_eq!(budget_from(None), DEFAULT_DOWNSTREAM_BUDGET);
+        assert_eq!(budget_from(Some("3")), 3);
+        assert_eq!(budget_from(Some(" 0 ")), 0);
+        assert_eq!(budget_from(Some("many")), DEFAULT_DOWNSTREAM_BUDGET);
+        assert_eq!(budget_from(Some("-1")), DEFAULT_DOWNSTREAM_BUDGET);
+    }
+
+    #[test]
+    fn dependents_over_the_budget_are_left_out_and_counted() {
+        let two = || vec!["a".to_string(), "b".to_string()];
+        assert_eq!(within_budget(two(), 2), (two(), 0));
+        assert_eq!(within_budget(two(), 5), (two(), 0));
+        assert_eq!(within_budget(two(), 1), (vec![], 2));
+        assert_eq!(within_budget(two(), 0), (vec![], 0), "off is silent");
+        assert_eq!(within_budget(vec![], 0), (vec![], 0));
+    }
+
+    #[test]
+    fn a_module_gets_the_modules_that_need_it() {
+        let t = Tree::new("mvn-dependents");
+        t.write(
+            "pom.xml",
+            "<project><groupId>g</groupId><artifactId>r</artifactId><modules>\
+             <module>a</module><module>b</module><module>c</module></modules></project>",
+        );
+        t.write("a/pom.xml", "<project><artifactId>a</artifactId></project>");
+        t.write(
+            "b/pom.xml",
+            "<project><artifactId>b</artifactId><dependencies><dependency><artifactId>a</artifactId>\
+             </dependency></dependencies></project>",
+        );
+        t.write(
+            "c/pom.xml",
+            "<project><artifactId>c</artifactId><dependencies><dependency><artifactId>b</artifactId>\
+             </dependency></dependencies></project>",
+        );
+        let a = load(&t.path("a")).unwrap();
+        assert_eq!(a.dependents, ["b", "c"]);
+        assert_eq!(a.skipped_dependents, 0);
+        let c = load(&t.path("c")).unwrap();
+        assert!(c.dependents.is_empty());
+        let root = load(&t.0).unwrap();
+        assert!(root.dependents.is_empty(), "no selection, no dependents");
+    }
 
     #[test]
     fn a_single_module_is_its_own_root() {

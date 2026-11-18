@@ -448,8 +448,13 @@ Scala files in the same build are not.
   `hookah`'s.
 - Offline: every command runs with `mvn -o` or `gradle --offline`. `hookah` never downloads
   anything, so a project whose dependencies and plugins are not in `~/.m2` or the Gradle cache yet
-  is reported as degraded (quoting Maven's or Gradle's own error), not as a failure. Run one online
-  build first (`mvn verify`, `gradle build`), or prefetch with `mvn dependency:go-offline`.
+  is reported as degraded, not as a failure. Run one online build first (`mvn verify`,
+  `gradle build`), or prefetch with `mvn dependency:go-offline`. When the build stops because an
+  artifact is not in the local repository (`... in offline mode and the artifact g:a:jar:1 has not
+  been downloaded from it before` for Maven, `No cached version of g:a:1 available for offline
+  mode` for Gradle), the notice is one line naming the first missing artifact and the fix (run the
+  build once online, for example `mvn -q install -DskipTests`, or set the environment of the build
+  in the `[env]` table, see `configuration.md`), not the build's own error text.
 - Tools: only what the build files configure. A Maven plugin counts when it is in
   `<build><plugins>` or `<reporting><plugins>` of the module's pom, of an aggregator above it, or of
   a parent reached through `<relativePath>` (a parent that exists only in a remote repository is not
@@ -482,19 +487,38 @@ where `<m>` is the module path relative to the reactor root.
 | `checkstyle` | `checkstyle:checkstyle`, then `target/checkstyle-result.xml` of the module                           |
 | `pmd`        | `pmd:pmd`, then `target/pmd.xml`                                                                     |
 | `spotbugs`   | `test-compile spotbugs:spotbugs`, then `target/spotbugsXml.xml`                                      |
-| `javac`      | `-q test-compile -pl <m> -am -amd`                                                                   |
+| `javac`      | `-q test-compile -pl <m>,<d>... -am`                                                                 |
 | `surefire`   | `test -pl <m> -am -Dtest=<classes> -Dsurefire.failIfNoSpecifiedTests=false -DfailIfNoTests=false [-DexcludedGroups=integration,slow,e2e]` |
 | `pitest`     | `test-compile org.pitest:pitest-maven:mutationCoverage -pl <m> -am -DtargetClasses=<fqcns> -DtargetTests=<fqcns> -DoutputFormats=XML -DtimestampedReports=false -DwithHistory=true -DhistoryInputFile=<m>/target/pit-history.bin -DhistoryOutputFile=<same> -DfailWhenNoMutations=false` |
 
-In a reactor, `checkstyle` and `pmd` run as `test-compile <goal> -pl <m> -am -amd`, and `spotbugs`
-the same (a module resolves its siblings from the reactor, which has them only after they
-compiled). `-am` makes the modules this one needs part of the run, so they resolve from the reactor
-and not from `~/.m2`; `-amd` adds the modules that need it, so an API change that breaks them is
-found in the edit phase. Their errors are reported at their own paths (`../app/src/...` relative
-to the module, shown relative to where the agent stands). The compiler plugin notices that a
+In a reactor, `checkstyle` and `pmd` run as `test-compile <goal> -pl <m>,<d>... -am`, and `spotbugs`
+and `javac` likewise (a module resolves its siblings from the reactor, which has them only after
+they compiled). `-am` makes the modules the selected ones need part of the run, so they resolve
+from the reactor and not from `~/.m2`, which `-o` cannot fill. `<d>...` are the dependents of the
+module: the modules that need it, so an API change that breaks them is found in the edit phase.
+They are named in `-pl` and not asked for with `-amd`, because `-amd` adds the dependents but `-am`
+does not follow it: what a dependent needs besides the changed module (another reactor module, a
+`test-jar`) would be looked up in `~/.m2`, and the offline build would fail. `hookah` computes the
+dependents itself from the poms of the reactor: `<modules>` (nested aggregators included), then
+every module whose `<dependencies>` (any type or classifier, so `test-jar` counts), `<parent>`,
+`<build><plugins>` (with their dependencies), or `<build><extensions>` name the module or a
+dependent already found. Edges match on `groupId:artifactId` without the version;
+`${project.groupId}` and `${project.parent.groupId}` are resolved, any other property in a
+`groupId` matches every group, and an `artifactId` that is a property never matches.
+`<dependencyManagement>`, `<profiles>`, and BOM imports are not read, and a pom that cannot be
+parsed has no edges, so a dependency only a profile adds is not followed. This is the same set
+Maven's own `-amd` finds, minus those profile and property edges; unlike `-amd` it is followed by
+the upstream of the whole set.
+
+The number of dependents is limited by a budget (`HOOKAH_DOWNSTREAM_BUDGET`, default 10; see
+`configuration.md`). Over it, only the module and its upstream compile (`-pl <m> -am`), and every
+compile check carries the notice `javac: the N modules that depend on this one were not compiled
+(over the HOOKAH_DOWNSTREAM_BUDGET limit); run the full reactor build to check them`. `0` compiles
+no dependents and says nothing. Their errors are reported at their own paths (`../app/src/...`
+relative to the module, shown relative to where the agent stands). The compiler plugin notices that a
 dependency changed only when it changed during the same Maven run, so every command that compiles
 in a reactor covers the same set of modules (the test and PIT runs, which come after the compile
-check, take `-am` only); otherwise a lint run that compiled the module first would hide the
+check, take `-pl <m> -am` only); otherwise a lint run that compiled the module first would hide the
 breakage of its dependents from the compile check. `-DexcludedGroups` is passed only for JUnit 5
 projects (a `junit-jupiter*` or `junit-bom` dependency): the JUnit 4 provider would read the tag
 names as category classes. The failsafe plugin is never invoked. Spotless' file filter is a regular
@@ -597,6 +621,7 @@ PIT needs green tests; a failing run degrades.
   `mvnd` first on the `PATH` of the hook.
 - Timeouts are generous (see the table) because of JVM start and first-run compilation; a timeout
   is a degraded run, never a block.
-- Multi-module reactors cost more: `-am -amd` compile the neighbors (incrementally). The test and
+- Multi-module reactors cost more: `-pl <m>,<d>... -am` compiles the neighbors (incrementally; at
+  most `HOOKAH_DOWNSTREAM_BUDGET` dependents). The test and
   PIT runs cover the module and what it needs, not the dependents' tests.
 - Source layouts other than `src/<set>/java/<package>/<Class>.java` are not mapped to tests.

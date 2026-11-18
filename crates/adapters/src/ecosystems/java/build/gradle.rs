@@ -55,6 +55,7 @@ pub(super) fn load(module_dir: &Path) -> Option<super::Build> {
         root,
         module_dir: module_dir.to_path_buf(),
         dependents,
+        skipped_dependents: 0,
     })
 }
 

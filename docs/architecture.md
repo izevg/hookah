@@ -56,10 +56,11 @@ one-line, non-blocking notice, so it knows what did not run and can decide wheth
 | Test targets | 25 | `N related tests selected; above the light budget of 25, run them yourself`, no test runs | `HOOKAH_TEST_BUDGET` |
 | Mutation: changed files | 3 | `mutation testing skipped: change too large (X files / Y lines, budget 3 / 150)` | `HOOKAH_MUTATION_MAX_FILES` |
 | Mutation: changed lines | 150 | the same notice | `HOOKAH_MUTATION_MAX_LINES` |
+| Maven dependents compiled with the edited module | 10 | `javac: the N modules that depend on this one were not compiled ...`, only the module and its upstream compile | `HOOKAH_DOWNSTREAM_BUDGET` |
 
 `0` switches the check off for good and silently: `HOOKAH_TEST_BUDGET=0` runs no tests at stop,
-and `0` for either mutation variable runs no mutation testing. A value that is not a whole number
-is ignored. [configuration.md](configuration.md) has the details; `.hookah.toml` will take over
+`0` for either mutation variable runs no mutation testing, and `HOOKAH_DOWNSTREAM_BUDGET=0`
+compiles no dependents. A value that is not a whole number is ignored. [configuration.md](configuration.md) has the details; `.hookah.toml` will take over
 the same settings.
 
 - A test target is whatever the ecosystem hands to its runner: a test file for Python, a

@@ -212,9 +212,61 @@ pub fn tail(text: &str) -> String {
     }
 }
 
+/// The artifacts a build could not resolve because it runs offline and the local repository does
+/// not have them, in the order they appear, each once.
+///
+/// - Maven: `Cannot access central (https://repo.maven.apache.org/maven2) in offline mode and the
+///   artifact shop:shop-shared:jar:1.0.0 has not been downloaded from it before.`
+/// - Gradle: `No cached version of org.x:y:1.0 available for offline mode.`
+fn offline_artifacts(text: &str) -> Vec<String> {
+    let mut found: Vec<String> = Vec::new();
+    for line in text.lines() {
+        let artifact = line
+            .split_once("and the artifact ")
+            .filter(|_| line.contains("in offline mode"))
+            .and_then(|(_, rest)| rest.split_once(" has not been downloaded"))
+            .map(|(a, _)| a)
+            .or_else(|| {
+                line.split_once("No cached version of ")
+                    .and_then(|(_, rest)| rest.split_once(" available for offline mode"))
+                    .map(|(a, _)| a)
+            });
+        if let Some(a) = artifact
+            && !found.iter().any(|f| f == a)
+        {
+            found.push(a.to_string());
+        }
+    }
+    found
+}
+
+/// The one-line explanation of an offline resolution failure, or `None` for any other failure.
+/// The cause is that hookah never downloads, so a dependency that the local repository lacks
+/// stops the build; it is not a problem in the edited code.
+fn offline_notice(text: &str) -> Option<String> {
+    let artifacts = offline_artifacts(text);
+    let first = artifacts.first()?;
+    let more = match artifacts.len() {
+        1 => String::new(),
+        n => format!(" and {} more", n - 1),
+    };
+    let online_build = if text.contains("No cached version of ") {
+        "`gradle build`"
+    } else {
+        "`mvn -q install -DskipTests`"
+    };
+    Some(format!(
+        "{first}{more} is not in the local repository and hookah runs offline, so the build could not start; run the build once online ({online_build}), or set the environment of the build in `[env]` (docs/configuration.md)"
+    ))
+}
+
 /// The error for a tool that failed without a result we can use: the exit status plus the
-/// build's own error lines when it printed any, else the tail of stderr (or stdout).
+/// build's own error lines when it printed any, else the tail of stderr (or stdout). A build that
+/// could not resolve a dependency offline gets the short explanation of that instead.
 pub fn failure(tool: &str, out: &ProcessOutput) -> PortError {
+    if let Some(notice) = offline_notice(&format!("{}\n{}", out.stdout, out.stderr)) {
+        return PortError::new(notice);
+    }
     let status = out
         .exit_code
         .map_or_else(|| "was killed".to_string(), |c| format!("exited with {c}"));
@@ -289,6 +341,64 @@ mod tests {
     use super::*;
     use crate::ecosystems::java::build::tests::Tree;
     use crate::ecosystems::testing::abs;
+
+    /// Real output of `mvn -B -q -o test-compile -pl core -am -amd` on the `maven-reactor` sample,
+    /// whose `app` needs `shared` (and its test-jar), which the local repository does not have.
+    const MAVEN_OFFLINE: &str = "[ERROR] Failed to execute goal on project shop-app: Could not resolve dependencies for project shop:shop-app:jar:1.0.0
+[ERROR] dependency: shop:shop-shared:jar:1.0.0 (compile)
+[ERROR] \tCannot access central (https://repo.maven.apache.org/maven2) in offline mode and the artifact shop:shop-shared:jar:1.0.0 has not been downloaded from it before.
+[ERROR] dependency: shop:shop-shared:jar:tests:1.0.0 (test)
+[ERROR] \tCannot access central (https://repo.maven.apache.org/maven2) in offline mode and the artifact shop:shop-shared:jar:tests:1.0.0 has not been downloaded from it before.
+[ERROR] -> [Help 1]
+[ERROR] 
+[ERROR] To see the full stack trace of the errors, re-run Maven with the -e switch.
+[ERROR]   mvn <args> -rf :shop-app
+";
+
+    #[test]
+    fn an_offline_resolution_failure_is_one_short_explanation() {
+        let e = failure("javac", &out(1, MAVEN_OFFLINE, ""));
+        let m = e.message();
+        assert!(
+            m.starts_with("shop:shop-shared:jar:1.0.0 and 1 more is not in the local repository")
+        );
+        assert!(m.contains("`mvn -q install -DskipTests`"));
+        assert!(!m.contains("gradle"));
+        assert!(m.contains("`[env]`"));
+        assert!(!m.contains("[ERROR]"), "no wall of Maven text: {m}");
+        // On stderr as well, and one artifact alone has no "and N more".
+        let one = MAVEN_OFFLINE.lines().take(3).collect::<Vec<_>>().join("\n");
+        let e = failure("surefire", &out(1, "", &one));
+        assert!(
+            e.message()
+                .starts_with("shop:shop-shared:jar:1.0.0 is not in the local")
+        );
+    }
+
+    #[test]
+    fn gradle_offline_failures_are_recognised_too() {
+        let text = "> Could not resolve org.x:y:1.0.\n     > No cached version of org.x:y:1.0 available for offline mode.\n\
+                    > No cached version of org.x:y:1.0 available for offline mode.\n";
+        assert_eq!(offline_artifacts(text), ["org.x:y:1.0"]);
+        let notice = offline_notice(text).unwrap();
+        assert!(notice.contains("`gradle build`"));
+        assert!(!notice.contains("mvn"));
+    }
+
+    #[test]
+    fn other_failures_are_not_offline_failures() {
+        assert!(offline_notice("").is_none());
+        // Online resolution failure and a stray mention are not the offline case.
+        assert!(
+            offline_notice(
+                "Could not transfer artifact a:b:jar:1 from/to central: the artifact a:b:jar:1 has not been downloaded from it before"
+            )
+            .is_none()
+        );
+        assert!(offline_notice("[ERROR] COMPILATION ERROR :").is_none());
+        let e = failure("javac", &out(1, "[ERROR] COMPILATION ERROR :\n", ""));
+        assert!(e.message().starts_with("javac exited with 1"));
+    }
 
     #[test]
     fn maven_banners_and_gradle_task_lines_say_a_tool_ran() {

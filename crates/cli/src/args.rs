@@ -1,10 +1,13 @@
 //! Command-line interface.
 //!
 //! - `hookah check <path>...`: run the edit phase on files directly (for humans and CI).
+//! - `hookah check --changed`: run the stop phase over everything changed in a project.
+//! - `hookah status [--json]`: print the latest recorded outcome of each project under a directory.
 //! - `hookah hook <harness>`: read a harness hook payload from stdin and answer in that
 //!   harness's protocol.
 //! - `hookah detect <path>`: print the detected project and toolchain, for debugging.
-//! - `hookah plugin <harness>`: print the plugin source of a plugin-based harness.
+//! - `hookah plugin <harness>`: print the plugin source of a plugin-based harness, or with
+//!   `--out <dir>` write the plugin's files (Orca).
 //! - `hookah baseline --session <id> --root <dir>`: the background job that a session-start hook
 //!   spawns (hidden). It records the project's existing findings so later reports show only new
 //!   ones.
@@ -34,11 +37,33 @@ pub struct Cli {
 /// The subcommands.
 #[derive(Debug, Subcommand)]
 pub enum Command {
-    /// Run the edit phase on files; exits 1 if any check fails.
+    /// Run the edit phase on files, or with `--changed` the stop phase on all changed files;
+    /// exits 1 if any check fails.
     Check {
         /// Files to check.
-        #[arg(required = true)]
+        #[arg(required_unless_present = "changed", conflicts_with = "changed")]
         paths: Vec<PathBuf>,
+
+        /// Check everything changed since the last commit in the project at `--root`, the way the
+        /// stop hook does: static checks, then related tests and mutation testing.
+        #[arg(long)]
+        changed: bool,
+
+        /// The directory to check with `--changed`; ignored without it. Defaults to the current
+        /// directory.
+        #[arg(long, value_name = "DIR")]
+        root: Option<PathBuf>,
+    },
+    /// Print the latest check outcome recorded for the project at a directory and for the projects
+    /// nested below it. Reads what the hooks recorded; runs no checks.
+    Status {
+        /// The directory to look at. Defaults to the current directory.
+        #[arg(long, value_name = "DIR")]
+        root: Option<PathBuf>,
+
+        /// Print one JSON document instead of text.
+        #[arg(long)]
+        json: bool,
     },
     /// Answer an agent harness hook: payload on stdin, response on stdout/stderr.
     Hook {
@@ -46,10 +71,16 @@ pub enum Command {
         harness: HarnessKind,
     },
     /// Print the plugin source for a harness that loads plugins, to redirect into its plugin
-    /// directory (for example `hookah plugin opencode > .opencode/plugins/hookah.ts`).
+    /// directory (for example `hookah plugin opencode > .opencode/plugins/hookah.ts`), or write
+    /// a multi-file plugin with `--out` (`hookah plugin orca --out ./hookah-orca-plugin`).
     Plugin {
         /// The harness the plugin is for.
         harness: PluginKind,
+
+        /// Write the plugin's files into this directory instead of printing. Required for Orca,
+        /// whose plugin has several files.
+        #[arg(long, value_name = "DIR")]
+        out: Option<PathBuf>,
     },
     /// Write or merge the hook config of an agent harness, or list the installed ones.
     ///
@@ -135,6 +166,8 @@ pub enum HarnessKind {
 pub enum PluginKind {
     /// The opencode TypeScript plugin.
     Opencode,
+    /// The Orca plugin: a folder with a manifest and TypeScript sources.
+    Orca,
 }
 
 #[cfg(test)]
@@ -157,7 +190,7 @@ mod tests {
         let cli = Cli::try_parse_from(["hookah", "check", "a.rs", "b.rs", "--report-limit", "3"])
             .unwrap();
         assert_eq!(cli.report_limit, 3);
-        assert!(matches!(cli.command, Command::Check { paths } if paths.len() == 2));
+        assert!(matches!(cli.command, Command::Check { paths, .. } if paths.len() == 2));
     }
 
     #[test]
@@ -178,7 +211,8 @@ mod tests {
         assert!(matches!(
             cli.command,
             Command::Plugin {
-                harness: PluginKind::Opencode
+                harness: PluginKind::Opencode,
+                out: None
             }
         ));
         let cli = Cli::try_parse_from(["hookah", "hook", "opencode"]).unwrap();
@@ -243,7 +277,40 @@ mod tests {
     }
 
     #[test]
-    fn check_needs_a_path() {
+    fn check_needs_a_path_or_changed() {
         assert!(Cli::try_parse_from(["hookah", "check"]).is_err());
+        assert!(Cli::try_parse_from(["hookah", "check", "a.rs", "--changed"]).is_err());
+        let cli = Cli::try_parse_from(["hookah", "check", "--changed", "--root", "d"]).unwrap();
+        match cli.command {
+            Command::Check {
+                paths,
+                changed,
+                root,
+            } => {
+                assert!(paths.is_empty() && changed);
+                assert_eq!(root, Some(PathBuf::from("d")));
+            }
+            other => panic!("expected check, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_status_and_the_orca_plugin() {
+        let cli = Cli::try_parse_from(["hookah", "status", "--json", "--root", "w"]).unwrap();
+        match cli.command {
+            Command::Status { root, json } => {
+                assert!(json);
+                assert_eq!(root, Some(PathBuf::from("w")));
+            }
+            other => panic!("expected status, got {other:?}"),
+        }
+        let cli = Cli::try_parse_from(["hookah", "plugin", "orca", "--out", "o"]).unwrap();
+        match cli.command {
+            Command::Plugin { harness, out } => {
+                assert_eq!(harness, PluginKind::Orca);
+                assert_eq!(out, Some(PathBuf::from("o")));
+            }
+            other => panic!("expected plugin, got {other:?}"),
+        }
     }
 }

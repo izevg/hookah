@@ -515,3 +515,149 @@ fn the_hidden_baseline_command_records_a_failure_for_a_missing_project() {
     );
     let _ = fs::remove_dir_all(&empty);
 }
+
+fn status_doc(f: &Fixture) -> serde_json::Value {
+    let out = f.hookah(&["status", "--json"], "");
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    serde_json::from_str(&stdout(&out)).unwrap()
+}
+
+#[test]
+fn status_follows_the_latest_check_of_the_project() {
+    let f = Fixture::new("status", CLEAN_LIB);
+    let doc = status_doc(&f);
+    assert_eq!(doc["v"], 1);
+    assert_eq!(doc["overall"], serde_json::Value::Null);
+    assert_eq!(doc["projects"].as_array().unwrap().len(), 1);
+    assert_eq!(doc["projects"][0]["status"], serde_json::Value::Null);
+
+    f.write("src/lib.rs", "pub fn answer() -> i32 {\n    \"nope\"\n}\n");
+    assert_eq!(
+        f.hookah(&["check", "src/lib.rs"], "").status.code(),
+        Some(1)
+    );
+    let doc = status_doc(&f);
+    assert_eq!(doc["overall"], "fail");
+    let status = &doc["projects"][0]["status"];
+    assert_eq!(status["phase"], "edit");
+    assert!(status["problems"].as_u64().unwrap() >= 1);
+    assert!(
+        status["lines"][0]
+            .as_str()
+            .unwrap()
+            .contains("src/lib.rs:2"),
+        "{status}"
+    );
+    assert!(status["at_ms"].as_u64().unwrap() > 1_600_000_000_000);
+
+    f.write("src/lib.rs", CLEAN_LIB);
+    assert_eq!(
+        f.hookah(&["check", "src/lib.rs"], "").status.code(),
+        Some(0)
+    );
+    assert_eq!(status_doc(&f)["overall"], "pass");
+}
+
+#[test]
+fn status_in_text_form_and_from_a_subdirectory() {
+    let f = Fixture::new("statustext", CLEAN_LIB);
+    f.write("src/lib.rs", "pub fn answer() -> i32 {\n    \"nope\"\n}\n");
+    f.hookah(&["check", "src/lib.rs"], "");
+    let out = f.hookah(&["status", "--root", "src"], "");
+    let text = stdout(&out);
+    assert!(
+        text.contains("problem") && text.contains("after the last edit check"),
+        "{text}"
+    );
+    assert!(text.contains("src/lib.rs:2"), "{text}");
+}
+
+#[test]
+fn check_changed_runs_the_stop_phase_and_records_it() {
+    let f = Fixture::new("changed", CLEAN_LIB);
+    f.write("src/lib.rs", "pub fn answer() -> i32 {\n    \"nope\"\n}\n");
+    let out = f.hookah(&["check", "--changed"], "");
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "{}{}",
+        stdout(&out),
+        stderr(&out)
+    );
+    assert!(stdout(&out).starts_with("FAIL "), "{}", stdout(&out));
+    assert!(stdout(&out).contains("src/lib.rs:2"), "{}", stdout(&out));
+    let doc = status_doc(&f);
+    assert_eq!(doc["projects"][0]["status"]["phase"], "stop");
+    assert_eq!(doc["overall"], "fail");
+
+    // Nothing changed any more: the clean tree replaces the old failure.
+    f.git(&["checkout", "--", "src/lib.rs"]);
+    let out = f.hookah(&["check", "--changed", "--root", "."], "");
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "{}{}",
+        stdout(&out),
+        stderr(&out)
+    );
+    assert!(stdout(&out).starts_with("ok "), "{}", stdout(&out));
+    assert_eq!(status_doc(&f)["overall"], "pass");
+}
+
+#[test]
+fn the_orca_plugin_is_written_to_a_folder_and_rewritten_without_changes() {
+    let f = Fixture::new("orcaplugin", CLEAN_LIB);
+    let out = f.hookah(&["plugin", "orca"], "");
+    assert_eq!(out.status.code(), Some(1));
+    assert!(stderr(&out).contains("--out"), "{}", stderr(&out));
+
+    let first = f.hookah(&["plugin", "orca", "--out", "orca-plugin"], "");
+    assert_eq!(first.status.code(), Some(0), "{}", stderr(&first));
+    assert!(stdout(&first).contains("wrote "), "{}", stdout(&first));
+    let manifest: serde_json::Value =
+        serde_json::from_str(&f.read("orca-plugin/orca-plugin.json")).unwrap();
+    assert_eq!(manifest["id"], "hookah");
+    assert!(f.path("orca-plugin/src/worker.ts").is_file());
+    assert!(f.path("orca-plugin/src/panel.tsx").is_file());
+
+    let second = f.hookah(&["plugin", "orca", "--out", "orca-plugin"], "");
+    assert_eq!(second.status.code(), Some(0));
+    assert!(!stdout(&second).contains("wrote "), "{}", stdout(&second));
+    assert!(
+        stdout(&second).contains("unchanged "),
+        "{}",
+        stdout(&second)
+    );
+
+    let opencode = f.hookah(&["plugin", "opencode", "--out", "x"], "");
+    assert_eq!(opencode.status.code(), Some(1));
+}
+
+#[test]
+#[cfg(unix)]
+fn status_and_check_changed_resolve_an_aliased_root() {
+    let f = Fixture::new("alias", CLEAN_LIB);
+    f.write("src/lib.rs", "pub fn answer() -> i32 {\n    \"nope\"\n}\n");
+    f.hookah(&["check", "src/lib.rs"], "");
+    let alias = f.root.with_file_name(format!(
+        "{}-alias",
+        f.root.file_name().unwrap().to_string_lossy()
+    ));
+    let _ = fs::remove_file(&alias);
+    std::os::unix::fs::symlink(&f.root, &alias).unwrap();
+    let out = f.hookah(&["status", "--json", "--root", alias.to_str().unwrap()], "");
+    let doc: serde_json::Value = serde_json::from_str(&stdout(&out)).unwrap();
+    assert_eq!(doc["overall"], "fail", "{doc}");
+    let out = f.hookah(
+        &["check", "--changed", "--root", alias.to_str().unwrap()],
+        "",
+    );
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "{}{}",
+        stdout(&out),
+        stderr(&out)
+    );
+    let _ = fs::remove_file(&alias);
+}

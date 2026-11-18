@@ -141,7 +141,9 @@ is installed on the machine.
 `rust/crate/07-test-edit-mutation` records the answer for a machine without `cargo-mutants`, so
 its `requires` is `! cargo mutants --version`. `08-test-edit-mutation-survivor` is its sibling for
 a machine that has the tool (`requires`: `cargo mutants --version`). Each machine runs exactly one
-of the two.
+of the two. `06-broken-test-stop` also requires the tool: without it the stop phase appends a
+"tool not installed" notice to the answer. CI installs `cargo-mutants` on every OS, so 08 runs
+and 07 is skipped there.
 
 ## Python samples
 

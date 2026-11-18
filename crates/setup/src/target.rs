@@ -19,6 +19,8 @@ pub enum Target {
     Hermes,
     /// Pi coding agent: an extension file.
     Pi,
+    /// OpenClaw: a plugin directory (entry point and manifest).
+    Openclaw,
 }
 
 /// One hook entry: the agent event, an optional tool matcher, and the timeout in seconds.
@@ -69,7 +71,7 @@ const CURSOR: &[HookSpec] = &[
 
 impl Target {
     /// Every harness, in the order `hookah setup --detect` lists them.
-    pub const ALL: [Self; 8] = [
+    pub const ALL: [Self; 9] = [
         Self::Claude,
         Self::Codex,
         Self::Qoder,
@@ -78,6 +80,7 @@ impl Target {
         Self::Opencode,
         Self::Hermes,
         Self::Pi,
+        Self::Openclaw,
     ];
 
     /// The name used on the command line and in `hookah hook <name>`.
@@ -91,11 +94,12 @@ impl Target {
             Self::Opencode => "opencode",
             Self::Hermes => "hermes",
             Self::Pi => "pi",
+            Self::Openclaw => "openclaw",
         }
     }
 
-    /// The hooks hookah registers. Empty for opencode, Hermes, and Pi, whose plugins carry them
-    /// themselves.
+    /// The hooks hookah registers. Empty for the plugin harnesses (opencode, Hermes, Pi,
+    /// OpenClaw), whose plugins carry them themselves.
     pub fn hooks(self) -> &'static [HookSpec] {
         match self {
             Self::Claude => CLAUDE,
@@ -103,7 +107,7 @@ impl Target {
             Self::Qoder => QODER,
             Self::Kimi => KIMI,
             Self::Cursor => CURSOR,
-            Self::Opencode | Self::Hermes | Self::Pi => &[],
+            Self::Opencode | Self::Hermes | Self::Pi | Self::Openclaw => &[],
         }
     }
 
@@ -118,6 +122,7 @@ impl Target {
             Self::Opencode => &["opencode"],
             Self::Hermes => &["hermes"],
             Self::Pi => &["pi"],
+            Self::Openclaw => &["openclaw"],
         }
     }
 
@@ -143,6 +148,11 @@ impl Target {
             }
             Self::Pi => {
                 "Restart Pi, or run /reload in it. The extension runs `hookah` from PATH, or from HOOKAH_BIN if set."
+            }
+            Self::Openclaw => {
+                "Run `openclaw plugins enable hookah` and `openclaw config set \
+                 plugins.entries.hookah.hooks.allowConversationAccess true`, then restart the \
+                 OpenClaw Gateway. The plugin runs `hookah` from PATH, or from HOOKAH_BIN if set."
             }
         }
     }
@@ -279,7 +289,8 @@ mod tests {
         assert_eq!(
             names,
             [
-                "claude", "codex", "qoder", "kimi", "cursor", "opencode", "hermes", "pi"
+                "claude", "codex", "qoder", "kimi", "cursor", "opencode", "hermes", "pi",
+                "openclaw"
             ]
         );
         assert_eq!(Target::Claude.hooks().len(), 4);
@@ -290,9 +301,10 @@ mod tests {
         assert!(Target::Opencode.hooks().is_empty());
         assert!(Target::Hermes.hooks().is_empty());
         assert!(Target::Pi.hooks().is_empty());
+        assert!(Target::Openclaw.hooks().is_empty());
         for t in Target::ALL {
             assert!(!t.binaries().is_empty());
-            assert!(t.restart_hint().contains("Restart"), "{t:?}");
+            assert!(t.restart_hint().contains("estart"), "{t:?}");
         }
     }
 }

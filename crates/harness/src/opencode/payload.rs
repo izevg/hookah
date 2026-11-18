@@ -47,11 +47,16 @@ enum Event {
 
 /// Parses an opencode plugin payload.
 pub fn parse(stdin: &str) -> Result<Invocation, PayloadError> {
+    parse_for(stdin, "opencode")
+}
+
+/// Parses a payload of this contract sent by the plugin of `harness` (named in version errors).
+pub fn parse_for(stdin: &str, harness: &str) -> Result<Invocation, PayloadError> {
     let p: Payload = serde_json::from_str(stdin).map_err(|e| PayloadError(e.to_string()))?;
     if p.v != VERSION {
         return Err(PayloadError(format!(
             "unsupported plugin contract version {} (expected {VERSION}); reinstall the plugin \
-             with `hookah plugin opencode`",
+             with `hookah plugin {harness}`",
             p.v
         )));
     }

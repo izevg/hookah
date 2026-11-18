@@ -46,7 +46,8 @@ fn execute(args: &SetupArgs, env: &Env, exe: &str) -> Result<String, String> {
     }
     let written = commit(&planned).map_err(|e| e.to_string())?;
     let mut out = render::applied(&planned, &written, &env.cwd, &program);
-    if matches!(target, Target::Opencode | Target::Pi) && args.command.is_some() {
+    if matches!(target, Target::Opencode | Target::Pi | Target::Openclaw) && args.command.is_some()
+    {
         out.push_str(&format!(
             "note: --command is ignored for {}; the plugin runs `hookah` from PATH or HOOKAH_BIN\n",
             target.name()
@@ -71,5 +72,6 @@ fn target(kind: HarnessKind) -> Target {
         HarnessKind::Opencode => Target::Opencode,
         HarnessKind::Hermes => Target::Hermes,
         HarnessKind::Pi => Target::Pi,
+        HarnessKind::Openclaw => Target::Openclaw,
     }
 }

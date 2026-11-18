@@ -49,12 +49,12 @@ pub fn detect(env: &Env) -> Vec<Detection> {
         .collect()
 }
 
-/// True if the file holds hookah's hooks (for opencode and Pi: the plugin file exists; for Hermes: the
+/// True if the file holds hookah's hooks (for opencode, Pi, and OpenClaw: the plugin file exists; for Hermes: the
 /// plugin is installed next to the config file and enabled in it).
 fn configured(target: Target, path: &Path) -> bool {
     match fs::read_to_string(path) {
         Ok(text) => match target {
-            Target::Opencode | Target::Pi => true,
+            Target::Opencode | Target::Pi | Target::Openclaw => true,
             Target::Hermes => {
                 let plugin = path.with_file_name("plugins/hookah/__init__.py");
                 plugin.is_file() && yaml::enabled(&text)
@@ -107,6 +107,7 @@ mod tests {
             home: Some(root.join("home")),
             xdg_config: None,
             pi_agent_dir: None,
+            openclaw_state: None,
             path: vec![root.join("bin")],
             hermes_home: None,
         }

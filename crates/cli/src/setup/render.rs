@@ -261,6 +261,30 @@ mod tests {
     }
 
     #[test]
+    fn openclaw_lists_the_manifest_and_says_what_to_run_next() {
+        let mut p = plan(Target::Openclaw, None, "// plugin");
+        p.path = "/h/.openclaw/extensions/hookah/index.js".into();
+        p.companions = vec![Companion {
+            path: "/h/.openclaw/extensions/hookah/openclaw.plugin.json".into(),
+            before: None,
+            after: "{}".into(),
+        }];
+        let w = Written {
+            wrote: true,
+            backup: None,
+            companion_backups: vec![],
+        };
+        let out = applied(&p, &w, Path::new("/h"), "hookah");
+        assert!(out.contains(
+            "created .openclaw/extensions/hookah/index.js\ncreated .openclaw/extensions/hookah/openclaw.plugin.json\n"
+        ));
+        assert!(out.contains(
+            "installed the bundled openclaw plugin (the same text as `hookah plugin openclaw`)"
+        ));
+        assert!(out.contains("next: Run `openclaw plugins enable hookah`"));
+    }
+
+    #[test]
     fn dry_run_shows_the_file_and_the_action() {
         let create = dry_run(&plan(Target::Claude, None, "NEW\n"), Path::new(CWD));
         assert_eq!(

@@ -1,4 +1,4 @@
-//! Whole-program checks: `tsc` and dependency-cruiser.
+//! Whole-program checks: `tsc`, dependency-cruiser, and knip.
 //!
 //! - `tsc --pretty false` prints one `path(line,col): error TSxxxx: message` line per problem,
 //!   followed by indented continuation lines that are dropped. A diagnostic without a location
@@ -10,6 +10,12 @@
 //!   violating `from` module, with the line of the violating import when the specifier is found
 //!   in the file (the JSON has no position), the rule is the rule name, and the message is
 //!   `from -> to`, or `from` for rules about a module alone, such as orphans.
+//! - knip (`--reporter json`): `{"issues": [{"file": ..., "<type>": [{"name", "line", "col"}]}]}`,
+//!   one row per file with one array per issue type (`files`, `exports`, `types`,
+//!   `dependencies`, `unlisted`, ...). Every issue is a warning of kind `Unused`, the rule is the
+//!   issue type, and the message names the symbol without its position, so the fingerprint
+//!   survives line shifts. Dependency issues sit in `package.json`; a file issue has no line.
+//!   `duplicates` entries are arrays of the symbols exported twice.
 
 use std::path::Path;
 
@@ -18,9 +24,10 @@ use hookah_application::ports::ProcessOutput;
 use hookah_domain::finding::{Finding, Location, Severity};
 use hookah_domain::toolchain::CheckKind;
 use serde::Deserialize;
+use serde_json::Value;
 
 use super::{first_line, json_in, relative, strip_ansi, unreadable};
-use crate::ecosystems::node::detect::{DEPCRUISE, TSC, TSCONFIG};
+use crate::ecosystems::node::detect::{DEPCRUISE, KNIP, TSC, TSCONFIG};
 
 /// Findings from `tsc` (also `tsc -b`) output.
 pub fn tsc(root: &Path, output: &ProcessOutput) -> Result<Vec<Finding>, PortError> {
@@ -121,6 +128,88 @@ pub fn depcruise(root: &Path, output: &ProcessOutput) -> Result<Vec<Finding>, Po
             )
         })
         .collect())
+}
+
+/// How a knip issue type reads in a message; the symbol follows.
+fn knip_label(issue_type: &str) -> &str {
+    match issue_type {
+        "files" => "unused file",
+        "dependencies" => "unused dependency",
+        "devDependencies" => "unused devDependency",
+        "optionalPeerDependencies" => "unused optionalPeerDependency",
+        "unlisted" => "unlisted dependency",
+        "binaries" => "unlisted binary",
+        "unresolved" => "unresolved import",
+        "exports" => "unused export",
+        "nsExports" => "unused namespace export",
+        "types" => "unused exported type",
+        "nsTypes" => "unused namespace type",
+        "enumMembers" => "unused enum member",
+        "namespaceMembers" => "unused namespace member",
+        "duplicates" => "duplicate export",
+        "subpaths" => "unused subpath export",
+        "catalog" => "unused catalog entry",
+        "catalogReferences" => "unresolved catalog reference",
+        "cycles" => "circular dependency",
+        other => other,
+    }
+}
+
+/// `name`, or `namespace.name` for a member, of one knip symbol.
+fn knip_symbol(symbol: &Value) -> Option<String> {
+    let name = symbol.get("name")?.as_str()?;
+    Some(match symbol.get("namespace").and_then(Value::as_str) {
+        Some(namespace) => format!("{namespace}.{name}"),
+        None => name.to_owned(),
+    })
+}
+
+fn knip_line(symbol: &Value) -> Option<u32> {
+    u32::try_from(symbol.get("line")?.as_u64()?).ok()
+}
+
+/// Findings from `knip --reporter json`.
+pub fn knip(root: &Path, output: &ProcessOutput) -> Result<Vec<Finding>, PortError> {
+    let Some(value) = json_in(&output.stdout) else {
+        return Err(unreadable(KNIP, output));
+    };
+    let Some(rows) = value.get("issues").and_then(Value::as_array) else {
+        return Err(PortError::new("unreadable knip report: no `issues` list"));
+    };
+    let mut found = Vec::new();
+    for row in rows {
+        let (Some(file), Some(row)) = (row.get("file").and_then(Value::as_str), row.as_object())
+        else {
+            continue;
+        };
+        let path = relative(root, file);
+        for (issue_type, items) in row {
+            let Some(items) = items.as_array() else {
+                continue;
+            };
+            for item in items {
+                // A duplicate is a group of symbols exported under several names.
+                let symbols: Vec<&Value> = match item.as_array() {
+                    Some(group) => group.iter().collect(),
+                    None => vec![item],
+                };
+                let names: Vec<String> = symbols.iter().filter_map(|s| knip_symbol(s)).collect();
+                if names.is_empty() {
+                    continue;
+                }
+                let message = format!("{}: {}", knip_label(issue_type), names.join(", "));
+                let location = match symbols.first().and_then(|s| knip_line(s)) {
+                    Some(line) => Location::line(path.clone(), line),
+                    None => Location::file(path.clone()),
+                };
+                found.push(
+                    Finding::new(CheckKind::Unused, Severity::Warning, location, message)
+                        .with_rule(issue_type.as_str()),
+                );
+            }
+        }
+    }
+    Ok(found)
 }
 
 /// The 1-based line of the first quoted occurrence of `specifier` in `file`. The report carries
@@ -265,6 +354,91 @@ mod tests {
         assert_eq!(import_line(&file, "./w"), None);
         assert_eq!(import_line(&dir.join("missing.ts"), "./x"), None);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// `knip --reporter json --no-progress --no-exit-code --no-config-hints` with knip 6.45.1 in
+    /// a package with one unused file, dependency, devDependency, export, type, enum member, and
+    /// namespace member, an unlisted binary and dependency, and an unresolved import; rows with
+    /// only empty arrays and the empty arrays themselves removed. The ordering of the rows is
+    /// knip's.
+    const KNIP_OUT: &str = r#"{"issues":[{"file":"src/orphan.ts","files":[{"name":"src/orphan.ts"}]},{"file":"package.json","binaries":[{"name":"eslint"}],"dependencies":[{"name":"left-pad","line":8,"col":6,"pos":130}],"devDependencies":[{"name":"lodash","line":13,"col":6,"pos":229}]},{"file":"src/index.ts","unlisted":[{"name":"chalk","line":2,"col":19,"pos":60}],"unresolved":[{"name":"./missing.ts","line":3,"col":21,"pos":89}]},{"file":"src/a.ts","enumMembers":[{"namespace":"Color","name":"Green","line":4,"col":26,"pos":116}],"exports":[{"name":"unusedFn","line":2,"col":14,"pos":42},{"name":"default","line":7,"col":16,"pos":174}],"namespaceMembers":[{"namespace":"ns","name":"two","line":8,"col":58,"pos":234}],"types":[{"name":"Unused","line":3,"col":13,"pos":74}]}]}"#;
+
+    fn knip_lines(found: &[Finding]) -> Vec<String> {
+        found
+            .iter()
+            .map(|f| {
+                format!(
+                    "{} {} {}",
+                    f.location,
+                    f.rule.as_deref().unwrap_or(""),
+                    f.message
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn knip_issues_are_unused_warnings_without_positions_in_the_message() {
+        let found = knip(Path::new(ROOT), &out(0, KNIP_OUT)).unwrap();
+        assert!(
+            found
+                .iter()
+                .all(|f| f.kind == CheckKind::Unused && f.severity == Severity::Warning)
+        );
+        assert_eq!(
+            knip_lines(&found),
+            [
+                "src/orphan.ts files unused file: src/orphan.ts",
+                "package.json binaries unlisted binary: eslint",
+                "package.json:8 dependencies unused dependency: left-pad",
+                "package.json:13 devDependencies unused devDependency: lodash",
+                "src/index.ts:2 unlisted unlisted dependency: chalk",
+                "src/index.ts:3 unresolved unresolved import: ./missing.ts",
+                "src/a.ts:4 enumMembers unused enum member: Color.Green",
+                "src/a.ts:2 exports unused export: unusedFn",
+                "src/a.ts:7 exports unused export: default",
+                "src/a.ts:8 namespaceMembers unused namespace member: ns.two",
+                "src/a.ts:3 types unused exported type: Unused",
+            ]
+        );
+    }
+
+    #[test]
+    fn knip_duplicates_are_groups_of_names_at_the_first_position() {
+        let report = r#"{"issues":[{"file":"src/a.ts","duplicates":[[{"name":"d","line":6,"col":10,"pos":1},{"name":"e","line":6,"col":18,"pos":2}]]}]}"#;
+        let found = knip(Path::new(ROOT), &out(0, report)).unwrap();
+        assert_eq!(
+            knip_lines(&found),
+            ["src/a.ts:6 duplicates duplicate export: d, e"]
+        );
+    }
+
+    #[test]
+    fn knip_unknown_issue_types_keep_their_own_name_and_odd_rows_are_skipped() {
+        let report = r#"{"issues":[{"file":"a.ts","future":[{"name":"x"}]},{"file":"b.ts","exports":[{"line":1}]},{"nofile":true},{"file":"c.ts","owners":[{"name":"@me"}],"exports":"no"}]}"#;
+        let found = knip(Path::new(ROOT), &out(0, report)).unwrap();
+        assert_eq!(
+            knip_lines(&found),
+            ["a.ts future future: x", "c.ts owners owners: @me"]
+        );
+    }
+
+    #[test]
+    fn knip_clean_run_and_unreadable_reports() {
+        assert!(
+            knip(Path::new(ROOT), &out(0, r#"{"issues":[]}"#))
+                .unwrap()
+                .is_empty()
+        );
+        let failed = ProcessOutput {
+            exit_code: Some(2),
+            stderr: "ERROR: Error loading knip.json\n".into(),
+            ..ProcessOutput::default()
+        };
+        let e = knip(Path::new(ROOT), &failed).unwrap_err();
+        assert!(e.message().starts_with("knip failed (exit 2)"));
+        assert!(knip(Path::new(ROOT), &out(0, r#"{"issues":5}"#)).is_err());
+        assert!(knip(Path::new(ROOT), &out(0, "")).is_err());
     }
 
     #[test]

@@ -26,6 +26,7 @@ nothing and loses time. So the default is light: cheap checks on what changed, a
 | ----- | ---- | ------- |
 | Edit  | Format, Lint, Typecheck, Architecture | the edited file; about 1-3 s |
 | Stop  | Lint, Typecheck, Architecture | all files changed in the session |
+|       | Unused | whole project (Knip), reported when new; never at edit |
 |       | Test | the **light** tests related to the changes, only up to the test budget |
 |       | Mutation | only when a test changed **and** the change is small (mutation budget) |
 
@@ -77,13 +78,13 @@ defaults, not policy: raise them in CI or on a fast machine, lower them on a slo
 ## Request flow
 
 Check kinds: `Format`, `Lint`, `Typecheck` (tsc, mypy), `Architecture` (dependency-cruiser,
-import-linter), `Test`, `Mutation`. The phase decides which run and in what order
+import-linter), `Unused` (knip: whole-project analysis), `Test`, `Mutation`. The phase decides which run and in what order
 (`Phase::check_kinds`):
 
 | Phase | Kinds, in order                                                        |
 | ----- | ---------------------------------------------------------------------- |
 | Edit  | Format, Lint, Typecheck, Architecture (on the edited file)             |
-| Stop  | Lint, Typecheck, Architecture (all changed files of the project), Test, Mutation |
+| Stop  | Lint, Typecheck, Architecture (all changed files of the project), Unused, Test, Mutation |
 
 Static checks run again at stop to catch files changed outside edit hooks, for example by a
 shell `sed`. Format never runs at stop.
@@ -116,7 +117,7 @@ means nothing runs. A surviving mutant is an `Error` finding, `mutant survived: 
 at the source path and line.
 
 `Test` and `Mutation` findings are never filtered by changed lines: their scope is already
-narrow. `Lint`, `Typecheck`, and `Architecture` findings follow the baseline when there is one,
+narrow. `Lint`, `Typecheck`, `Architecture`, and `Unused` findings follow the baseline when there is one,
 else the usual rule (errors always, warnings on changed lines only).
 
 ### Missing tools
@@ -213,7 +214,7 @@ project's static findings when the agent session started.
 of the agent's working directory, plus the projects nested up to three levels below it (a monorepo
 root holds none itself; at most 8), and claim a baseline for each. The hook then spawns a detached
 child, `hookah baseline --session=<id> --root <project>` (`BaselineSpawner`), and returns at once.
-The child (`ComputeBaseline`) runs every Lint, Typecheck, and Architecture tool of the project over
+The child (`ComputeBaseline`) runs every Lint, Typecheck, Architecture, and Unused tool of the project over
 the whole project and stores the fingerprints of what they find. Format does not run (it rewrites
 files), and Test and Mutation are never baseline-filtered. The detector chooses the targets that
 make a tool cover the whole project (`ToolchainDetector::baseline_targets`): the root `.` for file
@@ -255,7 +256,7 @@ normalization removes `:<line>` and `:<line>:<col>` references and the word pair
 different problems.
 
 **The rule.** With a ready baseline for the project and session, a fresh run reports exactly the
-static findings (Format, Lint, Typecheck, Architecture), of any severity and in any file, whose
+static findings (Format, Lint, Typecheck, Architecture, Unused), of any severity and in any file, whose
 fingerprints occur more often than in the baseline. The comparison is a multiset: with two in the
 baseline and three now, one is new, and the one reported is the last by line and column. Test and
 Mutation findings pass through unfiltered. Without a baseline (none, still running, or failed) the

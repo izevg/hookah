@@ -196,6 +196,13 @@ mod tests {
     }
 
     #[test]
+    fn unused_code_never_runs_in_the_edit_phase() {
+        let w = World::new("/r/Cargo.toml", vec![tool("unused", CheckKind::Unused)]);
+        assert_eq!(run(&w), Outcome::pass());
+        assert!(w.calls().is_empty());
+    }
+
+    #[test]
     fn typecheck_findings_show_their_kind() {
         let mut w = World::new("/r/Cargo.toml", vec![tool("types", CheckKind::Typecheck)]);
         w.findings.insert(

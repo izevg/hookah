@@ -47,6 +47,7 @@ enum KindDto {
     Lint,
     Typecheck,
     Architecture,
+    Unused,
     Test,
     Mutation,
 }
@@ -58,6 +59,7 @@ impl From<CheckKind> for KindDto {
             CheckKind::Lint => Self::Lint,
             CheckKind::Typecheck => Self::Typecheck,
             CheckKind::Architecture => Self::Architecture,
+            CheckKind::Unused => Self::Unused,
             CheckKind::Test => Self::Test,
             CheckKind::Mutation => Self::Mutation,
         }
@@ -71,6 +73,7 @@ impl From<KindDto> for CheckKind {
             KindDto::Lint => Self::Lint,
             KindDto::Typecheck => Self::Typecheck,
             KindDto::Architecture => Self::Architecture,
+            KindDto::Unused => Self::Unused,
             KindDto::Test => Self::Test,
             KindDto::Mutation => Self::Mutation,
         }
@@ -177,6 +180,7 @@ mod tests {
             CheckKind::Lint,
             CheckKind::Typecheck,
             CheckKind::Architecture,
+            CheckKind::Unused,
             CheckKind::Test,
             CheckKind::Mutation,
         ];

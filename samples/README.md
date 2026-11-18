@@ -139,6 +139,10 @@ is installed on the machine.
 | | `03-app-type-error` | edit | a type error in `app` against `lib` through `tsc -b`, shown with its workspace-relative path |
 | | `04-old-type-error-hidden` | start, edit | `base.patch` leaves a `tsc` error in the untouched `app/src/extra.ts`; after `start`, a comment edit in `lib` is silent |
 | | `05-old-type-error-without-start` | edit | the same without `start`: `tsc -b` covers the dependent, so the old error is reported |
+| `node/storybook-vitest` | `01-broken-component-stop` | stop | a component change breaks a story: the failed story is reported at its `export const` in the stories file; skipped without a Playwright Chromium |
+| | `02-unrelated-edit-stop` | stop | an edit no story imports: only the unit test runs; the broken `Tag` story is never run, so the stop is silent; skipped without Chromium |
+| | `03-story-edit-stop` | stop | a story edit: only that stories file runs (the untouched, broken `Tag` story does not); skipped without Chromium |
+| | `04-browser-missing-stop` | stop | the Playwright browser cannot launch (a bad `executablePath`): a non-blocking notice, no finding; needs no browser |
 | `java/maven` | `01-clean-edit` | edit | a Javadoc edit stays silent (Spotless, Checkstyle, and the compile check all pass) |
 | | `02-compile-error` | edit | a call of a missing method: `[typecheck]` error from javac with line and column |
 | | `03-checkstyle-violation` | edit | Checkstyle `NeedBraces` and `MagicNumber` warnings on the changed line |
@@ -158,6 +162,16 @@ a machine that has the tool (`requires`: `cargo mutants --version`). Each machin
 of the two. `06-broken-test-stop` also requires the tool: without it the stop phase appends a
 "tool not installed" notice to the answer. CI installs `cargo-mutants` on every OS, so 08 runs
 and 07 is skipped there.
+
+## Storybook sample
+
+`node/storybook-vitest` is a plain-HTML Storybook 10 (`@storybook/html-vite`) with the Vitest
+addon: a `unit` project and a `storybook` project (Chromium through Playwright) in one
+`vitest.config.js`. The `Tag` story is broken on purpose, so scenarios 02 and 03 show that a
+story the change does not reach never runs. Scenarios 01 to 03 are skipped unless Playwright's
+Chromium is installed (`requires`); 04 runs everywhere. CI needs `npx playwright install
+--with-deps chromium` (inside the sample project, or with the same Playwright version, 1.65) before
+`samples/run.sh node/`; without it the three scenarios are reported as `SKIP`.
 
 ## Java samples
 

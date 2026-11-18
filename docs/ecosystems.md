@@ -115,7 +115,8 @@ or exact version the package's own `version` satisfies.
   effort: the first line of the `from` file that holds the violating import's specifier
   (`unresolvedTo`) in quotes; without a match the finding has no line.
 - Vitest and Jest: every failed assertion is an error at the test file, on the line of the first
-  stack frame inside it. A suite that cannot run (syntax or import error) is one error. Vitest 5
+  stack frame inside it (a failed Storybook story: the line of its export, see below). A suite that
+  cannot run (syntax or import error) is one error. Vitest 5
   writes its report to a file and says where; older versions print it. Jest runs with
   `--no-watchman` because it waits a minute for a missing watchman otherwise.
 - A tool that exits non-zero without a readable report is degraded with the tail of its output,
@@ -143,6 +144,40 @@ word `integration`, `e2e`, `playwright`, or `cypress` between `-` and `_` (`api-
   Jest's are case-sensitive.
 - The number of targets is the number of changed files, not of tests, because only the runner
   knows the tests; the test budget applies to it.
+
+**Storybook stories.** The Storybook Vitest addon (`@storybook/addon-vitest`, earlier
+`@storybook/experimental-addon-test`) turns every `*.stories.*` file into Vitest tests: its
+`storybookTest` plugin sits in a Vitest project, usually named `storybook`, that runs in browser
+mode (Playwright). hookah adds no tool and no flag for it. It is the same `vitest related` call,
+and the project's own Vitest config decides whether stories are tests, so nothing runs unless
+the project configured it. Verified with Storybook 10.6, Vitest 5.1 and Playwright Chromium:
+
+- A changed story file selects exactly that file: `vitest related src/Button.stories.tsx` runs
+  the stories of that file and nothing else.
+- A changed component selects the stories that import it, through the same import graph that
+  finds unit tests. No sibling-file naming guess is made. A component used by many stories
+  selects many story files, which is what the runner reports; the test budget counts changed
+  files, as for every test.
+- A story file belongs to the `storybook` project only, so a unit test and a story are never run
+  twice, and the unit project is unaffected. An edit that no story imports starts no browser:
+  `related` finds nothing, and Vitest does not launch Playwright for it.
+- A failed story is an error at the stories file, on the line of its `export const` (the
+  browser's stack frames point into transformed code, so they are not used). The message is
+  `<story name>: <assertion message>`. The Vitest JSON report already carries stories as test
+  results, so the Vitest parser reads them as is.
+- Fail open. When Playwright cannot launch its browser (not installed, wrong path), Vitest
+  reports the stories suite as failed with no test and no message. hookah turns that into a
+  non-blocking notice, `story tests skipped: Playwright could not launch its browser (run `npx
+  playwright install`)`, instead of a finding. When a unit test fails in the same run, the
+  finding is reported and the notice waits for the next run. hookah never installs browsers.
+- Stories are source files for the file role, never test files: editing one alone does not start
+  mutation testing, and a story is never a mutation target. Stryker would have to run the
+  browser project, which is not light (see `mutation.md`).
+- Not supported: the legacy `@storybook/test-runner`. It needs a running Storybook server, so it
+  is a heavy, integration-style check and hookah never runs it. Stories in `.vue` and `.svelte`
+  files are not selected, because the Node ecosystem only checks JavaScript and TypeScript files.
+- The addon recommends `playwright install chromium` for its browser. A CI machine that replays
+  the Storybook sample needs that too.
 
 **Mutation.** Changed tests map to sources by name, keeping files that exist: `foo.test.ts` and
 `foo.spec.ts` to `foo.ts` next to them; `__tests__/foo.ts` to `../foo.ts`; `test/foo.spec.ts` or

@@ -10,6 +10,14 @@
 //! - A non-zero exit without any finding (a crash, a coverage threshold, an error outside the
 //!   tests) is a [`PortError`], never a pass.
 //!
+//! - A Storybook stories file (see [`is_story`]) whose suite failed with no assertion and no
+//!   message never ran: Vitest could not open the browser of the Storybook project (Playwright
+//!   without its browser, usually). That is an environment problem, not a test failure, so it is
+//!   a [`PortError`], which the session shows as a non-blocking notice. When real findings exist
+//!   they win and the notice waits for the next run.
+//! - A failed story is a finding at the line of its `export const` in the stories file: the
+//!   browser's stack frames point into code the dev server transformed, not into the file.
+//!
 //! Vitest 5 writes its JSON report to a file even without `--outputFile` and prints
 //! `JSON report written to <path>`; older versions print the JSON to stdout. The parser follows
 //! that message when it is there and reads stdout otherwise. Jest prints the JSON to stdout.
@@ -31,6 +39,7 @@ use serde_json::Value;
 
 use super::{cap, first_line, json_in, relative, strip_ansi, unreadable};
 use crate::ecosystems::node::detect::{JEST, STRYKER, VITEST};
+use crate::ecosystems::node::select::is_story;
 
 #[derive(Deserialize)]
 struct Report {
@@ -94,6 +103,7 @@ fn findings(
     let report: Report = serde_json::from_value(value)
         .map_err(|e| PortError::new(format!("unreadable {tool} report: {e}")))?;
     let mut found = Vec::new();
+    let mut stories_not_run = false;
     for suite in report.test_results {
         let path = relative(root, &suite.name);
         let mut failed = false;
@@ -106,9 +116,18 @@ fn findings(
                 .or(a.title.as_deref())
                 .unwrap_or("test");
             let message = format!("{title}: {}", first_line(&stack));
-            let location = match frame_position(&stack, &suite.name) {
-                Some((line, column)) => Location::at(path.clone(), line, column),
-                None => Location::file(path.clone()),
+            let location = if is_story(&path) {
+                // A story runs in the browser, whose stack frames point into transformed code,
+                // so the line is the story's own export instead.
+                match story_line(root, &path, title) {
+                    Some(line) => Location::line(path.clone(), line),
+                    None => Location::file(path.clone()),
+                }
+            } else {
+                match frame_position(&stack, &suite.name) {
+                    Some((line, column)) => Location::at(path.clone(), line, column),
+                    None => Location::file(path.clone()),
+                }
             };
             found.push(Finding::new(
                 CheckKind::Test,
@@ -117,7 +136,14 @@ fn findings(
                 message,
             ));
         }
-        if !failed && suite.status.as_deref() == Some("failed") {
+        if !failed
+            && suite.status.as_deref() == Some("failed")
+            && suite.assertions.is_empty()
+            && suite.message.as_deref().is_none_or(|m| m.trim().is_empty())
+            && is_story(&path)
+        {
+            stories_not_run = true;
+        } else if !failed && suite.status.as_deref() == Some("failed") {
             let text = suite_failure(&strip_ansi(suite.message.as_deref().unwrap_or("")));
             let location = match trailing_position(&text) {
                 Some((line, column)) => Location::at(path, line, column),
@@ -135,10 +161,64 @@ fn findings(
             ));
         }
     }
+    if found.is_empty() && stories_not_run {
+        return Err(PortError::new(stories_notice(&strip_ansi(&format!(
+            "{}\n{}",
+            output.stdout, output.stderr
+        )))));
+    }
     if found.is_empty() && !output.success() {
         return Err(unreadable(tool, output));
     }
     Ok(found)
+}
+
+/// The line of the `export const <name>` of the story called `title` (Storybook turns
+/// `LoggedIn` into `Logged In`, so spaces and case are ignored), in the stories file `rel`.
+fn story_line(root: &Path, rel: &Path, title: &str) -> Option<u32> {
+    let wanted: String = title
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .flat_map(char::to_lowercase)
+        .collect();
+    let text = std::fs::read_to_string(root.join(rel)).ok()?;
+    let line = text.lines().position(|l| {
+        let Some(rest) = l.trim_start().strip_prefix("export ") else {
+            return false;
+        };
+        let rest = rest
+            .strip_prefix("const ")
+            .or_else(|| rest.strip_prefix("let "))
+            .or_else(|| rest.strip_prefix("function "));
+        rest.is_some_and(|r| {
+            let name: String = r
+                .chars()
+                .take_while(|c| c.is_alphanumeric() || *c == '_' || *c == '$')
+                .flat_map(char::to_lowercase)
+                .collect();
+            name == wanted
+        })
+    })?;
+    u32::try_from(line + 1).ok()
+}
+
+/// Why story tests did not run, for the notice: Playwright's own missing-browser message when
+/// the output has it.
+fn stories_notice(output: &str) -> String {
+    if [
+        "playwright install",
+        "Executable doesn't exist",
+        "browserType.launch",
+    ]
+    .iter()
+    .any(|marker| output.contains(marker))
+    {
+        "story tests skipped: Playwright could not launch its browser (run `npx playwright install`)"
+            .to_owned()
+    } else {
+        "story tests skipped: the Storybook browser project did not start, run vitest on the story yourself"
+            .to_owned()
+    }
 }
 
 /// `line:col` of the first stack frame that points into `file` (an absolute path).
@@ -347,6 +427,105 @@ mod tests {
         );
         assert_eq!(found[0].severity, Severity::Error);
         assert_eq!(found[0].kind, CheckKind::Test);
+    }
+
+    /// A failed story from `vitest related --run --reporter=json` with the Storybook addon (10.6,
+    /// Vitest 5.1, Playwright Chromium); the browser frame is a URL with a query.
+    const STORY_REPORT: &str = r#"{"testResults":[{"assertionResults":[{"ancestorTitles":[],"fullName":"Small","status":"passed","title":"Small","duration":1,"failureMessages":[],"meta":{"storyId":"badge--small","reports":[]}},{"ancestorTitles":[],"fullName":"Capped","status":"failed","title":"Capped","duration":1,"failureMessages":["AssertionError: expected '100' to be '99+' // Object.is equality\n    at play (http://localhost:23315/ws/app/src/badge.stories.js?import&browserv=1795015716165:27:45)"],"meta":{"storyId":"badge--capped"}}],"startTime":1,"endTime":2,"status":"failed","message":"","name":"/ws/app/src/badge.stories.js"}]}"#;
+
+    /// The same run without the Playwright browser: the stories suite fails with no assertion and
+    /// no message, and the output says why.
+    const NO_BROWSER_REPORT: &str = r#"{"testResults":[{"assertionResults":[{"ancestorTitles":[],"fullName":"caps","status":"passed","title":"caps","duration":1,"failureMessages":[],"meta":{}}],"startTime":1,"endTime":2,"status":"passed","message":"","name":"/ws/app/src/label.test.js"},{"assertionResults":[],"startTime":1,"endTime":1,"status":"failed","message":"","name":"/ws/app/src/badge.stories.js"}]}"#;
+
+    const NO_BROWSER_STDERR: &str = "error during close browserType.launch: Executable doesn't exist at /home/u/.cache/ms-playwright/chromium_headless_shell-1255/chrome-headless-shell\n\u{2551} Please run the following command to download new browsers:\n\u{2551}     npx playwright install\n";
+
+    const STORIES: &str = "import { x } from \"y\";\n\nexport default { title: \"Badge\" };\n\nexport const Small = {};\n  export const Capped = {};\nexport const LoggedIn = {};\n";
+
+    #[test]
+    fn a_failed_story_is_a_finding_at_its_export() {
+        let s = Scratch::new();
+        s.write("src/badge.stories.js", STORIES);
+        let found = vitest(&s.0, &out(1, &story_report(&s), "")).unwrap();
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].location, Location::line("src/badge.stories.js", 6));
+        assert_eq!(
+            found[0].message,
+            "Capped: AssertionError: expected '100' to be '99+' // Object.is equality"
+        );
+    }
+
+    /// [`STORY_REPORT`] with the suite path inside `s`.
+    fn story_report(s: &Scratch) -> String {
+        STORY_REPORT.replace("/ws/app", &s.0.to_string_lossy().replace('\\', "/"))
+    }
+
+    #[test]
+    fn story_lines_match_export_names_loosely() {
+        let s = Scratch::new();
+        s.write("a.stories.js", STORIES);
+        let line = |t: &str| story_line(&s.0, Path::new("a.stories.js"), t);
+        assert_eq!(line("Small"), Some(5));
+        assert_eq!(line("Logged In"), Some(7));
+        s.write(
+            "b.stories.js",
+            "export const With_Under = {};\nexport const $Dollar = {};\n",
+        );
+        let line_b = |t: &str| story_line(&s.0, Path::new("b.stories.js"), t);
+        assert_eq!(line_b("With_Under"), Some(1));
+        assert_eq!(line_b("$Dollar"), Some(2));
+        assert_eq!(line("Sma"), None);
+        assert_eq!(line("Missing"), None);
+        assert_eq!(
+            story_line(&s.0, Path::new("gone.stories.js"), "Small"),
+            None
+        );
+    }
+
+    #[test]
+    fn a_story_without_a_findable_export_is_file_level() {
+        let found = vitest(Path::new(ROOT), &out(1, &rooted(STORY_REPORT), "")).unwrap();
+        assert_eq!(found[0].location, Location::file("src/badge.stories.js"));
+    }
+
+    #[test]
+    fn a_missing_browser_is_a_notice_not_a_finding() {
+        let e = vitest(
+            Path::new(ROOT),
+            &out(1, &rooted(NO_BROWSER_REPORT), NO_BROWSER_STDERR),
+        )
+        .unwrap_err();
+        assert!(e.to_string().contains("npx playwright install"), "{e}");
+        let e = vitest(Path::new(ROOT), &out(1, &rooted(NO_BROWSER_REPORT), "")).unwrap_err();
+        assert!(e.to_string().contains("did not start"), "{e}");
+    }
+
+    #[test]
+    fn real_findings_win_over_the_story_notice() {
+        let both = NO_BROWSER_REPORT.replace(
+            r#""status":"passed","message":"","name":"/ws/app/src/label.test.js""#,
+            r#""status":"failed","message":"","name":"/ws/app/src/label.test.js""#,
+        );
+        let both = both.replace(
+            r#""fullName":"caps","status":"passed""#,
+            r#""fullName":"caps","status":"failed""#,
+        );
+        let found = vitest(Path::new(ROOT), &out(1, &rooted(&both), NO_BROWSER_STDERR)).unwrap();
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].location.path, Path::new("src/label.test.js"));
+    }
+
+    #[test]
+    fn a_story_suite_with_a_message_is_a_finding() {
+        let broken = NO_BROWSER_REPORT.replace(
+            r#""status":"failed","message":"","name":"/ws/app/src/badge.stories.js""#,
+            r#""status":"failed","message":"Error: Cannot find module './nope.js' (3:9)","name":"/ws/app/src/badge.stories.js""#,
+        );
+        let found = vitest(Path::new(ROOT), &out(1, &rooted(&broken), "")).unwrap();
+        assert_eq!(found.len(), 1);
+        assert_eq!(
+            found[0].location,
+            Location::at("src/badge.stories.js", 3, 9)
+        );
     }
 
     #[test]

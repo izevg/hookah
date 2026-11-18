@@ -45,7 +45,10 @@ impl BackgroundSpawner {
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null());
+        #[cfg(unix)]
         detach(&mut command);
+        #[cfg(windows)]
+        detach_from_console(&mut command);
         command
     }
 }
@@ -53,11 +56,6 @@ impl BackgroundSpawner {
 #[cfg(unix)]
 fn detach(command: &mut Command) {
     std::os::unix::process::CommandExt::process_group(command, 0);
-}
-
-#[cfg(windows)]
-fn detach(command: &mut Command) {
-    detach_from_console(command);
 }
 
 /// Windows only; not covered by mutation testing, which runs on Unix (`.cargo/mutants.toml`).
@@ -70,9 +68,6 @@ fn detach_from_console(command: &mut Command) {
         DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP,
     );
 }
-
-#[cfg(not(any(unix, windows)))]
-fn detach(_: &mut Command) {}
 
 impl BaselineSpawner for BackgroundSpawner {
     fn spawn(&self, root: &Path, session: &str) -> Result<(), PortError> {

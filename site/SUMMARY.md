@@ -5,6 +5,7 @@
 # Install
 
 - [Let your agent install it](setup/agents.md)
+- [Uninstall](setup/uninstall.md)
 
 # Set up your harness
 

@@ -8,6 +8,9 @@
 #   --version VERSION   install this release instead of the latest (same as HOOKAH_VERSION)
 #   --dir DIR           install into DIR (same as HOOKAH_INSTALL_DIR; default: $HOME/.local/bin)
 #   --dry-run           resolve the version and print what would happen; download and install nothing
+#   --uninstall         remove hookah instead: first `hookah uninstall --all` (the harness configs),
+#                       then the binary from the install dir
+#   --keep-config       with --uninstall: leave the harness configs alone, remove only the binary
 #   -h, --help          show this help
 #
 # Environment:
@@ -17,7 +20,9 @@
 #   HOOKAH_API_URL         the releases API base, used to find the latest version (same purpose)
 #
 # It downloads the archive and SHA256SUMS, verifies the checksum, and installs one binary.
-# No sudo, nothing outside the install directory.
+# No sudo, nothing outside the install directory. The installer never edits your shell profile,
+# so there is no PATH entry to undo. With --uninstall it removes that one binary, after it has
+# run `hookah uninstall --all` to take hookah out of your harness configs while it still can.
 
 set -eu
 
@@ -39,10 +44,13 @@ usage() {
 hookah installer for Linux and macOS.
 
 Usage: install.sh [--version VERSION] [--dir DIR] [--dry-run]
+       install.sh --uninstall [--dir DIR] [--keep-config] [--dry-run]
 
   --version VERSION   install this release instead of the latest (or set HOOKAH_VERSION)
   --dir DIR           install into DIR (or set HOOKAH_INSTALL_DIR; default: $HOME/.local/bin)
   --dry-run           print what would happen; download and install nothing
+  --uninstall         remove hookah: run `hookah uninstall --all`, then delete the binary
+  --keep-config       with --uninstall: do not touch the harness configs, only delete the binary
   -h, --help          show this help
 
 The archive is verified against the release's SHA256SUMS before anything is installed.
@@ -122,9 +130,37 @@ resolve_latest() {
   version="${tag#v}"
 }
 
+# uninstall: remove hookah from the harness configs first (the binary does that, so it must still
+# be there: hooks left pointing at a deleted binary fail on every agent edit), then the binary.
+uninstall() {
+  bin="$dir/hookah"
+  if [ ! -e "$bin" ] && [ ! -L "$bin" ]; then
+    say "nothing to uninstall: $bin does not exist"
+    say "hookah entries may remain in harness configs; see https://izevg.github.io/hookah/setup/uninstall.html"
+    return 0
+  fi
+  if [ "$keep_config" = 1 ]; then
+    say "--keep-config: harness configs left alone; hookah entries in them will fail until removed"
+  elif [ "$dry_run" = 1 ]; then
+    say "dry run: would run: $bin uninstall --all"
+  elif [ -x "$bin" ]; then
+    say "removing hookah from your harness configs: $bin uninstall --all"
+    "$bin" uninstall --all || say "warning: hookah uninstall --all did not finish; see its output above and https://izevg.github.io/hookah/setup/uninstall.html"
+  fi
+  if [ "$dry_run" = 1 ]; then
+    say "dry run: would remove $bin"
+    return 0
+  fi
+  rm -f "$bin" || err "cannot remove $bin"
+  say "removed $bin"
+  say "projects you set up with --scope project, other than the current directory, still hold their entries; see https://izevg.github.io/hookah/setup/uninstall.html"
+}
+
 version="${HOOKAH_VERSION:-}"
 dir="${HOOKAH_INSTALL_DIR:-$HOME/.local/bin}"
 dry_run=0
+uninstall_mode=0
+keep_config=0
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -150,6 +186,14 @@ while [ $# -gt 0 ]; do
       dry_run=1
       shift
       ;;
+    --uninstall)
+      uninstall_mode=1
+      shift
+      ;;
+    --keep-config)
+      keep_config=1
+      shift
+      ;;
     -h | --help)
       usage
       exit 0
@@ -157,6 +201,11 @@ while [ $# -gt 0 ]; do
     *) err "unknown option: $1 (try --help)" ;;
   esac
 done
+
+if [ "$uninstall_mode" = 1 ]; then
+  uninstall
+  exit 0
+fi
 
 have uname || err "uname is required"
 detect_target
@@ -228,3 +277,4 @@ esac
 say "next steps:"
 say "  hookah setup --detect      # which agent harnesses are installed"
 say "  hookah setup <harness>     # claude, codex, cursor, qoder, kimi, opencode, hermes, pi, or openclaw"
+say "to remove hookah later: install.sh --uninstall (see https://izevg.github.io/hookah/setup/uninstall.html)"

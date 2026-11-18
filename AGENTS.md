@@ -87,7 +87,8 @@ crates/
   domain/        core model, pure, no I/O, no async, no external crates beyond std (+ thiserror)
   application/   use cases; depends on domain only; defines ports as traits
   adapters/      driven adapters: filesystem, process runner, cache, toolchain detectors
-  harness/       driving adapters: one module per agent harness (hook payload in, verdict out)
+  harness/       driving adapters: one module per agent harness (hook payload in, verdict out),
+                 grouped by mechanism: hooks/ (command hooks), plugins/ (code plugins, extensions)
   setup/         install-time adapter: writes and merges each harness's hook config files
   cli/           binary and composition root; the only place that wires adapters to ports
 ```

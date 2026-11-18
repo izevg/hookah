@@ -8,6 +8,11 @@ of the harness configs (JSON, TOML, YAML, the opencode, Hermes, and OpenClaw plu
 files of a multi-file plugin (`hookah plugin orca --out`), which keeps
 config-file editing out of the crates that run on every hook call. The rules themselves are in [AGENTS.md](../AGENTS.md#architecture-ddd--clean--hexagonal).
 
+The `harness` crate groups its modules by integration mechanism: `hooks/` holds the command-hook
+harnesses (`claude`, `codex`, `cursor`, `kimi`, `qoder`), and `plugins/` holds the code plugins and
+extensions (`hermes`, `openclaw`, `opencode`, `orca`, `pi`). `lib.rs` re-exports every harness at
+the crate root, so `hookah_harness::claude` and `hookah_harness::plugins::pi` both resolve.
+
 ## Request flow
 
 Check kinds: `Format`, `Lint`, `Typecheck` (tsc, mypy), `Architecture` (dependency-cruiser,

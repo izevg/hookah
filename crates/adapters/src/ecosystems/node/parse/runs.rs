@@ -483,7 +483,7 @@ mod tests {
 
     #[test]
     fn a_story_without_a_findable_export_is_file_level() {
-        let found = vitest(Path::new(ROOT), &out(1, &rooted(STORY_REPORT), "")).unwrap();
+        let found = vitest(Path::new(ROOT), &out(1, STORY_REPORT, "")).unwrap();
         assert_eq!(found[0].location, Location::file("src/badge.stories.js"));
     }
 
@@ -491,11 +491,11 @@ mod tests {
     fn a_missing_browser_is_a_notice_not_a_finding() {
         let e = vitest(
             Path::new(ROOT),
-            &out(1, &rooted(NO_BROWSER_REPORT), NO_BROWSER_STDERR),
+            &out(1, NO_BROWSER_REPORT, NO_BROWSER_STDERR),
         )
         .unwrap_err();
         assert!(e.to_string().contains("npx playwright install"), "{e}");
-        let e = vitest(Path::new(ROOT), &out(1, &rooted(NO_BROWSER_REPORT), "")).unwrap_err();
+        let e = vitest(Path::new(ROOT), &out(1, NO_BROWSER_REPORT, "")).unwrap_err();
         assert!(e.to_string().contains("did not start"), "{e}");
     }
 
@@ -509,7 +509,7 @@ mod tests {
             r#""fullName":"caps","status":"passed""#,
             r#""fullName":"caps","status":"failed""#,
         );
-        let found = vitest(Path::new(ROOT), &out(1, &rooted(&both), NO_BROWSER_STDERR)).unwrap();
+        let found = vitest(Path::new(ROOT), &out(1, &both, NO_BROWSER_STDERR)).unwrap();
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].location.path, Path::new("src/label.test.js"));
     }
@@ -520,7 +520,7 @@ mod tests {
             r#""status":"failed","message":"","name":"/ws/app/src/badge.stories.js""#,
             r#""status":"failed","message":"Error: Cannot find module './nope.js' (3:9)","name":"/ws/app/src/badge.stories.js""#,
         );
-        let found = vitest(Path::new(ROOT), &out(1, &rooted(&broken), "")).unwrap();
+        let found = vitest(Path::new(ROOT), &out(1, &broken, "")).unwrap();
         assert_eq!(found.len(), 1);
         assert_eq!(
             found[0].location,

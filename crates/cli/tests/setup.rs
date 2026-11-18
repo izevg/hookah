@@ -8,6 +8,8 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+mod support;
+
 const HOOKAH: &str = env!("CARGO_BIN_EXE_hookah");
 
 struct Sandbox {
@@ -281,13 +283,10 @@ fn setup_never_writes_outside_the_sandbox() {
                 else {
                     continue;
                 };
-                // Canonical on both sides: a Windows temp dir may be spelled with 8.3 short names.
-                let path = sb.root.join("project").join(path);
-                let path = fs::canonicalize(&path).unwrap_or(path);
-                let root = fs::canonicalize(&sb.root).unwrap();
                 assert!(
-                    path.starts_with(&root),
-                    "{harness} --scope {scope} wrote {path:?}, outside {root:?}"
+                    support::is_inside(&sb.root, &sb.root.join("project"), path),
+                    "{harness} --scope {scope} wrote {path}, outside {:?}",
+                    sb.root
                 );
             }
         }

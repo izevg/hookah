@@ -8,6 +8,8 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+mod support;
+
 const HOOKAH: &str = env!("CARGO_BIN_EXE_hookah");
 
 /// The harnesses, where `hookah setup` writes by default, and an unrelated config of the user's
@@ -496,12 +498,7 @@ fn uninstall_never_touches_anything_outside_the_sandbox() {
         .unwrap()
         .join(format!("uninstall-canary-{}", std::process::id()));
     write(&canary.join("kept"), "x");
-    let root = fs::canonicalize(&sb.root).unwrap();
-    let inside = |reported: &str| {
-        let path = sb.root.join("project").join(reported);
-        let path = fs::canonicalize(&path).unwrap_or(path);
-        path.starts_with(&root)
-    };
+    let inside = |reported: &str| support::is_inside(&sb.root, &sb.root.join("project"), reported);
     for harness in [
         "claude", "codex", "qoder", "kimi", "cursor", "opencode", "hermes", "pi", "openclaw",
     ] {

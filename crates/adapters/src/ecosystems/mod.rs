@@ -143,6 +143,13 @@ impl ToolchainDetector for Ecosystems {
         baseline::targets(project, tool)
     }
 
+    fn specialize(&self, project: &Project, tool: &Tool, targets: &[String]) -> Vec<Tool> {
+        match project.ecosystem {
+            Ecosystem::Node => self.node.specialize(project, tool, targets),
+            Ecosystem::Java | Ecosystem::Rust | Ecosystem::Python => vec![tool.clone()],
+        }
+    }
+
     fn parse(
         &self,
         project: &Project,
@@ -168,6 +175,28 @@ mod tests {
             root: "/r".into(),
             ecosystem,
             manifests: vec![],
+        }
+    }
+
+    #[test]
+    fn every_ecosystem_keeps_a_tool_it_does_not_specialize() {
+        use hookah_domain::toolchain::{CheckKind, CommandSpec};
+        use std::time::Duration;
+
+        let tool = Tool {
+            name: "x".into(),
+            kind: CheckKind::Lint,
+            command: CommandSpec::new("x", vec![], "/r", Duration::from_secs(1)),
+        };
+        let reg = Ecosystems::from_env();
+        for ecosystem in [
+            Ecosystem::Java,
+            Ecosystem::Rust,
+            Ecosystem::Node,
+            Ecosystem::Python,
+        ] {
+            let out = reg.specialize(&project(ecosystem), &tool, &["a".into()]);
+            assert_eq!(out, std::slice::from_ref(&tool), "{ecosystem:?}");
         }
     }
 

@@ -1,0 +1,10 @@
+diff --git a/node/vite.config.ts b/node/vite.config.ts
+index a4dbb22..b88b98d 100644
+--- a/node/vite.config.ts
++++ b/node/vite.config.ts
+@@ -6,3 +6,5 @@ export default {
+   port: "3000" as unknown as number,
+   build: { target: 2023 as string },
+ };
++
++export const retries: string = 3;

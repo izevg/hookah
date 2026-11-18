@@ -30,8 +30,8 @@ extensions `ts tsx js jsx mjs cjs mts cts` are checked.
 | format       | prettier   | otherwise, `prettier` present          | `prettier --write --ignore-unknown <files>`                                                                    | 30 s    |
 | lint         | biome      | as for format, Biome 1.9 or newer      | `biome lint --reporter=json --no-errors-on-unmatched --max-diagnostics=200 <files>`                            | 60 s    |
 | lint         | eslint     | flat or legacy config found            | `eslint --format json <files>`                                                                                 | 60 s    |
-| typecheck    | tsc        | `typescript` and a `tsconfig.json`     | `tsc --noEmit --pretty false -p tsconfig.json --incremental --tsBuildInfoFile <cache>/tsc.tsbuildinfo`          | 120 s   |
-| typecheck    | tsc        | same, with project `references`        | `tsc -b --pretty false tsconfig.json`                                                                          | 120 s   |
+| typecheck    | tsc        | `typescript` and a `tsconfig.json`     | `tsc --noEmit --pretty false -p tsconfig.json --composite false --incremental --tsBuildInfoFile <cache>/tsc.tsbuildinfo` | 120 s   |
+| typecheck    | tsc        | same, with project `references`        | the same, `-p <owning tsconfig>` for each project that owns the edited file                                    | 120 s   |
 | architecture | depcruise  | `dependency-cruiser` and a `.dependency-cruiser.{js,cjs,mjs,json}` | `depcruise --config <abs config> --output-type json <files>`                       | 60 s    |
 | unused       | knip       | `knip` declared and installed (stop phase only) | `knip --reporter json --no-progress --no-exit-code --no-config-hints [--workspace <package dir>]`, cwd = workspace root | 120 s |
 | test         | vitest     | `vitest` present (preferred)           | `vitest related --run --reporter=json --outputFile=<cache>/vitest-report.json --passWithNoTests --exclude=<heavy glob>... <files>` | 300 s |
@@ -58,14 +58,36 @@ flags are dropped.
   for it, and the only missing-tool notice is the one for mutation testing.
 
 **Typecheck.** `tsc` checks the whole program, so errors in other files are reported too: an edit
-can break its callers. Plain projects run `--noEmit` with the incremental state in the cache
-(TypeScript 4.0 or newer). A tsconfig with `references` (including a solution-style
-`"files": []` root) runs `tsc -b`: a plain `-p` run fails with `TS6305` for every import of a
-referenced project that is not built, and checks nothing for a solution root. Build mode is
-incremental by itself and rejects `--noEmit` for referenced projects (`TS6310`), so it writes the
-build outputs the projects declare (`outDir`, `*.tsbuildinfo`), exactly like the project's own
-`tsc -b`. Only the project's `tsconfig.json` is considered; test-only configs such as
-`tsconfig.spec.json` are not.
+can break its callers. The command never writes into the project: `--noEmit` writes no outputs,
+`--composite false` drops what a composite project forces (declarations, a `tsconfig.tsbuildinfo`
+next to the outputs, the "every file must be listed" rule), and the incremental state goes to
+`--tsBuildInfoFile <cache>/...` (or `--incremental false` without a cache directory). It needs
+TypeScript 4.0 or newer, and was checked with 5.4, 5.9, 6.0, and 7.0.
+
+A tsconfig with `references` (a solution-style `"files": []` root, as in the Vite template) is
+not built: `tsc -b` writes the declared outputs of every referenced project, and rejects
+`--noEmit` (`TS5094` before TypeScript 5.6, `TS6310` since) while still writing `*.tsbuildinfo`.
+Instead the edited file picks its project. The references are walked recursively, and each config
+owns the files its `files`, `include`, and `exclude` select, with `extends` followed (relative
+files, packages in `node_modules`, and lists), the `node_modules`, `bower_components`,
+`jspm_packages`, and `outDir` defaults, and JavaScript counted with `allowJs`. `tsc -p` then runs
+for each owning project, and for each project that references an owner (an API change breaks its
+users): an edit in `src/` checks `tsconfig.app.json` only, and the errors of `tsconfig.node.json`
+(the Vite config) stay out of it. A file no project owns runs nothing. At
+most eight projects run, one incremental state file each. The whole-project baseline runs every
+project that lists files.
+
+A project that references another composite project would see that project's declarations, which
+exist only after a build: a plain `-p` run reports `TS6305` for each such import and types it as
+`any`. So a project with references is checked through a small overlay config that hookah writes
+to its cache directory (never into the project). It extends the project's config, drops the
+`references` and `composite`, and sets `rootDir` and `typeRoots` explicitly, which otherwise
+default to the config's location. The imports of the referenced projects then resolve to their
+sources and are checked in full, so an API change in a referenced project is reported in the
+project that uses it. Without a writable cache directory the plain `-p` run stands, and hookah
+drops its `TS6305` diagnostics, so the project's own code is checked and those imports are not.
+Only the project's `tsconfig.json` is the entry point; test-only configs such as
+`tsconfig.spec.json` are found when it references them.
 
 **Unused code.** Knip builds the import graph of the whole project (and, in a workspace, of
 all packages), which takes seconds, so it runs in the **stop phase only**, never after a single
@@ -93,10 +115,11 @@ direct dependent when one of `dependencies`, `devDependencies`, `peerDependencie
 or exact version the package's own `version` satisfies.
 
 - Typecheck: a workspace-root `tsconfig.json` whose `references` include the package or a
-  dependent is a solution config, and one `tsc -b tsconfig.json` from the workspace root runs
-  instead of the per-package command. Otherwise the package's own command runs plus one per
-  dependent that has a `tsconfig.json` (`tsc -b` with references, else `tsc --noEmit`, without
-  incremental state), each from the dependent's directory.
+  dependent is a solution config, checked from the workspace root instead of the per-package
+  command: the projects that own the edited file, plus the projects of the dependents. Otherwise
+  the package's own command runs plus one `tsc --noEmit -p tsconfig.json` per dependent that has a
+  `tsconfig.json`, each from the dependent's directory (a dependent with references runs all its
+  projects). Nothing is built or emitted.
 - Test: every dependent with a test runner gets its own `vitest related` / `jest
   --findRelatedTests` run from its directory, so the tests of a dependent that import the
   changed files run in the stop phase. The changed files are passed as absolute paths, which
@@ -210,7 +233,9 @@ directory below the project root. Everything else is source.
 
 **Known gaps.** The nearest `package.json` wins, so a marker file such as `src/esm/package.json`
 (`{"type":"module"}`) becomes a project with no tools. Nested ESLint or Biome configs are found
-only from the package up to the workspace root. `tsc -b` writes build outputs.
+only from the package up to the workspace root. The owning tsconfig is found from the files and
+`include`/`exclude` patterns alone; a package that is imported through its build output (`dist/*.d.ts`)
+needs that output to exist, as it does for any plain `tsc` run.
 
 **Windows.** The tool is the `node_modules\.bin\<tool>.cmd` shim that npm, pnpm, and Yarn write
 (`<tool>.exe` is the fallback). Rust's standard library runs a `.cmd` through `cmd.exe` and

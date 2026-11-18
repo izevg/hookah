@@ -34,7 +34,7 @@ samples/
         setup.sh               optional, runs once per sample
         <NN-name>/
           change.patch         unified diff, applied with `git apply` at the project root
-          event                one event per line: `start`, `edit <project-relative path>`, `stop`
+          event                one event per line: `start`, `edit <project-relative path>`, `stop`, `clean`
           base.patch           optional: the state the session starts from, committed first
           expected.out         normalized output of the hook call
           requires             optional, see below
@@ -56,6 +56,9 @@ directory, dotfiles aside), including the projects inside `project/`.
    - `start` becomes `SessionStart`.
    - `edit <path>` becomes `PostToolUse` + `Edit` with the absolute `file_path`.
    - `stop` becomes `Stop` with `stop_hook_active: false`.
+   - `clean` is not a hook call: it fails the scenario when the project holds any changed or new
+     file that `change.patch` does not touch, that is, when a tool wrote into the project. It
+     does not replace the last answer, so put it after the event whose output is recorded.
 3. Every payload of a scenario carries the same session id, `sample-<scenario>`, when the scenario
    has a `start` line, and no session id otherwise (so scenarios without `start` involve no
    baseline). The runner sets `HOOKAH_BASELINE_FOREGROUND=1`, so the baseline job finishes before
@@ -134,11 +137,17 @@ is installed on the machine.
 | | `02-prettier-rewrite` | edit | Prettier rewrites the file; the agent is told to re-read it |
 | | `03-failing-test-stop` | stop | a failing Jest test fails the stop; the missing Stryker notice carries the `npm i -D` hint |
 | | `04-test-edit-no-stryker` | stop | a test edit without Stryker installed: passes, with a `tool not installed` warning carrying the `npm i -D` hint |
-| `node/pnpm-workspace` | `01-lib-api-break` | edit | a `lib` type change that breaks `app`: the workspace solution `tsc -b` also covers the dependent, so the break is reported in `app` |
+| `node/pnpm-workspace` | `01-lib-api-break` | edit | a `lib` type change that breaks `app`: the workspace solution also checks the dependent's project, so the break is reported in `app` |
 | | `02-lib-api-break-stop` | stop | the same change at stop: the `lib` tests, the `app` tests (run from `packages/app`), and the `app` type error are all reported |
-| | `03-app-type-error` | edit | a type error in `app` against `lib` through `tsc -b`, shown with its workspace-relative path |
+| | `03-app-type-error` | edit | a type error in `app` against `lib` through the solution config, shown with its workspace-relative path |
 | | `04-old-type-error-hidden` | start, edit | `base.patch` leaves a `tsc` error in the untouched `app/src/extra.ts`; after `start`, a comment edit in `lib` is silent |
-| | `05-old-type-error-without-start` | edit | the same without `start`: `tsc -b` covers the dependent, so the old error is reported |
+| | `05-old-type-error-without-start` | edit | the same without `start`: the dependent's project is checked too, so the old error is reported |
+| `node/vite-references` | `01-app-type-error` | edit | a Vite-style solution tsconfig: an error in `src/` is reported from `tsconfig.app.json` only, the pre-existing errors of `tsconfig.node.json` stay out, and `clean` proves nothing was written into the project |
+| | `02-node-config-new-error` | start, edit | a new error in `node/vite.config.ts` is reported by the node project; its old errors are in the baseline |
+| | `03-app-clean-edit` | edit | a clean edit that imports the referenced `lib` project is silent: no `TS6305`, and no files written |
+| | `04-file-in-no-project` | edit | `scripts/seed.ts` is in no project, so no typecheck runs |
+| | `05-stop-phase` | start, stop | the same app error at the stop, from the owning project only |
+| | `06-lib-api-break` | edit | an edit in the referenced `lib` project breaks `src/cart.ts`: the app project that references it is checked too, through its sources |
 | `node/storybook-vitest` | `01-broken-component-stop` | stop | a component change breaks a story: the failed story is reported at its `export const` in the stories file; skipped without a Playwright Chromium |
 | | `02-unrelated-edit-stop` | stop | an edit no story imports: only the unit test runs; the broken `Tag` story is never run, so the stop is silent; skipped without Chromium |
 | | `03-story-edit-stop` | stop | a story edit: only that stories file runs (the untouched, broken `Tag` story does not); skipped without Chromium |

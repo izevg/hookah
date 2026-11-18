@@ -1,0 +1,13 @@
+{
+  "compilerOptions": {
+    "composite": true,
+    "outDir": "./out",
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "skipLibCheck": true,
+    "types": []
+  },
+  "include": ["."]
+}

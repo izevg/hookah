@@ -1,0 +1,10 @@
+diff --git a/src/cart.ts b/src/cart.ts
+index 4baee1a..ca3a22e 100644
+--- a/src/cart.ts
++++ b/src/cart.ts
+@@ -3,3 +3,5 @@ import { cents } from "../lib/money";
+ export function total(prices: number[]): number {
+   return prices.reduce((sum, price) => sum + cents(price), 0);
+ }
++
++export const label: string = total([1]);

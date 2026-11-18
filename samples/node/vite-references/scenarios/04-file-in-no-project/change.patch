@@ -1,0 +1,8 @@
+diff --git a/scripts/seed.ts b/scripts/seed.ts
+index d4709b6..228137a 100644
+--- a/scripts/seed.ts
++++ b/scripts/seed.ts
+@@ -1 +1,3 @@
+ export const seed: number = 1;
++
++export const label: string = 1;

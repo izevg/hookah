@@ -74,6 +74,16 @@ pub trait ToolchainDetector {
         vec![".".to_string()]
     }
 
+    /// The commands that run `tool` for `targets` (relative to the project root, or `.` for the
+    /// whole project), where `tool` came from [`ToolchainDetector::detect`]. Default: `tool`
+    /// itself. An adapter overrides this when the right command depends on which files changed:
+    /// a TypeScript project with references checks only the tsconfig that owns them. An empty
+    /// answer means nothing applies, and the tool is skipped.
+    fn specialize(&self, project: &Project, tool: &Tool, targets: &[String]) -> Vec<Tool> {
+        let _ = (project, targets);
+        vec![tool.clone()]
+    }
+
     /// Turns the output of `tool` into findings whose paths are relative to the project root.
     /// Returns an error when the output cannot be understood (for example, the tool crashed).
     fn parse(
@@ -95,4 +105,51 @@ pub trait ChangeSource {
 
     /// Absolute paths of all files changed versus `HEAD`, plus untracked files, under `root`.
     fn changed_files(&self, root: &Path) -> Result<Vec<PathBuf>, PortError>;
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use hookah_domain::project::Ecosystem;
+    use hookah_domain::toolchain::{CheckKind, CommandSpec};
+
+    use super::*;
+
+    /// A detector that overrides nothing optional.
+    struct Plain;
+
+    impl ToolchainDetector for Plain {
+        fn detect(&self, _: &Project) -> Result<Toolchain, PortError> {
+            Ok(Toolchain::new(vec![]))
+        }
+
+        fn select_tests(&self, _: &Project, _: &[PathBuf]) -> Result<TestSelection, PortError> {
+            Ok(TestSelection::None)
+        }
+
+        fn parse(
+            &self,
+            _: &Project,
+            _: &Tool,
+            _: &ProcessOutput,
+        ) -> Result<Vec<Finding>, PortError> {
+            Ok(vec![])
+        }
+    }
+
+    #[test]
+    fn a_tool_is_specialized_to_itself_by_default() {
+        let tool = Tool {
+            name: "t".into(),
+            kind: CheckKind::Lint,
+            command: CommandSpec::new("t", vec![], "/r", Duration::from_secs(1)),
+        };
+        let project = Project {
+            root: "/r".into(),
+            ecosystem: Ecosystem::Rust,
+            manifests: vec![],
+        };
+        assert_eq!(Plain.specialize(&project, &tool, &["a".into()]), [tool]);
+    }
 }

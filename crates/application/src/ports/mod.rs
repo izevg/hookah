@@ -74,6 +74,8 @@ pub(crate) mod fakes {
         pub mutant_calls: RefCell<Vec<(Vec<PathBuf>, Vec<PathBuf>)>>,
         /// Findings returned by `parse`, keyed by tool name.
         pub findings: HashMap<String, Vec<Finding>>,
+        /// What `specialize` returns, keyed by tool name; other tools stay as they are.
+        pub specialized: HashMap<String, Vec<Tool>>,
         pub run_fails: Vec<String>,
         pub timeouts: Vec<String>,
         pub calls: RefCell<Vec<String>>,
@@ -110,6 +112,7 @@ pub(crate) mod fakes {
                 test_files: vec![],
                 mutant_calls: RefCell::new(vec![]),
                 findings: HashMap::new(),
+                specialized: HashMap::new(),
                 run_fails: vec![],
                 timeouts: vec![],
                 calls: RefCell::new(vec![]),
@@ -226,6 +229,13 @@ pub(crate) mod fakes {
                 return Err(PortError::new("select failed"));
             }
             Ok(self.selection.clone())
+        }
+
+        fn specialize(&self, _: &Project, tool: &Tool, _: &[String]) -> Vec<Tool> {
+            self.specialized
+                .get(&tool.name)
+                .cloned()
+                .unwrap_or_else(|| vec![tool.clone()])
         }
 
         fn parse(

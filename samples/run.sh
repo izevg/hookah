@@ -208,6 +208,19 @@ for sample in "$here"/*/*/; do
           break
         }
       fi
+      if [ "$event" = clean ]; then
+        # `clean` asserts that hookah has written nothing into the project: every changed or new
+        # file must be one that `change.patch` itself touches.
+        extra=$(cd "$copy" && git status --porcelain --untracked-files=all | sed 's/^...//' |
+          grep -vxF -f <(git apply --numstat "$s/change.patch" | cut -f3) || true)
+        if [ -n "$extra" ]; then
+          echo "FAIL  $name (hookah wrote into the project)"
+          echo "$extra"
+          ok=0
+          break
+        fi
+        continue
+      fi
       run_hook "$copy" "$event" "$actual" "$session" || {
         echo "FAIL  $name (bad event)"
         ok=0

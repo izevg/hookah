@@ -72,6 +72,12 @@ impl ToolchainDetector for NodeEcosystem {
         ))
     }
 
+    fn specialize(&self, project: &Project, tool: &Tool, targets: &[String]) -> Vec<Tool> {
+        detect::typecheck::specialize(&project.root, tool, targets, || {
+            project_cache_dir(&project.root).ok()
+        })
+    }
+
     fn parse(
         &self,
         project: &Project,
@@ -79,5 +85,30 @@ impl ToolchainDetector for NodeEcosystem {
         output: &ProcessOutput,
     ) -> Result<Vec<Finding>, PortError> {
         parse::parse(project, tool, output)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use hookah_domain::toolchain::{CheckKind, CommandSpec};
+
+    use super::*;
+
+    #[test]
+    fn a_tool_that_is_not_tsc_is_kept_as_it_is() {
+        let tool = Tool {
+            name: "eslint".into(),
+            kind: CheckKind::Lint,
+            command: CommandSpec::new("eslint", vec![], "/r", Duration::from_secs(1)),
+        };
+        let project = Project {
+            root: "/r".into(),
+            ecosystem: hookah_domain::project::Ecosystem::Node,
+            manifests: vec![],
+        };
+        let out = NodeEcosystem::new().specialize(&project, &tool, &["a.ts".into()]);
+        assert_eq!(out, [tool]);
     }
 }

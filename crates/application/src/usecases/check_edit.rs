@@ -196,6 +196,25 @@ mod tests {
     }
 
     #[test]
+    fn a_tool_the_detector_specializes_runs_as_each_command_it_returns() {
+        let mut w = World::new("/r/Cargo.toml", vec![tool("types", CheckKind::Typecheck)]);
+        w.specialized.insert(
+            "types".into(),
+            vec![
+                tool("types-a", CheckKind::Typecheck),
+                tool("types-b", CheckKind::Typecheck),
+            ],
+        );
+        run(&w);
+        assert_eq!(w.calls(), ["types-a src/a.rs", "types-b src/a.rs"]);
+        // Nothing applies: the tool is skipped, and that is not a failure.
+        w.calls.borrow_mut().clear();
+        w.specialized.insert("types".into(), vec![]);
+        assert_eq!(run(&w), Outcome::pass());
+        assert!(w.calls().is_empty());
+    }
+
+    #[test]
     fn unused_code_never_runs_in_the_edit_phase() {
         let w = World::new("/r/Cargo.toml", vec![tool("unused", CheckKind::Unused)]);
         assert_eq!(run(&w), Outcome::pass());

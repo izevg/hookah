@@ -3,10 +3,12 @@
 //! - `BaselineStore`: the baseline of one (project root, agent session) pair and its lifecycle:
 //!   not started, in progress, failed, or ready.
 //! - `BaselineSpawner`: starts the job that computes a baseline without making the caller wait.
+//! - `StatusStore`: the latest check status of a project.
 
 use std::path::Path;
 
 use hookah_domain::finding::baseline::Baseline;
+use hookah_domain::status::{RecordedStatus, Status};
 
 use crate::error::PortError;
 
@@ -45,4 +47,13 @@ pub trait BaselineStore {
 pub trait BaselineSpawner {
     /// Starts the job. An error means it could not be started.
     fn spawn(&self, root: &Path, session: &str) -> Result<(), PortError>;
+}
+
+/// Remembers the latest check status of each project, for tools that want to show it.
+pub trait StatusStore {
+    /// Stores `status` as the latest of the project at `root`, stamped with the current time.
+    fn record(&self, root: &Path, status: &Status) -> Result<(), PortError>;
+
+    /// The latest status of the project at `root`. An unreadable record is `None`.
+    fn latest(&self, root: &Path) -> Option<RecordedStatus>;
 }

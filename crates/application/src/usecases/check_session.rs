@@ -17,10 +17,11 @@ use hookah_domain::finding::Severity;
 use hookah_domain::project::locate_project;
 use hookah_domain::session::{ChangeSet, ChangedLines, FileRole, Phase, TestRun, mutation_applies};
 use hookah_domain::toolchain::{CheckKind, MutationSelection, TestSelection};
-use hookah_domain::verdict::ReportingFilter;
+use hookah_domain::verdict::{ReportingFilter, Verdict};
 
-use super::baseline::lookup;
+use super::baseline::{lookup, probe};
 use super::request::{Outcome, RunLog, StopRequest};
+use super::status::record;
 use crate::ports::Ports;
 
 /// Runs the static checks, related tests, and mutation testing for everything changed in the
@@ -60,7 +61,9 @@ impl<'a> CheckSession<'a> {
             }
         }
 
+        let mut checked = false;
         for group in set.groups() {
+            checked = true;
             let project = &group.project;
             let toolchain = match self.ports.detector.detect(project) {
                 Ok(t) => t,
@@ -161,9 +164,30 @@ impl<'a> CheckSession<'a> {
             }
 
             log.filter(&filter, &project.root, &request.display_root);
+            let project_outcome = log.clone().finish(self.report_limit);
+            record(
+                &self.ports,
+                &project.root,
+                Phase::Stop,
+                &project_outcome.verdict,
+            );
             total.absorb(log);
         }
+        if !checked {
+            self.record_clean(&request.root);
+        }
         total.finish(self.report_limit)
+    }
+
+    /// Nothing changed: the project at `root` is clean, which replaces an older failure.
+    fn record_clean(&self, root: &std::path::Path) {
+        let probe = probe(root);
+        let Ok(manifests) = self.ports.locator.manifests_above(&probe) else {
+            return;
+        };
+        if let Some(project) = locate_project(&probe, &manifests) {
+            record(&self.ports, &project.root, Phase::Stop, &Verdict::Pass);
+        }
     }
 }
 
@@ -615,5 +639,48 @@ mod tests {
             assert!(w.spawned.borrow().is_empty());
             assert_eq!(w.baseline_state("s"), BaselineState::Absent);
         }
+    }
+
+    #[test]
+    fn records_the_stop_status_of_each_project() {
+        use hookah_domain::status::Standing;
+        let mut w = world();
+        w.selection = TestSelection::Targets(vec!["t".into()]);
+        w.findings.insert(
+            "test".into(),
+            vec![finding(
+                CheckKind::Test,
+                Severity::Error,
+                "src/a.rs",
+                3,
+                "boom",
+            )],
+        );
+        run(&w);
+        let statuses = w.statuses.borrow();
+        let status = &statuses[Path::new("/r")];
+        assert_eq!(status.phase, Phase::Stop);
+        assert_eq!(status.standing, Standing::Fail);
+        assert_eq!(status.problems, 1);
+    }
+
+    #[test]
+    fn a_clean_session_replaces_an_old_failure() {
+        use hookah_domain::status::Standing;
+        let mut w = world();
+        w.files = vec![];
+        let failing = Verdict::Degraded("old".into());
+        record(&w.ports(), Path::new("/r"), Phase::Edit, &failing);
+        assert_eq!(run(&w), Outcome::pass());
+        let statuses = w.statuses.borrow();
+        assert_eq!(statuses[Path::new("/r")].standing, Standing::Pass);
+        assert_eq!(statuses[Path::new("/r")].phase, Phase::Stop);
+    }
+
+    #[test]
+    fn an_unwritable_status_store_changes_no_verdict() {
+        let mut w = world();
+        w.record_fails = true;
+        assert_eq!(run(&w), Outcome::pass());
     }
 }

@@ -17,7 +17,8 @@ use std::process::ExitCode;
 
 use clap::Parser;
 use hookah_application::{
-    CheckEdit, CheckSession, ComputeBaseline, EditRequest, Outcome, StartSession,
+    CheckEdit, CheckSession, ComputeBaseline, EditRequest, Outcome, ReadStatus, StartSession,
+    StopRequest,
 };
 use hookah_domain::path::display_path;
 use hookah_domain::project::locate_project;
@@ -26,7 +27,8 @@ use hookah_harness::codex::Codex;
 use hookah_harness::cursor::Cursor;
 use hookah_harness::kimi::Kimi;
 use hookah_harness::opencode::{Opencode, PLUGIN_SOURCE};
-use hookah_harness::protocol::{Harness, Invocation, Response, merge_outcomes};
+use hookah_harness::orca::PLUGIN_FILES;
+use hookah_harness::protocol::{Harness, Invocation, Response, canonical_dir, merge_outcomes};
 use hookah_harness::qoder::Qoder;
 
 use crate::args::{Cli, Command, HarnessKind, PluginKind};
@@ -49,11 +51,17 @@ fn main() -> ExitCode {
     };
     let limit = cli.report_limit;
     match cli.command {
-        Command::Check { paths } => exit(check(&paths, limit)),
+        Command::Check {
+            changed: true,
+            root,
+            ..
+        } => exit(check_changed(root.as_deref(), limit)),
+        Command::Check { paths, .. } => exit(check(&paths, limit)),
+        Command::Status { root, json } => exit(status(root.as_deref(), json)),
         Command::Detect { path } => exit(detect(&path)),
         Command::Baseline { session, root } => exit(baseline(&root, &session)),
         Command::Hook { harness } => exit(guarded_hook(harness, limit)),
-        Command::Plugin { harness } => exit(plugin(harness)),
+        Command::Plugin { harness, out } => exit(plugin(harness, out.as_deref())),
         Command::Setup(args) => exit(setup::run(&args)),
     }
 }
@@ -92,12 +100,86 @@ fn baseline(root: &Path, session: &str) -> i32 {
     0
 }
 
-/// `hookah plugin <harness>`: print the embedded plugin source.
-fn plugin(harness: PluginKind) -> i32 {
-    match harness {
-        PluginKind::Opencode => print_out(PLUGIN_SOURCE),
+/// `hookah check --changed`: the stop phase over everything changed under `root`; exit 1 if it
+/// fails.
+fn check_changed(root: Option<&Path>, limit: usize) -> i32 {
+    let request = StopRequest::new(canonical_dir(&absolute_dir(root)));
+    let adapters = wiring::build();
+    let outcome = CheckSession::new(adapters.ports(), limit).run(&request);
+    let failed = matches!(outcome.verdict, hookah_domain::verdict::Verdict::Fail(_));
+    let shown = display_path(&request.root, &request.display_root);
+    let shown = if shown.as_os_str().is_empty() {
+        PathBuf::from(".")
+    } else {
+        shown
+    };
+    print_out(&render::outcome(Style::for_stdout(), &shown, &outcome));
+    i32::from(failed)
+}
+
+/// `hookah status`: the latest recorded outcome per project under `root`. Exit 0 whatever the
+/// outcomes are: it reports, it does not judge.
+fn status(root: Option<&Path>, json: bool) -> i32 {
+    let canonical = canonical_dir(&absolute_dir(root));
+    let adapters = wiring::build();
+    let found = ReadStatus::new(adapters.ports()).run(&canonical);
+    print_out(&if json {
+        render::status_json(&canonical, &found)
+    } else {
+        render::status_text(&found)
+    });
+    0
+}
+
+/// `root`, or the current directory, as an absolute path.
+fn absolute_dir(root: Option<&Path>) -> PathBuf {
+    let dir = root.map_or_else(|| PathBuf::from("."), Path::to_path_buf);
+    std::path::absolute(&dir).unwrap_or(dir)
+}
+
+/// `hookah plugin <harness>`: print the embedded plugin source, or write the plugin's files.
+fn plugin(harness: PluginKind, out: Option<&Path>) -> i32 {
+    match (harness, out) {
+        (PluginKind::Opencode, None) => print_out(PLUGIN_SOURCE),
+        (PluginKind::Opencode, Some(_)) => {
+            let _ = writeln!(
+                std::io::stderr(),
+                "hookah: the opencode plugin is one file: `hookah plugin opencode > .opencode/plugins/hookah.ts`"
+            );
+            return 1;
+        }
+        (PluginKind::Orca, None) => {
+            let _ = writeln!(
+                std::io::stderr(),
+                "hookah: the Orca plugin has several files: pass --out <dir>"
+            );
+            return 1;
+        }
+        (PluginKind::Orca, Some(dir)) => return install_orca_plugin(dir),
     }
     0
+}
+
+fn install_orca_plugin(dir: &Path) -> i32 {
+    match hookah_setup::write_plugin(dir, PLUGIN_FILES) {
+        Ok(done) => {
+            let shown = |p: &Path| display_path(p, &absolute_dir(None)).display().to_string();
+            for file in &done {
+                let verb = if file.wrote { "wrote" } else { "unchanged" };
+                print_out(&format!("{verb} {}\n", shown(&file.path)));
+            }
+            print_out(&format!(
+                "next: load it in Orca with `orca plugin dev load {}` (development) or `orca plugin install {}`; see docs/setup/plugins/orca.md\n",
+                shown(dir),
+                shown(dir)
+            ));
+            0
+        }
+        Err(e) => {
+            let _ = writeln!(std::io::stderr(), "hookah: plugin: {e}");
+            1
+        }
+    }
 }
 
 /// `hookah detect`: print what would run for `path`.

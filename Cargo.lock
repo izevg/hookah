@@ -104,6 +104,7 @@ dependencies = [
  "hookah-domain",
  "hookah-harness",
  "hookah-setup",
+ "serde_json",
 ]
 
 [[package]]

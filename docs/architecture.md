@@ -4,7 +4,8 @@
 
 How `domain`, `application`, `adapters`, `harness`, and `cli` fit together, and which way
 dependencies may point. A sixth crate, `setup`, is an install-time adapter: it owns the file formats
-of the harness configs (JSON, TOML, the opencode plugin file) for `hookah setup`, which keeps
+of the harness configs (JSON, TOML, the opencode plugin file) for `hookah setup` and writes the
+files of a multi-file plugin (`hookah plugin orca --out`), which keeps
 config-file editing out of the crates that run on every hook call. The rules themselves are in [AGENTS.md](../AGENTS.md#architecture-ddd--clean--hexagonal).
 
 ## Request flow
@@ -71,9 +72,28 @@ real paths in the stop phase. Kinds `Typecheck`, `Architecture`, and `Mutation` 
 in reports (`[typecheck]`).
 
 The `cli` crate is the composition root: `wiring.rs` builds the real adapters
-(`FsLocator`, `Ecosystems`, `ProcessRunner`, `GitChanges`, `FileHasher`, `FileBaselineStore`,
+(`FsLocator`, `Ecosystems`, `ProcessRunner`, `GitChanges`, `FileHasher`, `FileBaselineStore`, `FileStatusStore`,
 `BackgroundSpawner`) and hands them to the
 use cases as `Ports`.
+
+## Check status
+
+Every finished run leaves a trace for tools that want to show it without running the checks (the
+[Orca plugin](setup/plugins/orca.md) is the first). `CheckEdit` and `CheckSession` end by handing
+a `Status` (phase, `Standing` of `Pass`/`Degraded`/`Fail`, problem count, the first report lines) to
+the `StatusStore` port, keyed by project root; the `FileStatusStore` adapter keeps one
+`status.json` per project in the cache directory and stamps it with the time. The domain owns the
+rules: a status is derived from a `Verdict`, and the worst of several standings is their maximum.
+A failing store never changes a verdict.
+
+- **Latest run wins.** The record is replaced on every run, so it is not a history. A stop-phase
+  run in a project with no changed files records a `Pass`: a fixed problem stops showing once the
+  tree is checked again.
+- **Reading.** `ReadStatus` finds the project of a directory and the projects nested below it (as
+  the baseline does) and returns each with its latest record. `hookah status [--root <dir>]
+  [--json]` prints it. It runs no checks and exits 0 whatever the standing.
+- **Checking a whole project.** `hookah check --changed [--root <dir>]` runs `CheckSession`, the
+  stop phase, from the command line.
 
 ## Detection cache
 

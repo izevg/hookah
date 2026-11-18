@@ -7,6 +7,7 @@ use hookah_adapters::ecosystems::Ecosystems;
 use hookah_adapters::fs::{FileHasher, FsLocator};
 use hookah_adapters::process::{BackgroundSpawner, ProcessRunner};
 use hookah_adapters::store::baseline::FileBaselineStore;
+use hookah_adapters::store::status::FileStatusStore;
 use hookah_adapters::vcs::GitChanges;
 use hookah_application::Ports;
 
@@ -19,6 +20,7 @@ pub struct Adapters {
     hasher: FileHasher,
     baselines: FileBaselineStore,
     spawner: BackgroundSpawner,
+    statuses: FileStatusStore,
 }
 
 impl Adapters {
@@ -37,6 +39,7 @@ impl Adapters {
             hasher: &self.hasher,
             baselines: &self.baselines,
             spawner: &self.spawner,
+            statuses: &self.statuses,
         }
     }
 }
@@ -50,6 +53,7 @@ pub fn build() -> Adapters {
         changes: GitChanges::new(),
         hasher: FileHasher,
         baselines: FileBaselineStore::new(),
+        statuses: FileStatusStore::new(),
         spawner: BackgroundSpawner::new(
             std::env::current_exe().unwrap_or_else(|_| "hookah".into()),
             foreground_baseline(),

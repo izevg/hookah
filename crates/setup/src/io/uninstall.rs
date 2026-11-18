@@ -227,7 +227,8 @@ pub fn remove(removal: &Removal) -> Result<(), SetupError> {
 fn prune(file: &Path, root: &Path) {
     let mut dir = file.parent();
     while let Some(current) = dir {
-        if !current.starts_with(root) || fs::remove_dir(current).is_err() || current == root {
+        // Past the root, `starts_with` fails, so the walk ends there.
+        if !current.starts_with(root) || fs::remove_dir(current).is_err() {
             return;
         }
         dir = current.parent();
@@ -292,6 +293,7 @@ mod tests {
         let file = env.cwd.join(".claude/settings.json");
         assert!(file.is_file());
         let first = undo(&env, Target::Claude, Scope::Project);
+        assert!(first.changed() && !first.refused());
         assert_eq!(first.steps, [Step::Delete { path: file }]);
         assert!(!env.cwd.join(".claude").exists());
         assert!(env.cwd.exists());

@@ -412,6 +412,8 @@ mod tests {
 
     #[test]
     fn the_public_entry_point_follows_the_environment() {
+        let base = cache_base(|key| std::env::var_os(key), Platform::current());
+        assert_eq!(cache_purge().is_some(), base.is_some());
         if let Some(purge) = cache_purge() {
             let explicit =
                 std::env::var_os("HOOKAH_CACHE_DIR").is_some_and(|v| Path::new(&v).is_absolute());

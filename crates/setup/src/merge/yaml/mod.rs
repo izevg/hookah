@@ -440,6 +440,18 @@ mod tests {
     }
 
     #[test]
+    fn unmerge_finds_the_enabled_key_at_any_block_indent() {
+        assert_eq!(
+            removed("plugins:\n    enabled:\n      - hookah\n    x: 1\n").0,
+            "plugins:\n    x: 1\n"
+        );
+        assert_eq!(
+            removed("plugins:\n # c\n    enabled:\n      - hookah\n").0,
+            "plugins:\n # c\n"
+        );
+    }
+
+    #[test]
     fn unmerge_keeps_windows_line_endings() {
         let (text, empty) = removed("model: x\r\nplugins:\r\n  enabled:\r\n    - hookah\r\n");
         assert_eq!((text.as_str(), empty), ("model: x\r\n", false));

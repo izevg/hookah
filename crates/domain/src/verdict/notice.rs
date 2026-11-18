@@ -18,6 +18,9 @@ pub enum Notice {
     MissingTool(MissingTool),
     /// `hookah` could not finish part of its job (timeout, missing tool, port error).
     Degraded(String),
+    /// What the self-update has to say: a version was installed, one is available, or updating
+    /// does not work. Informational; shown to the user at a session start.
+    Update(String),
 }
 
 impl fmt::Display for Notice {
@@ -37,7 +40,7 @@ impl fmt::Display for Notice {
                 t.name,
                 t.hint
             ),
-            Self::Degraded(reason) => write!(f, "hookah: {reason}"),
+            Self::Degraded(reason) | Self::Update(reason) => write!(f, "hookah: {reason}"),
         }
     }
 }
@@ -59,5 +62,9 @@ mod tests {
             "mutation testing tool cargo-mutants not installed: cargo install x"
         );
         assert_eq!(Notice::Degraded("slow".into()).to_string(), "hookah: slow");
+        assert_eq!(
+            Notice::Update("updated hookah".into()).to_string(),
+            "hookah: updated hookah"
+        );
     }
 }

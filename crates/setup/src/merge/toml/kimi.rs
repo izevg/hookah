@@ -4,6 +4,7 @@
 use toml_edit::{ArrayOfTables, DocumentMut, Item, Table, value};
 
 use super::codex::{set_int, set_str};
+use crate::merge::Unmerged;
 use crate::target::{Target, mentions_hookah};
 
 pub fn merge(target: Target, existing: Option<&str>, command: &str) -> Result<String, String> {
@@ -45,6 +46,29 @@ pub fn merge(target: Target, existing: Option<&str>, command: &str) -> Result<St
         }
     }
     Ok(doc.to_string())
+}
+
+pub fn unmerge(target: Target, text: &str) -> Result<Unmerged, String> {
+    let mut doc: DocumentMut = text.parse().map_err(|e| format!("not valid TOML ({e})"))?;
+    let Some(rules) = doc.get_mut("hooks").and_then(Item::as_array_of_tables_mut) else {
+        return Ok(Unmerged::Unchanged);
+    };
+    let before = rules.len();
+    rules.retain(|rule| {
+        !rule
+            .get("command")
+            .and_then(Item::as_str)
+            .is_some_and(|c| mentions_hookah(c, target.name()))
+    });
+    if rules.len() == before {
+        return Ok(Unmerged::Unchanged);
+    }
+    if rules.is_empty() {
+        doc.remove("hooks");
+    }
+    let text = doc.to_string();
+    let empty = text.trim().is_empty();
+    Ok(Unmerged::Removed { text, empty })
 }
 
 #[cfg(test)]
@@ -126,5 +150,46 @@ timeout = 30
             let err = run(Some(bad)).unwrap_err();
             assert!(err.contains(needle), "{bad}: {err}");
         }
+    }
+
+    fn removed(text: &str) -> (String, bool) {
+        match unmerge(Target::Kimi, text).unwrap() {
+            Unmerged::Removed { text, empty } => (text, empty),
+            Unmerged::Unchanged => panic!("nothing removed from {text}"),
+        }
+    }
+
+    #[test]
+    fn unmerge_is_the_exact_inverse_of_merge_keeping_comments() {
+        let original =
+            "# kimi\nmodel = \"k\"  # pick\n\n[[hooks]]\nevent = \"Stop\"\ncommand = \"mine.sh\"\n";
+        let merged = run(Some(original)).unwrap();
+        assert_eq!(removed(&merged), (original.to_owned(), false));
+        assert_eq!(removed(&run(None).unwrap()), (String::new(), true));
+    }
+
+    #[test]
+    fn unmerge_keeps_rules_of_other_commands_and_reports_nothing_without_ours() {
+        let text = "[[hooks]]\nevent = \"Stop\"\ncommand = \"hookah hook kimi\"\n\n[[hooks]]\nevent = \"Stop\"\ncommand = \"hookah hook codex\"\n\n[[hooks]]\nevent = \"Stop\"\n";
+        let (out, empty) = removed(text);
+        assert!(!out.contains("hook kimi") && out.contains("hook codex"));
+        assert_eq!(out.matches("[[hooks]]").count(), 2);
+        assert!(!empty);
+        for text in [
+            "a = 1\n",
+            "hooks = 3\n",
+            "[[hooks]]\nevent = \"Stop\"\ncommand = \"a.sh\"\n",
+        ] {
+            assert_eq!(
+                unmerge(Target::Kimi, text).unwrap(),
+                Unmerged::Unchanged,
+                "{text}"
+            );
+        }
+        assert!(
+            unmerge(Target::Kimi, "a = [")
+                .unwrap_err()
+                .contains("not valid TOML")
+        );
     }
 }

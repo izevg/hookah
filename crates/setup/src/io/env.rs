@@ -144,6 +144,15 @@ impl Env {
         }
     }
 
+    /// The directory that holds everything setup writes for `target` at `scope`: `<project>/.claude`,
+    /// `~/.codex`, `~/.config/opencode`. Uninstall removes it when it ends up empty.
+    pub fn harness_root(&self, target: Target, scope: Scope) -> Option<PathBuf> {
+        match scope {
+            Scope::Project => Some(self.cwd.join(dir_name(target))),
+            Scope::User => self.user_dir(target),
+        }
+    }
+
     /// The config file `hookah setup <target> --scope <scope>` edits.
     pub fn config_path(&self, target: Target, scope: Scope) -> Result<PathBuf, SetupError> {
         match (target, scope) {

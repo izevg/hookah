@@ -51,9 +51,27 @@ pub struct Env {
 }
 
 impl Env {
+    /// Every environment variable that decides where a config file goes. A test sandbox must
+    /// override all of them, or `hookah setup` writes into the real home; [`Env::from_process`]
+    /// reads no other variable (it asserts so in debug builds).
+    pub const VARS: &'static [&'static str] = &[
+        "HOME",
+        "USERPROFILE",
+        "XDG_CONFIG_HOME",
+        "PATH",
+        "HERMES_HOME",
+        "LOCALAPPDATA",
+    ];
+
     /// Reads the real process environment.
     pub fn from_process() -> Self {
-        let var = |name: &str| std::env::var_os(name).filter(|v| !v.is_empty());
+        let var = |name: &str| {
+            debug_assert!(
+                Self::VARS.contains(&name),
+                "{name} is missing from Env::VARS"
+            );
+            std::env::var_os(name).filter(|v| !v.is_empty())
+        };
         Self {
             cwd: std::env::current_dir().unwrap_or_default(),
             home: var("HOME")

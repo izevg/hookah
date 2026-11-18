@@ -37,17 +37,27 @@ impl Sandbox {
         self.root.join("home").join(rel)
     }
 
+    /// A `hookah` command whose every config location is inside the sandbox, on every OS: each
+    /// variable `hookah setup` reads is cleared first, then the ones a harness needs are pointed
+    /// at the sandbox. A test that wants another value sets it on the returned command.
+    fn command(&self, args: &[&str]) -> Command {
+        let home = self.root.join("home");
+        let mut cmd = Command::new(HOOKAH);
+        cmd.args(args).current_dir(self.root.join("project"));
+        for var in hookah_setup::Env::VARS {
+            cmd.env_remove(var);
+        }
+        cmd.env("HOME", &home)
+            .env("USERPROFILE", &home)
+            .env("LOCALAPPDATA", home.join("AppData").join("Local"))
+            .env("APPDATA", home.join("AppData").join("Roaming"))
+            .env("HERMES_HOME", home.join(".hermes"))
+            .env("PATH", self.root.join("bin"));
+        cmd
+    }
+
     fn hookah(&self, args: &[&str]) -> Output {
-        Command::new(HOOKAH)
-            .args(args)
-            .current_dir(self.root.join("project"))
-            .env("HOME", self.root.join("home"))
-            .env("USERPROFILE", self.root.join("home"))
-            .env_remove("XDG_CONFIG_HOME")
-            .env_remove("HERMES_HOME")
-            .env("PATH", self.root.join("bin"))
-            .output()
-            .unwrap()
+        self.command(args).output().unwrap()
     }
 
     fn ok(&self, args: &[&str]) -> String {
@@ -186,10 +196,8 @@ fn user_scope_writes_under_home_for_every_harness() {
 fn opencode_honors_xdg_config_home() {
     let sb = Sandbox::new("xdg");
     let xdg = sb.root.join("xdg");
-    let out = Command::new(HOOKAH)
-        .args(["setup", "opencode", "--scope", "user"])
-        .current_dir(sb.root.join("project"))
-        .env("HOME", sb.root.join("home"))
+    let out = sb
+        .command(&["setup", "opencode", "--scope", "user"])
         .env("XDG_CONFIG_HOME", &xdg)
         .output()
         .unwrap();
@@ -206,6 +214,37 @@ fn the_opencode_plugin_matches_hookah_plugin_opencode() {
     assert_eq!(sb.ok(&["setup", "opencode", "--print"]), printed);
 }
 
+/// The sandbox is the only place `hookah setup` may write, for every harness at every scope, on
+/// every OS: each path the command reports is inside it, and nothing appears next to it.
+#[test]
+fn setup_never_writes_outside_the_sandbox() {
+    let sb = Sandbox::new("guard");
+    for harness in [
+        "claude", "codex", "qoder", "kimi", "cursor", "opencode", "hermes",
+    ] {
+        for scope in ["user", "project"] {
+            let out = sb.hookah(&["setup", harness, "--scope", scope]);
+            let stdout = String::from_utf8(out.stdout).unwrap();
+            for line in stdout.lines() {
+                let Some(path) = ["created ", "updated ", "backup of the original: "]
+                    .iter()
+                    .find_map(|verb| line.strip_prefix(verb))
+                else {
+                    continue;
+                };
+                // Canonical on both sides: a Windows temp dir may be spelled with 8.3 short names.
+                let path = sb.root.join("project").join(path);
+                let path = fs::canonicalize(&path).unwrap_or(path);
+                let root = fs::canonicalize(&sb.root).unwrap();
+                assert!(
+                    path.starts_with(&root),
+                    "{harness} --scope {scope} wrote {path:?}, outside {root:?}"
+                );
+            }
+        }
+    }
+}
+
 #[test]
 fn hermes_setup_installs_the_plugin_and_enables_it_without_touching_the_rest() {
     let sb = Sandbox::new("hermes");
@@ -215,10 +254,10 @@ fn hermes_setup_installs_the_plugin_and_enables_it_without_touching_the_rest() {
     fs::write(&config, original).unwrap();
     let out = sb.ok(&["setup", "hermes"]);
     assert!(
-        out.starts_with("hookah setup: hermes, user scope\nupdated .hermes/config.yaml\n")
-            || out.contains("updated"),
+        out.starts_with("hookah setup: hermes, user scope\nupdated "),
         "{out}"
     );
+    assert!(out.contains("config.yaml\n"), "{out}");
     assert!(out.contains("hook_callback_timeout"), "{out}");
     assert_eq!(text(&config), format!("{original}    - hookah\n"));
     assert_eq!(text(&sb.home(".hermes/config.yaml.hookah.bak")), original);
@@ -246,10 +285,8 @@ fn hermes_setup_creates_a_missing_config_and_honors_hermes_home() {
         "plugins:\n  enabled:\n    - hookah\n"
     );
     let elsewhere = sb.root.join("elsewhere");
-    let out = Command::new(HOOKAH)
-        .args(["setup", "hermes"])
-        .current_dir(sb.root.join("project"))
-        .env("HOME", sb.root.join("home"))
+    let out = sb
+        .command(&["setup", "hermes"])
         .env("HERMES_HOME", &elsewhere)
         .output()
         .unwrap();
@@ -287,13 +324,10 @@ fn hermes_dry_run_print_and_command_note() {
     let sb = Sandbox::new("hermes-dry");
     let dry = sb.ok(&["setup", "hermes", "--dry-run"]);
     assert!(
-        dry.contains("would create .hermes/config.yaml") || dry.contains("config.yaml"),
+        dry.contains("would create ") && dry.contains("config.yaml"),
         "{dry}"
     );
-    assert!(
-        dry.contains("would create") && dry.contains("plugins/hookah/__init__.py"),
-        "{dry}"
-    );
+    assert!(dry.contains("plugins/hookah/__init__.py"), "{dry}");
     assert_eq!(
         sb.ok(&["setup", "hermes", "--print"]),
         "plugins:\n  enabled:\n    - hookah\n"

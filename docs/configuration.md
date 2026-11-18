@@ -22,6 +22,10 @@ in `architecture.md`, and the incremental state of some tools.
 | macOS | `~/Library/Caches/hookah` (an absolute `$XDG_CACHE_HOME` still wins) |
 | Windows | `%LOCALAPPDATA%\hookah\cache`, falling back to `%USERPROFILE%\AppData\Local\hookah\cache` |
 
+`HOOKAH_CACHE_DIR` overrides `<cache>` on every OS. Set it to an absolute path and `hookah` uses
+that directory as `<cache>` itself (no `hookah` suffix added). An empty or relative value is
+ignored. Tests and CI use it so the layout is identical everywhere.
+
 On Unix the directories are created with mode `0700`. When no location can be resolved (no home
 directory), `hookah` works without a cache.
 

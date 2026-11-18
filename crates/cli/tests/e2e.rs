@@ -92,7 +92,7 @@ impl Fixture {
         let mut child = Command::new(env!("CARGO_BIN_EXE_hookah"))
             .args(args)
             .current_dir(&self.root)
-            .env("XDG_CACHE_HOME", self.cache())
+            .env("HOOKAH_CACHE_DIR", self.cache())
             .env("HOOKAH_BASELINE_FOREGROUND", "1")
             .envs(env.iter().copied())
             .env("GIT_CONFIG_GLOBAL", "/dev/null")
@@ -370,7 +370,7 @@ fn a_session_baseline_hides_old_errors_and_shows_new_ones() {
     let start = f.hookah(&["hook", "claude"], &f.start_payload("sess-1"));
     assert_eq!(start.status.code(), Some(0), "{}", stderr(&start));
     assert!(start.stdout.is_empty() && start.stderr.is_empty());
-    let records = fs::read_dir(f.cache().join("hookah"))
+    let records = fs::read_dir(f.cache())
         .unwrap()
         .flat_map(|dir| fs::read_dir(dir.unwrap().path().join("baselines")).unwrap())
         .count();
@@ -451,7 +451,7 @@ fn the_hidden_baseline_command_records_a_failure_for_a_missing_project() {
     );
     assert_eq!(out.status.code(), Some(0));
     assert!(out.stdout.is_empty() && out.stderr.is_empty());
-    let record = fs::read_dir(f.cache().join("hookah"))
+    let record = fs::read_dir(f.cache())
         .unwrap()
         .map(|dir| dir.unwrap().path().join("baselines/x.json"))
         .find(|p| p.exists())

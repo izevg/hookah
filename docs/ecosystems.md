@@ -37,7 +37,7 @@ extensions `ts tsx js jsx mjs cjs mts cts` are checked.
 | test         | jest       | `jest` present                         | `jest --ci --json --no-watchman --passWithNoTests --findRelatedTests <files>`                                  | 300 s   |
 | mutation     | stryker    | `@stryker-mutator/core` present        | `stryker run --incremental --reporters json --mutate <comma-joined files>`                                     | 480 s   |
 
-`<cache>` is `$XDG_CACHE_HOME/hookah/<hash of project root>/` (macOS fallback
+`<cache>` is `<hookah cache>/<hash of project root>/` (see `configuration.md`; macOS fallback
 `~/Library/Caches`, elsewhere `~/.cache`), created with mode `0700`; without it the incremental
 flags are dropped.
 

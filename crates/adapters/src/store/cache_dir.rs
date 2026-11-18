@@ -4,6 +4,8 @@
 //! incremental compiler state, tool reports, or the detection cache. The layout is
 //! `<hookah cache>/<hash of root>/`, where the hookah cache is:
 //!
+//! - on every OS: `$HOOKAH_CACHE_DIR` when it is set to an absolute path (used as is, without a
+//!   `hookah` suffix); an empty or relative value is ignored;
 //! - Linux and other Unix: `$XDG_CACHE_HOME/hookah` when it is set to an absolute path, else
 //!   `~/.cache/hookah`;
 //! - macOS: `~/Library/Caches/hookah` (an absolute `$XDG_CACHE_HOME` still wins);
@@ -56,6 +58,9 @@ pub fn project_cache_dir(project_root: &Path) -> Result<PathBuf, PortError> {
 fn cache_base(env: impl Fn(&str) -> Option<OsString>, os: Platform) -> Option<PathBuf> {
     let absolute = |key: &str| env(key).map(PathBuf::from).filter(|p| p.is_absolute());
     let non_empty = |key: &str| env(key).filter(|v| !v.is_empty()).map(PathBuf::from);
+    if let Some(explicit) = absolute("HOOKAH_CACHE_DIR") {
+        return Some(explicit);
+    }
     if os == Platform::Windows {
         let local = absolute("LOCALAPPDATA")
             .or_else(|| non_empty("USERPROFILE").map(|p| p.join("AppData").join("Local")))?;
@@ -117,6 +122,32 @@ mod tests {
                 .iter()
                 .find(|(k, _)| *k == key)
                 .map(|(_, v)| OsString::from(v))
+        }
+    }
+
+    #[test]
+    fn the_explicit_override_wins_on_every_os() {
+        let dir = std::env::temp_dir();
+        let value = dir.to_str().unwrap();
+        for os in [Platform::Unix, Platform::Mac, Platform::Windows] {
+            let pairs = [
+                ("HOOKAH_CACHE_DIR", value),
+                ("XDG_CACHE_HOME", "/xdg"),
+                ("LOCALAPPDATA", "/lad"),
+                ("HOME", "/home/u"),
+            ];
+            assert_eq!(cache_base(env(&pairs), os), Some(dir.clone()));
+        }
+    }
+
+    #[test]
+    fn an_empty_or_relative_override_is_ignored() {
+        for bad in ["", "rel"] {
+            let pairs = [("HOOKAH_CACHE_DIR", bad), ("HOME", "/home/u")];
+            assert_eq!(
+                cache_base(env(&pairs), Platform::Unix),
+                Some("/home/u/.cache/hookah".into())
+            );
         }
     }
 

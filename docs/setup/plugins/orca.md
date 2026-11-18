@@ -144,11 +144,11 @@ have a record, and `null` when none has. It runs no checks and always exits 0.
 
 ## Development
 
-The sources are in `crates/harness/src/orca/plugin/` (`orca-plugin.json`, `src/`, and tests in
+The sources are in `crates/harness/src/plugins/orca/plugin/` (`orca-plugin.json`, `src/`, and tests in
 `test/`). `hookah plugin orca` embeds the manifest and `src/` with `include_str!`.
 
 ```sh
-cd crates/harness/src/orca/plugin
+cd crates/harness/src/plugins/orca/plugin
 orca plugin types .   # writes the typings into .orca/ (git-ignored)
 npx tsc -p .          # type-check
 orca plugin test .    # worker, panel, and client tests

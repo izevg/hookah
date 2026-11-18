@@ -20,7 +20,7 @@
 use hookah_application::Outcome;
 use serde::Serialize;
 
-use crate::opencode::payload::VERSION;
+use crate::plugins::opencode::payload::VERSION;
 use crate::protocol::{
     Invocation, Response, blocking_report, degraded_warnings, edit_context, problems, report_text,
 };

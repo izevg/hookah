@@ -4,4 +4,6 @@
 
 pub mod hermes;
 pub mod openclaw;
+pub mod opencode;
+pub mod orca;
 pub mod pi;

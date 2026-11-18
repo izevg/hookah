@@ -127,7 +127,7 @@ injection", and sends it to `hookah` as `already_continuing`:
    once again.
 
 This mirrors the `stop_hook_active` policy of the Claude Code adapter: block once, then only
-warn the user. The decision lives in `hookah` (`crates/harness/src/opencode/response.rs`); the
+warn the user. The decision lives in `hookah` (`crates/harness/src/plugins/opencode/response.rs`); the
 plugin only keeps the flag. A session that did not edit any file since its last check is not
 checked on idle, so plain chat turns cost nothing.
 

@@ -158,6 +158,22 @@ mod tests {
     }
 
     #[test]
+    fn baseline_targets_come_from_the_ecosystem_rules() {
+        use hookah_domain::toolchain::{CheckKind, CommandSpec};
+        use std::time::Duration;
+
+        let tool = |name: &str| Tool {
+            name: name.into(),
+            kind: CheckKind::Lint,
+            command: CommandSpec::new(name, vec![], "/r", Duration::from_secs(1)),
+        };
+        let reg = Ecosystems::from_env();
+        let py = project(Ecosystem::Python);
+        assert_eq!(reg.baseline_targets(&py, &tool("ruff")), ["."]);
+        assert!(reg.baseline_targets(&py, &tool("mypy")).is_empty());
+    }
+
+    #[test]
     fn python_projects_go_to_the_python_adapter() {
         let reg = Ecosystems::from_env();
         let p = project(Ecosystem::Python);

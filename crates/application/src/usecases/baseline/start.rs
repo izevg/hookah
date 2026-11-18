@@ -203,4 +203,19 @@ mod tests {
         assert!(matches!(outcome.verdict, Verdict::Degraded(r) if r.contains("nested")));
         assert_eq!(w.spawned.borrow().len(), 1);
     }
+
+    #[test]
+    fn repeated_directories_do_not_use_up_the_project_cap() {
+        let mut w = world();
+        w.manifests = ["/r/p0", "/r/p1"]
+            .iter()
+            .map(|d| Manifest::from_path(&PathBuf::from(format!("{d}/Cargo.toml"))).unwrap())
+            .collect();
+        w.nested = std::iter::repeat_n(PathBuf::from("/r/p0"), 8)
+            .chain([PathBuf::from("/r/p1")])
+            .collect();
+        StartSession::new(w.ports()).run(&StartRequest::new("/r", "s"));
+        let roots: Vec<_> = w.spawned.borrow().iter().map(|(r, _)| r.clone()).collect();
+        assert_eq!(roots, [PathBuf::from("/r/p0"), "/r/p1".into()]);
+    }
 }

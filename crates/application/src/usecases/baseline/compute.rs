@@ -63,16 +63,16 @@ impl<'a> ComputeBaseline<'a> {
             .detect(&project)
             .map_err(|e| format!("detecting toolchain: {e}"))?;
         let mut log = RunLog::default();
-        let mut ran = 0;
+        let mut ran = false;
         for kind in KINDS {
             for tool in toolchain.of_kind(kind) {
-                ran += 1;
+                ran = true;
                 let targets = self.ports.detector.baseline_targets(&project, tool);
                 log.run_tool(&self.ports, &project, tool, &targets);
             }
         }
         // Nothing to compare against would make every later finding look new.
-        if ran == 0 {
+        if !ran {
             return Err("the project has no static check tools".into());
         }
         if !log.failures().is_empty() {

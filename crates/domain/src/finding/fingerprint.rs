@@ -76,36 +76,26 @@ fn is_number(s: &str) -> bool {
     !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit())
 }
 
-/// Removes every `:<digits>` and `:<digits>:<digits>` sequence.
+/// Removes every `:<digits>` sequence, so `:<line>` and `:<line>:<column>` both go.
 fn strip_position_suffixes(text: &str) -> String {
     let chars: Vec<char> = text.chars().collect();
     let mut out = String::with_capacity(text.len());
     let mut i = 0;
     while i < chars.len() {
-        if chars[i] == ':'
-            && let Some(end) = digits_end(&chars, i + 1)
-        {
-            i = end;
-            if chars.get(i) == Some(&':')
-                && let Some(end) = digits_end(&chars, i + 1)
-            {
-                i = end;
+        if chars[i] == ':' {
+            let digits = chars[i + 1..]
+                .iter()
+                .take_while(|c| c.is_ascii_digit())
+                .count();
+            if digits > 0 {
+                i += 1 + digits;
+                continue;
             }
-            continue;
         }
         out.push(chars[i]);
         i += 1;
     }
     out
-}
-
-/// The index after the digit run starting at `from`, if there is at least one digit.
-fn digits_end(chars: &[char], from: usize) -> Option<usize> {
-    let run = chars[from..]
-        .iter()
-        .take_while(|c| c.is_ascii_digit())
-        .count();
-    (run > 0).then_some(from + run)
 }
 
 #[cfg(test)]

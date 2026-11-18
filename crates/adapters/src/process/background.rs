@@ -57,6 +57,12 @@ fn detach(command: &mut Command) {
 
 #[cfg(windows)]
 fn detach(command: &mut Command) {
+    detach_from_console(command);
+}
+
+/// Windows only; not covered by mutation testing, which runs on Unix (`.cargo/mutants.toml`).
+#[cfg(windows)]
+fn detach_from_console(command: &mut Command) {
     const DETACHED_PROCESS: u32 = 0x0000_0008;
     const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
     std::os::windows::process::CommandExt::creation_flags(

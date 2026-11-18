@@ -20,7 +20,7 @@
 //!   id is replaced by `h` and a hash of it, so an id can never escape the directory.
 
 use std::collections::BTreeMap;
-use std::fs::{self, File, OpenOptions};
+use std::fs::{self, File};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
@@ -182,54 +182,51 @@ fn create_dir(dir: &Path) -> Result<(), PortError> {
         .map_err(|e| PortError::new(format!("cannot create {}: {e}", dir.display())))
 }
 
-/// Claims the record: `true` when this call created it.
+/// Claims the record: `true` when this call created it. The record is written in full to a
+/// temporary file and hard-linked into place, so it appears complete or not at all, and a second
+/// claimer finds a readable record and backs off.
 fn begin_in(dir: &Path, session: &str) -> Result<bool, PortError> {
-    create_dir(dir)?;
+    let tmp = write_tmp(dir, session, &Record::InProgress { v: VERSION })?;
     let path = dir.join(file_name(session));
-    let text = encode(&Record::InProgress { v: VERSION })?;
-    match OpenOptions::new().write(true).create_new(true).open(&path) {
-        Ok(mut file) => {
-            file.write_all(text.as_bytes())
-                .map_err(|e| PortError::new(format!("cannot write {}: {e}", path.display())))?;
-            Ok(true)
-        }
-        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
-            if read_record(&path).is_some() {
-                return Ok(false);
-            }
-            // Unreadable record: take it over.
-            write_in(dir, session, &Record::InProgress { v: VERSION })?;
-            Ok(true)
-        }
-        Err(e) => Err(PortError::new(format!(
-            "cannot create {}: {e}",
-            path.display()
-        ))),
+    let claimed = fs::hard_link(&tmp, &path).is_ok();
+    let _ = fs::remove_file(&tmp);
+    if claimed {
+        return Ok(true);
     }
+    if read_record(&path).is_some() {
+        return Ok(false);
+    }
+    // Unreadable record, or a file system without hard links: take the record over.
+    write_in(dir, session, &Record::InProgress { v: VERSION })?;
+    Ok(true)
 }
 
 fn encode(record: &Record) -> Result<String, PortError> {
     serde_json::to_string(record).map_err(|e| PortError::new(format!("cannot encode: {e}")))
 }
 
+/// Writes the record to a fresh temporary file next to its final place; returns its path.
+fn write_tmp(dir: &Path, session: &str, record: &Record) -> Result<PathBuf, PortError> {
+    create_dir(dir)?;
+    let tmp = dir.join(format!("{}.{}.tmp", file_name(session), std::process::id()));
+    let text = encode(record)?;
+    File::create(&tmp)
+        .and_then(|mut f| f.write_all(text.as_bytes()).and_then(|()| f.sync_all()))
+        .map_err(|e| {
+            let _ = fs::remove_file(&tmp);
+            PortError::new(format!("cannot write {}: {e}", tmp.display()))
+        })?;
+    Ok(tmp)
+}
+
 /// Writes the record atomically: temporary file in the same directory, then rename.
 fn write_in(dir: &Path, session: &str, record: &Record) -> Result<(), PortError> {
-    create_dir(dir)?;
-    let name = file_name(session);
-    let tmp = dir.join(format!("{name}.{}.tmp", std::process::id()));
-    let target = dir.join(&name);
-    let text = encode(record)?;
-    let result = File::create(&tmp)
-        .and_then(|mut f| f.write_all(text.as_bytes()).and_then(|()| f.sync_all()))
-        .and_then(|()| fs::rename(&tmp, &target));
-    if let Err(e) = result {
+    let tmp = write_tmp(dir, session, record)?;
+    let target = dir.join(file_name(session));
+    fs::rename(&tmp, &target).map_err(|e| {
         let _ = fs::remove_file(&tmp);
-        return Err(PortError::new(format!(
-            "cannot write {}: {e}",
-            target.display()
-        )));
-    }
-    Ok(())
+        PortError::new(format!("cannot write {}: {e}", target.display()))
+    })
 }
 
 /// Deletes the files in `dir` last modified more than `max_age` before `now`.
@@ -444,5 +441,60 @@ mod tests {
         if let Ok(dir) = dir {
             assert_eq!(dir.file_name().unwrap(), "baselines");
         }
+    }
+
+    #[test]
+    fn the_ages_are_a_week_and_half_an_hour() {
+        assert_eq!(MAX_AGE, Duration::from_secs(604_800));
+        assert_eq!(STALE_AFTER, Duration::from_secs(1_800));
+    }
+
+    fn set_modified(path: &Path, at: SystemTime) {
+        File::options()
+            .write(true)
+            .open(path)
+            .unwrap()
+            .set_modified(at)
+            .unwrap();
+    }
+
+    #[test]
+    fn staleness_starts_strictly_after_the_limit() {
+        let t = Temp::new("stale-edge");
+        begin_in(&t.0, "s").unwrap();
+        let at = SystemTime::now() - Duration::from_secs(10);
+        set_modified(&t.0.join("s.json"), at);
+        assert_eq!(
+            state_in(&t.0, "s", at + STALE_AFTER),
+            BaselineState::InProgress
+        );
+        assert!(matches!(
+            state_in(&t.0, "s", at + STALE_AFTER + Duration::from_secs(1)),
+            BaselineState::Failed(_)
+        ));
+    }
+
+    #[test]
+    fn pruning_starts_strictly_after_the_limit() {
+        let t = Temp::new("prune-edge");
+        write_in(&t.0, "s", &Record::InProgress { v: VERSION }).unwrap();
+        let at = SystemTime::now() - Duration::from_secs(10);
+        set_modified(&t.0.join("s.json"), at);
+        prune_in(&t.0, at + MAX_AGE, MAX_AGE);
+        assert!(t.0.join("s.json").exists());
+        prune_in(&t.0, at + MAX_AGE + Duration::from_secs(1), MAX_AGE);
+        assert!(!t.0.join("s.json").exists());
+    }
+
+    #[test]
+    fn claiming_leaves_no_temporary_files() {
+        let t = Temp::new("claim-tmp");
+        assert!(begin_in(&t.0, "s").unwrap());
+        assert!(!begin_in(&t.0, "s").unwrap());
+        let names: Vec<_> = fs::read_dir(&t.0)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().into_string().unwrap())
+            .collect();
+        assert_eq!(names, ["s.json"]);
     }
 }

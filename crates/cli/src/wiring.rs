@@ -64,3 +64,15 @@ pub const FOREGROUND_BASELINE: &str = "HOOKAH_BASELINE_FOREGROUND";
 fn foreground_baseline() -> bool {
     std::env::var_os(FOREGROUND_BASELINE).is_some_and(|v| !v.is_empty())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_baseline_job_runs_in_the_background_unless_the_environment_says_otherwise() {
+        if std::env::var_os(FOREGROUND_BASELINE).is_none() {
+            assert!(!foreground_baseline());
+        }
+    }
+}

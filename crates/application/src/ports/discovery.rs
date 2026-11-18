@@ -26,11 +26,8 @@ pub trait ProjectLocator {
     /// Directories below `dir` (not `dir` itself), at most `max_depth` levels down, that hold a
     /// recognized manifest, shallowest first. Skips hidden directories and the usual dependency
     /// and build output directories. A session in a monorepo root uses this to baseline the
-    /// projects it will edit. Default: none.
-    fn nested_roots(&self, dir: &Path, max_depth: usize) -> Result<Vec<PathBuf>, PortError> {
-        let _ = (dir, max_depth);
-        Ok(vec![])
-    }
+    /// projects it will edit.
+    fn nested_roots(&self, dir: &Path, max_depth: usize) -> Result<Vec<PathBuf>, PortError>;
 }
 
 /// Knows the tools of one or more ecosystems.

@@ -15,6 +15,7 @@
 - [Kimi Code](setup/hooks/cli/kimi.md)
 - [opencode](setup/plugins/opencode.md)
 - [Hermes Agent](setup/assistants/hermes.md)
+- [Pi](setup/plugins/pi.md)
 - [Orca](setup/plugins/orca.md)
 
 # Reference

@@ -6,6 +6,7 @@
 //!
 //! - Command hooks: [`claude`], [`codex`], [`kimi`], [`qoder`], [`cursor`].
 //! - Plugins: [`opencode`] (a TypeScript plugin that calls the `hookah` binary), [`orca`].
+//! - Extensions: [`plugins::pi`] (Pi: a TypeScript extension that calls the `hookah` binary).
 
 pub mod claude;
 pub mod codex;

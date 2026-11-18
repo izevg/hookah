@@ -17,6 +17,8 @@ pub enum Target {
     Opencode,
     /// Hermes Agent: a plugin directory, enabled in `config.yaml`, user-level only.
     Hermes,
+    /// Pi coding agent: an extension file.
+    Pi,
 }
 
 /// One hook entry: the agent event, an optional tool matcher, and the timeout in seconds.
@@ -67,7 +69,7 @@ const CURSOR: &[HookSpec] = &[
 
 impl Target {
     /// Every harness, in the order `hookah setup --detect` lists them.
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 8] = [
         Self::Claude,
         Self::Codex,
         Self::Qoder,
@@ -75,6 +77,7 @@ impl Target {
         Self::Cursor,
         Self::Opencode,
         Self::Hermes,
+        Self::Pi,
     ];
 
     /// The name used on the command line and in `hookah hook <name>`.
@@ -87,10 +90,11 @@ impl Target {
             Self::Cursor => "cursor",
             Self::Opencode => "opencode",
             Self::Hermes => "hermes",
+            Self::Pi => "pi",
         }
     }
 
-    /// The hooks hookah registers. Empty for opencode and Hermes, whose plugins carry them
+    /// The hooks hookah registers. Empty for opencode, Hermes, and Pi, whose plugins carry them
     /// themselves.
     pub fn hooks(self) -> &'static [HookSpec] {
         match self {
@@ -99,7 +103,7 @@ impl Target {
             Self::Qoder => QODER,
             Self::Kimi => KIMI,
             Self::Cursor => CURSOR,
-            Self::Opencode | Self::Hermes => &[],
+            Self::Opencode | Self::Hermes | Self::Pi => &[],
         }
     }
 
@@ -113,6 +117,7 @@ impl Target {
             Self::Cursor => &["cursor-agent", "cursor"],
             Self::Opencode => &["opencode"],
             Self::Hermes => &["hermes"],
+            Self::Pi => &["pi"],
         }
     }
 
@@ -135,6 +140,9 @@ impl Target {
             }
             Self::Hermes => {
                 "Restart Hermes so it loads the plugin. The plugin runs `hookah` from PATH, or from HOOKAH_BIN if set."
+            }
+            Self::Pi => {
+                "Restart Pi, or run /reload in it. The extension runs `hookah` from PATH, or from HOOKAH_BIN if set."
             }
         }
     }
@@ -271,7 +279,7 @@ mod tests {
         assert_eq!(
             names,
             [
-                "claude", "codex", "qoder", "kimi", "cursor", "opencode", "hermes"
+                "claude", "codex", "qoder", "kimi", "cursor", "opencode", "hermes", "pi"
             ]
         );
         assert_eq!(Target::Claude.hooks().len(), 4);
@@ -281,6 +289,7 @@ mod tests {
         assert_eq!(Target::Cursor.hooks().len(), 3);
         assert!(Target::Opencode.hooks().is_empty());
         assert!(Target::Hermes.hooks().is_empty());
+        assert!(Target::Pi.hooks().is_empty());
         for t in Target::ALL {
             assert!(!t.binaries().is_empty());
             assert!(t.restart_hint().contains("Restart"), "{t:?}");

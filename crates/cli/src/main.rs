@@ -29,6 +29,7 @@ use hookah_harness::kimi::Kimi;
 use hookah_harness::opencode::{Opencode, PLUGIN_SOURCE};
 use hookah_harness::orca::PLUGIN_FILES;
 use hookah_harness::plugins::hermes::{Hermes, PLUGIN_SOURCE as HERMES_PLUGIN_SOURCE};
+use hookah_harness::plugins::pi::{PLUGIN_SOURCE as PI_PLUGIN_SOURCE, Pi};
 use hookah_harness::protocol::{Harness, Invocation, Response, canonical_dir, merge_outcomes};
 use hookah_harness::qoder::Qoder;
 
@@ -157,6 +158,14 @@ fn plugin(harness: PluginKind, out: Option<&Path>) -> i32 {
             );
             return 1;
         }
+        (PluginKind::Pi, None) => print_out(PI_PLUGIN_SOURCE),
+        (PluginKind::Pi, Some(_)) => {
+            let _ = writeln!(
+                std::io::stderr(),
+                "hookah: the Pi extension is one file: `hookah plugin pi > .pi/extensions/hookah.ts`"
+            );
+            return 1;
+        }
         (PluginKind::Orca, None) => {
             let _ = writeln!(
                 std::io::stderr(),
@@ -251,6 +260,7 @@ fn hook(harness: HarnessKind, limit: usize) -> Response {
         HarnessKind::Cursor => run_harness(&Cursor, &stdin, limit),
         HarnessKind::Opencode => run_harness(&Opencode, &stdin, limit),
         HarnessKind::Hermes => run_harness(&Hermes, &stdin, limit),
+        HarnessKind::Pi => run_harness(&Pi, &stdin, limit),
     }
 }
 

@@ -158,8 +158,8 @@ uses `DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP` (cross-compiled and linted in
 `HOOKAH_BASELINE_FOREGROUND=1` makes the hook wait for the child instead; tests and
 `samples/run.sh` use it to get a baseline synchronously.
 
-**Session start per harness.** Each harness's docs were read on 2026-11-17, except opencode, which
-is our own plugin.
+**Session start per harness.** Each harness's docs were read on 2026-11-17, except opencode and Pi, which
+are our own plugins.
 
 | Harness | Event | Status |
 | --- | --- | --- |
@@ -170,6 +170,7 @@ is our own plugin.
 | Kimi Code | `SessionStart` (matchers `startup`, `resume`) | verified |
 | opencode | the plugin's `session.created` event, sent as `event: "start"` (contract v1, backward compatible) | plugin written against the SDK types; not run live |
 | Hermes Agent | the plugin's `on_session_start` hook (new sessions only), sent as `event: "start"` | verified live against a mock model server |
+| Pi | the extension's `session_start` event (reasons other than `reload`), sent as `event: "start"` (contract v1) | verified live against Pi 0.73.1 (RPC mode, mock model) |
 
 Where a harness has no session start, or the hook is not configured, the **first edit** of a
 session starts the job lazily: the first edit of a (project, session) pair finds no baseline,

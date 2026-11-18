@@ -15,6 +15,7 @@ pub(crate) mod yaml;
 
 use hookah_harness::opencode::PLUGIN_SOURCE;
 use hookah_harness::plugins::hermes::{PLUGIN_MANIFEST, PLUGIN_SOURCE as HERMES_PLUGIN_SOURCE};
+use hookah_harness::plugins::pi::PLUGIN_SOURCE as PI_PLUGIN_SOURCE;
 
 use crate::target::Target;
 
@@ -32,6 +33,7 @@ pub fn merge(target: Target, existing: Option<&str>, program: &str) -> Result<St
         Target::Cursor => cursor::merge(target, existing, &command),
         Target::Opencode => Ok(PLUGIN_SOURCE.to_owned()),
         Target::Hermes => yaml::merge(existing),
+        Target::Pi => Ok(PI_PLUGIN_SOURCE.to_owned()),
     }
 }
 

@@ -13,6 +13,6 @@ pub mod usecases;
 pub use error::PortError;
 pub use ports::Ports;
 pub use usecases::{
-    CheckEdit, CheckSession, ComputeBaseline, EditRequest, Outcome, StartRequest, StartSession,
-    StopRequest,
+    CheckEdit, CheckSession, ComputeBaseline, EditRequest, Outcome, ProjectStatus, ReadStatus,
+    StartRequest, StartSession, StopRequest,
 };

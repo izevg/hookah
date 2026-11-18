@@ -22,6 +22,21 @@ pub enum Phase {
 }
 
 impl Phase {
+    /// The name used in stored records and JSON output.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Edit => "edit",
+            Self::Stop => "stop",
+        }
+    }
+
+    /// The inverse of [`Phase::name`].
+    pub fn from_name(name: &str) -> Option<Self> {
+        [Self::Edit, Self::Stop]
+            .into_iter()
+            .find(|p| p.name() == name)
+    }
+
     /// The check kinds this phase runs, in execution order.
     pub fn check_kinds(self) -> &'static [CheckKind] {
         match self {
@@ -79,6 +94,14 @@ mod tests {
         assert!(TestRun::observe(true, false, false).allows_mutation());
         assert!(!TestRun::observe(true, true, false).allows_mutation());
         assert!(!TestRun::observe(true, false, true).allows_mutation());
+    }
+
+    #[test]
+    fn phase_names_round_trip() {
+        for p in [Phase::Edit, Phase::Stop] {
+            assert_eq!(Phase::from_name(p.name()), Some(p));
+        }
+        assert_eq!(Phase::from_name("x"), None);
     }
 
     #[test]

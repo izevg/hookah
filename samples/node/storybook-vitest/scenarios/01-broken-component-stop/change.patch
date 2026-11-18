@@ -1,0 +1,12 @@
+diff --git a/src/badge/badge.js b/src/badge/badge.js
+index 8122cf6..e93b7f5 100644
+--- a/src/badge/badge.js
++++ b/src/badge/badge.js
+@@ -1,6 +1,6 @@
+ export const badge = ({ count }) => {
+   const el = document.createElement("span");
+   el.className = "badge";
+-  el.textContent = count > 99 ? "99+" : String(count);
++  el.textContent = count > 99 ? "99+" : `(${count})`;
+   return el;
+ };

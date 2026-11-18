@@ -1,0 +1,25 @@
+diff --git a/src/badge/badge.js b/src/badge/badge.js
+index 8122cf6..65e77b9 100644
+--- a/src/badge/badge.js
++++ b/src/badge/badge.js
+@@ -1,6 +1,6 @@
+ export const badge = ({ count }) => {
+   const el = document.createElement("span");
+-  el.className = "badge";
++  el.className = "badge big";
+   el.textContent = count > 99 ? "99+" : String(count);
+   return el;
+ };
+diff --git a/vitest.config.js b/vitest.config.js
+index 6d5f175..f885d91 100644
+--- a/vitest.config.js
++++ b/vitest.config.js
+@@ -15,7 +15,7 @@ export default defineConfig({
+           browser: {
+             enabled: true,
+             headless: true,
+-            provider: playwright(),
++            provider: playwright({ launchOptions: { executablePath: "/nonexistent/chromium" } }),
+             instances: [{ browser: "chromium" }],
+           },
+         },

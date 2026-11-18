@@ -501,6 +501,18 @@ mod tests {
     }
 
     #[test]
+    fn clean_up_removes_the_leftover_of_a_windows_swap() {
+        let dir = scratch();
+        let exe = dir.join("hookah.exe");
+        fs::write(&exe, "new").unwrap();
+        fs::write(dir.join("hookah.exe.old"), "old").unwrap();
+        SelfInstaller::at(&exe).clean_up();
+        assert!(!dir.join("hookah.exe.old").exists());
+        assert!(exe.is_file());
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
     fn current_resolves_to_a_real_file() {
         let installer = SelfInstaller::current();
         let exe = installer.exe().unwrap();

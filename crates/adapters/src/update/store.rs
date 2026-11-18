@@ -283,7 +283,16 @@ mod tests {
         // A second store (another process, in effect) is locked out too.
         assert!(FileUpdateStore::in_dir(&dir).try_lock().unwrap().is_none());
         drop(first);
-        assert!(store.try_lock().unwrap().is_some());
+        // A process another test spawns at this moment holds a duplicate of the descriptor
+        // between its fork and exec, which keeps the lock for that instant: retry briefly.
+        let freed = (0..200).any(|_| {
+            if store.try_lock().unwrap().is_some() {
+                return true;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+            false
+        });
+        assert!(freed, "released on drop");
         let _ = fs::remove_dir_all(dir);
     }
 

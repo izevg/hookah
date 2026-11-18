@@ -21,6 +21,7 @@ use std::path::{Path, PathBuf};
 use hookah_application::error::PortError;
 use hookah_application::ports::ProcessOutput;
 use hookah_domain::finding::Finding;
+use hookah_domain::path::is_driveless_root;
 use hookah_domain::project::Project;
 use hookah_domain::toolchain::Tool;
 
@@ -70,6 +71,9 @@ impl Root {
     /// project root (tools run there). An absolute path outside the project stays absolute.
     pub fn relative(&self, file: &str) -> PathBuf {
         let path = Path::new(file);
+        if is_driveless_root(path) {
+            return path.to_path_buf();
+        }
         if !path.is_absolute() {
             return path.strip_prefix(".").unwrap_or(path).to_path_buf();
         }

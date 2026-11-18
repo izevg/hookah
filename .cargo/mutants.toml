@@ -16,7 +16,9 @@ minimum_test_timeout = 60
 # that run mutation testing, so its mutants can never be caught there.
 # The Windows job object of the process runner (`contain` in process/tree.rs) is excluded for the
 # same reason.
+# `is_driveless_root` is `false` on every Unix host, so "always false" is the same program there.
 exclude_re = [
     "detach_from_console",
     'process/tree\.rs:\d+:\d+: replace contain',
+    'path\.rs:\d+:\d+: replace is_driveless_root -> bool with false',
 ]

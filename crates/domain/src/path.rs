@@ -13,6 +13,14 @@
 
 use std::path::{Component, Path, PathBuf};
 
+/// Whether `path` starts at a root but names no drive, like `/rustc/<hash>/library/core/src/a.rs`
+/// that rustc prints on every OS. Such a path is not absolute on Windows and belongs to no
+/// project: it must never be read as relative to one. Never true elsewhere, where a rooted path
+/// is absolute.
+pub fn is_driveless_root(path: &Path) -> bool {
+    path.has_root() && !path.is_absolute()
+}
+
 /// Resolves `.` and `..` segments without touching the filesystem.
 ///
 /// A `..` that would climb above the root of an absolute path stays at the root; one at the start
@@ -72,6 +80,20 @@ mod tests {
         display_path(Path::new(path), Path::new(root))
             .to_string_lossy()
             .into_owned()
+    }
+
+    #[test]
+    fn only_a_rooted_path_without_a_drive_is_driveless() {
+        assert!(!is_driveless_root(Path::new("src/a.rs")));
+        assert!(!is_driveless_root(Path::new(if cfg!(windows) {
+            "C:/src/a.rs"
+        } else {
+            "/src/a.rs"
+        })));
+        assert_eq!(
+            is_driveless_root(Path::new("/rustc/abc/library/core/src/a.rs")),
+            cfg!(windows)
+        );
     }
 
     #[test]

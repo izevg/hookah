@@ -336,7 +336,7 @@ mod tests {
     #[test]
     fn vitest_reads_the_report_file_named_in_its_output() {
         let s = Scratch::new();
-        let file = s.write("vitest-report.json", VITEST_REPORT);
+        let file = s.write("vitest-report.json", &rooted(VITEST_REPORT));
         let stdout = format!("\nJSON report written to {}\n", file.display());
         let found = vitest(Path::new(ROOT), &out(1, &stdout, "")).unwrap();
         assert_eq!(found.len(), 1);

@@ -20,6 +20,7 @@ use std::path::{Component, Path, PathBuf};
 use hookah_application::error::PortError;
 use hookah_application::ports::ProcessOutput;
 use hookah_domain::finding::Finding;
+use hookah_domain::path::is_driveless_root;
 use hookah_domain::project::Project;
 use hookah_domain::toolchain::{CheckKind, Tool};
 use serde_json::Value;
@@ -122,6 +123,9 @@ pub(crate) fn json_in(text: &str) -> Option<Value> {
 /// also in its symlink-resolved form (Node reports real paths); a file elsewhere keeps `..`.
 pub(crate) fn relative(root: &Path, file: &str) -> PathBuf {
     let path = Path::new(file);
+    if is_driveless_root(path) {
+        return path.to_path_buf();
+    }
     if !path.is_absolute() {
         return normalize(path);
     }

@@ -20,7 +20,7 @@ use std::path::{Path, PathBuf};
 use hookah_application::error::PortError;
 use hookah_application::ports::ProcessOutput;
 use hookah_domain::finding::{Finding, Location, Severity};
-use hookah_domain::path::normalize;
+use hookah_domain::path::{is_driveless_root, normalize};
 use hookah_domain::toolchain::CheckKind;
 use serde::Deserialize;
 
@@ -52,6 +52,9 @@ fn resolve(project_root: &Path, base: &Path, file: &str) -> Option<PathBuf> {
         return None;
     }
     let path = Path::new(file);
+    if is_driveless_root(path) {
+        return None;
+    }
     let abs = if path.is_absolute() {
         let path = dunce::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
         if !path.starts_with(base) {
@@ -320,16 +323,17 @@ fn owned_position(s: &str) -> Option<(String, u32, u32)> {
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
+    use crate::ecosystems::testing::{abs, rooted};
 
     fn paths() -> Paths {
-        Paths::new("/ws/crates/core".into(), "/ws".into())
+        Paths::new(abs("/ws/crates/core"), abs("/ws"))
     }
 
     fn out(code: i32, stdout: &str, stderr: &str) -> ProcessOutput {
         ProcessOutput {
             exit_code: Some(code),
-            stdout: stdout.into(),
-            stderr: stderr.into(),
+            stdout: rooted(stdout),
+            stderr: rooted(stderr),
             timed_out: false,
         }
     }

@@ -78,7 +78,8 @@ pub fn unmerge(existing: &str) -> Result<Unmerged, String> {
     let indent = (plugins + 1..end)
         .find_map(|i| key_indent(&lines[i]))
         .unwrap_or(2);
-    let Some(enabled) = (plugins + 1..end).find(|&i| key_of(&lines[i], indent) == Some("enabled"))
+    // The `plugins` line itself has indent 0, and the block is indented, so it never matches.
+    let Some(enabled) = (plugins..end).find(|&i| key_of(&lines[i], indent) == Some("enabled"))
     else {
         return Ok(Unmerged::Unchanged);
     };

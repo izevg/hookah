@@ -52,6 +52,7 @@ impl Sandbox {
             .env("LOCALAPPDATA", home.join("AppData").join("Local"))
             .env("APPDATA", home.join("AppData").join("Roaming"))
             .env("HERMES_HOME", home.join(".hermes"))
+            .env("PI_CODING_AGENT_DIR", home.join(".pi").join("agent"))
             .env("PATH", self.root.join("bin"));
         cmd
     }
@@ -101,7 +102,7 @@ fn claude_project_setup_writes_hooks_pointing_at_this_binary() {
 #[test]
 fn a_second_run_is_byte_identical_and_says_so() {
     let sb = Sandbox::new("idempotent");
-    for harness in ["claude", "codex", "qoder", "cursor", "opencode"] {
+    for harness in ["claude", "codex", "qoder", "cursor", "opencode", "pi"] {
         sb.ok(&["setup", harness]);
     }
     sb.ok(&["setup", "kimi"]);
@@ -111,10 +112,13 @@ fn a_second_run_is_byte_identical_and_says_so() {
         sb.project(".qoder/settings.json"),
         sb.project(".cursor/hooks.json"),
         sb.project(".opencode/plugins/hookah.ts"),
+        sb.project(".pi/extensions/hookah.ts"),
         sb.home(".kimi-code/config.toml"),
     ];
     let before: Vec<_> = files.iter().map(|f| fs::read(f).unwrap()).collect();
-    for harness in ["claude", "codex", "qoder", "cursor", "opencode", "kimi"] {
+    for harness in [
+        "claude", "codex", "qoder", "cursor", "opencode", "pi", "kimi",
+    ] {
         let out = sb.ok(&["setup", harness]);
         assert!(out.contains("already up to date, nothing written"), "{out}");
     }
@@ -180,7 +184,9 @@ fn codex_toml_keeps_comments() {
 #[test]
 fn user_scope_writes_under_home_for_every_harness() {
     let sb = Sandbox::new("user");
-    for harness in ["claude", "codex", "qoder", "kimi", "cursor", "opencode"] {
+    for harness in [
+        "claude", "codex", "qoder", "kimi", "cursor", "opencode", "pi",
+    ] {
         sb.ok(&["setup", harness, "--scope", "user"]);
     }
     assert!(text(&sb.home(".claude/settings.json")).contains("hook claude"));
@@ -189,6 +195,7 @@ fn user_scope_writes_under_home_for_every_harness() {
     assert!(text(&sb.home(".kimi-code/config.toml")).contains("hook kimi"));
     assert!(text(&sb.home(".cursor/hooks.json")).contains("hook cursor"));
     assert!(sb.home(".config/opencode/plugins/hookah.ts").is_file());
+    assert!(sb.home(".pi/agent/extensions/hookah.ts").is_file());
     assert!(!sb.project(".claude").exists());
 }
 
@@ -206,6 +213,46 @@ fn opencode_honors_xdg_config_home() {
 }
 
 #[test]
+fn pi_honors_pi_coding_agent_dir() {
+    let sb = Sandbox::new("pidir");
+    let dir = sb.root.join("pi-cfg");
+    let out = sb
+        .command(&["setup", "pi", "--scope", "user"])
+        .env("PI_CODING_AGENT_DIR", &dir)
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    assert!(dir.join("extensions/hookah.ts").is_file());
+    assert!(!sb.home(".pi").exists());
+}
+
+#[test]
+fn the_pi_extension_matches_hookah_plugin_pi() {
+    let sb = Sandbox::new("piplugin");
+    let dry = sb.ok(&["setup", "pi", "--dry-run"]);
+    assert!(dry.contains("would create .pi/extensions/hookah.ts"));
+    assert!(!sb.project(".pi").exists());
+    sb.ok(&["setup", "pi"]);
+    let printed = sb.ok(&["plugin", "pi"]);
+    assert_eq!(text(&sb.project(".pi/extensions/hookah.ts")), printed);
+    assert_eq!(sb.ok(&["setup", "pi", "--print"]), printed);
+}
+
+#[test]
+fn rerunning_pi_setup_backs_up_a_changed_extension_once() {
+    let sb = Sandbox::new("pibak");
+    let file = sb.project(".pi/extensions/hookah.ts");
+    fs::create_dir_all(file.parent().unwrap()).unwrap();
+    fs::write(&file, "// old\n").unwrap();
+    sb.ok(&["setup", "pi"]);
+    assert_eq!(
+        text(&sb.project(".pi/extensions/hookah.ts.hookah.bak")),
+        "// old\n"
+    );
+    assert_eq!(text(&file), sb.ok(&["plugin", "pi"]));
+}
+
+#[test]
 fn the_opencode_plugin_matches_hookah_plugin_opencode() {
     let sb = Sandbox::new("plugin");
     sb.ok(&["setup", "opencode"]);
@@ -220,7 +267,7 @@ fn the_opencode_plugin_matches_hookah_plugin_opencode() {
 fn setup_never_writes_outside_the_sandbox() {
     let sb = Sandbox::new("guard");
     for harness in [
-        "claude", "codex", "qoder", "kimi", "cursor", "opencode", "hermes",
+        "claude", "codex", "qoder", "kimi", "cursor", "opencode", "hermes", "pi",
     ] {
         for scope in ["user", "project"] {
             let out = sb.hookah(&["setup", harness, "--scope", scope]);
@@ -395,14 +442,18 @@ fn command_override_is_used_verbatim() {
     assert!(out.contains("note: --command is ignored for opencode"));
     let plain = sb.ok(&["setup", "opencode", "--scope", "user"]);
     assert!(!plain.contains("note:"));
+    let out = sb.ok(&["setup", "pi", "--command", "x"]);
+    assert!(out.contains("note: --command is ignored for pi"));
 }
 
 #[test]
 fn detect_reports_installed_and_configured_harnesses() {
     let sb = Sandbox::new("detect");
     fs::write(sb.root.join("bin/claude"), "").unwrap();
+    fs::write(sb.root.join("bin/pi"), "").unwrap();
     fs::create_dir_all(sb.home(".codex")).unwrap();
     sb.ok(&["setup", "claude"]);
+    sb.ok(&["setup", "pi"]);
     sb.ok(&["setup", "qoder", "--scope", "user"]);
     let out = sb.ok(&["setup", "--detect"]);
     let line = |name: &str| {
@@ -415,6 +466,8 @@ fn detect_reports_installed_and_configured_harnesses() {
     assert!(line("claude:").ends_with("project: configured; user: not configured"));
     assert!(line("codex:").contains("config directory found"));
     assert!(line("qoder:").ends_with("project: not configured; user: configured"));
+    assert!(line("pi:").contains("installed (binary"));
+    assert!(line("pi:").ends_with("project: configured; user: not configured"));
     assert!(line("kimi:").contains("not found; project: no project config"));
     assert!(out.contains("next:"));
     assert!(!sb.project(".codex").exists());

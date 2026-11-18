@@ -49,12 +49,12 @@ pub fn detect(env: &Env) -> Vec<Detection> {
         .collect()
 }
 
-/// True if the file holds hookah's hooks (for opencode: the plugin file exists; for Hermes: the
+/// True if the file holds hookah's hooks (for opencode and Pi: the plugin file exists; for Hermes: the
 /// plugin is installed next to the config file and enabled in it).
 fn configured(target: Target, path: &Path) -> bool {
     match fs::read_to_string(path) {
         Ok(text) => match target {
-            Target::Opencode => true,
+            Target::Opencode | Target::Pi => true,
             Target::Hermes => {
                 let plugin = path.with_file_name("plugins/hookah/__init__.py");
                 plugin.is_file() && yaml::enabled(&text)
@@ -106,6 +106,7 @@ mod tests {
             cwd: root.join("project"),
             home: Some(root.join("home")),
             xdg_config: None,
+            pi_agent_dir: None,
             path: vec![root.join("bin")],
             hermes_home: None,
         }
@@ -137,6 +138,7 @@ mod tests {
         write(&root.join("bin/qodercli.exe"), "");
         fs::create_dir_all(root.join("home/.codex")).unwrap();
         fs::create_dir_all(root.join("home/.config/opencode")).unwrap();
+        fs::create_dir_all(root.join("home/.pi/agent")).unwrap();
         let found = detect(&env(&root));
         let claude = get(&found, Target::Claude);
         assert_eq!(claude.binary, Some(root.join("bin/claude")));
@@ -146,6 +148,7 @@ mod tests {
         let codex = get(&found, Target::Codex);
         assert!(codex.binary.is_none() && codex.config_dir && codex.installed());
         assert!(get(&found, Target::Opencode).installed());
+        assert!(get(&found, Target::Pi).installed());
         assert!(!get(&found, Target::Kimi).installed());
     }
 
@@ -201,6 +204,7 @@ mod tests {
             &root.join("project/.opencode/plugins/hookah.ts"),
             "// plugin",
         );
+        write(&root.join("home/.pi/agent/extensions/hookah.ts"), "// ext");
         let found = detect(&env(&root));
         let claude = get(&found, Target::Claude);
         assert_eq!(claude.project, Some(true));
@@ -211,6 +215,8 @@ mod tests {
         assert_eq!(get(&found, Target::Qoder).project, Some(false));
         assert!(!get(&found, Target::Qoder).user);
         assert_eq!(get(&found, Target::Opencode).project, Some(true));
+        assert_eq!(get(&found, Target::Pi).project, Some(false));
+        assert!(get(&found, Target::Pi).user);
     }
 
     #[test]

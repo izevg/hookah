@@ -192,6 +192,7 @@ mod tests {
             cwd: root.join("project"),
             home: Some(root.join("home")),
             xdg_config: None,
+            pi_agent_dir: None,
             path: vec![],
             hermes_home: None,
         }
@@ -368,6 +369,21 @@ mod tests {
             snippet(Target::Opencode, "ignored").unwrap(),
             hookah_harness::opencode::PLUGIN_SOURCE
         );
+        assert_eq!(
+            snippet(Target::Pi, "ignored").unwrap(),
+            hookah_harness::plugins::pi::PLUGIN_SOURCE
+        );
+    }
+
+    #[test]
+    fn the_pi_file_is_the_embedded_extension_and_stable() {
+        let env = temp_env("pi");
+        let (plan, _) = apply(&env, Target::Pi, Scope::Project).unwrap();
+        assert_eq!(plan.after, hookah_harness::plugins::pi::PLUGIN_SOURCE);
+        assert!(plan.path.ends_with(".pi/extensions/hookah.ts"));
+        let (again, written) = apply(&env, Target::Pi, Scope::Project).unwrap();
+        assert!(!again.changed());
+        assert!(!written.wrote);
     }
 
     #[test]

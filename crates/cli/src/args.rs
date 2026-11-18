@@ -161,6 +161,8 @@ pub enum HarnessKind {
     Opencode,
     /// Hermes Agent, through the bundled plugin (`hookah setup hermes`).
     Hermes,
+    /// Pi coding agent, through the bundled extension (`hookah plugin pi`).
+    Pi,
 }
 
 /// Harnesses that ship a plugin.
@@ -172,6 +174,8 @@ pub enum PluginKind {
     Orca,
     /// The Hermes Agent Python plugin (its `__init__.py`).
     Hermes,
+    /// The Pi TypeScript extension.
+    Pi,
 }
 
 #[cfg(test)]
@@ -243,6 +247,25 @@ mod tests {
             cli.command,
             Command::Hook {
                 harness: HarnessKind::Opencode
+            }
+        ));
+    }
+
+    #[test]
+    fn parses_plugin_and_hook_for_pi() {
+        let cli = Cli::try_parse_from(["hookah", "plugin", "pi"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Command::Plugin {
+                harness: PluginKind::Pi,
+                out: None
+            }
+        ));
+        let cli = Cli::try_parse_from(["hookah", "hook", "pi"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Command::Hook {
+                harness: HarnessKind::Pi
             }
         ));
     }

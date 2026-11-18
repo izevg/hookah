@@ -1,0 +1,13 @@
+diff --git a/core/src/main/java/shop/Money.java b/core/src/main/java/shop/Money.java
+index 0389dc9..2d577e0 100644
+--- a/core/src/main/java/shop/Money.java
++++ b/core/src/main/java/shop/Money.java
+@@ -5,7 +5,7 @@ public record Money(int cents) {
+ 
+   /** Adds two amounts. */
+   public Money plus(Money other) {
+-    return new Money(cents + other.cents);
++    return new Money(cents - other.cents);
+   }
+ 
+   /** The amount as text, such as {@code 12.50}. */

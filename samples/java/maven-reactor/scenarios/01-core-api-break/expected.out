@@ -1,0 +1,5 @@
+exit: 2
+--- stdout
+--- stderr
+hookah: 1 problem after editing core/src/main/java/shop/Money.java - fix before continuing:
+app/src/main/java/shop/app/Receipt.java:11:29: [typecheck] cannot find symbol: method format() (location: variable total of type shop.Money)

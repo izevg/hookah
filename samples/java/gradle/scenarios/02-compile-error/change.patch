@@ -1,0 +1,13 @@
+diff --git a/src/main/java/shop/Cart.java b/src/main/java/shop/Cart.java
+index ab271c4..1643817 100644
+--- a/src/main/java/shop/Cart.java
++++ b/src/main/java/shop/Cart.java
+@@ -26,7 +26,7 @@ public final class Cart {
+ 
+   /** Whether the cart qualifies for free shipping (at least 5000 cents). */
+   public boolean freeShipping() {
+-    return total() >= FREE_SHIPPING_FROM;
++    return totl() >= FREE_SHIPPING_FROM;
+   }
+ 
+   private static final int FREE_SHIPPING_FROM = 5000;

@@ -27,7 +27,7 @@ paths, as Claude Code on Windows sends them, and every spelling of the project c
 ```
 samples/
   run.sh
-  <ecosystem>/                 rust, node, python
+  <ecosystem>/                 rust, node, python, java
     <config>/                  one project configuration
       project/                 a self-contained project
       scenarios/
@@ -139,6 +139,18 @@ is installed on the machine.
 | | `03-app-type-error` | edit | a type error in `app` against `lib` through `tsc -b`, shown with its workspace-relative path |
 | | `04-old-type-error-hidden` | start, edit | `base.patch` leaves a `tsc` error in the untouched `app/src/extra.ts`; after `start`, a comment edit in `lib` is silent |
 | | `05-old-type-error-without-start` | edit | the same without `start`: `tsc -b` covers the dependent, so the old error is reported |
+| `java/maven` | `01-clean-edit` | edit | a Javadoc edit stays silent (Spotless, Checkstyle, and the compile check all pass) |
+| | `02-compile-error` | edit | a call of a missing method: `[typecheck]` error from javac with line and column |
+| | `03-checkstyle-violation` | edit | Checkstyle `NeedBraces` and `MagicNumber` warnings on the changed line |
+| | `04-format-rewrite` | edit | Spotless (google-java-format) rewrites the file; the agent is told to re-read it |
+| | `05-broken-test-stop` | stop | a source change breaks three tests of `CartTest`: each failure sits at its assertion line |
+| | `06-integration-test-not-run` | stop | a broken `CartIT` (failsafe's, `*IT`): stop is silent because integration tests never run |
+| | `07-weakened-test-mutation` | stop | two assertions removed from `CartTest`: PIT survivors in `Cart.java` fail the stop |
+| `java/maven-reactor` | `01-core-api-break` | edit | a `core` API rename that breaks `app`: the compile check covers dependents (`-am -amd`), so the error in `app` is reported |
+| | `02-app-test-fails-stop` | stop | an `app` change: only `ReceiptTest` runs (`-pl app -am`), and its failure is reported |
+| | `03-core-bug-stop` | stop | a `core` change: `MoneyTest` runs and fails; the dependents' tests do not run |
+| | `04-clean-app-edit` | edit | a clean edit in a reactor module is silent |
+| `java/gradle` | `01` to `07` | edit, stop | the same seven scenarios as `java/maven`, through Gradle (`--tests`, `spotlessApply -PspotlessIdeHook`, `pitest --targetTests`) |
 
 `rust/crate/07-test-edit-mutation` records the answer for a machine without `cargo-mutants`, so
 its `requires` is `! cargo mutants --version`. `08-test-edit-mutation-survivor` is its sibling for
@@ -146,6 +158,24 @@ a machine that has the tool (`requires`: `cargo mutants --version`). Each machin
 of the two. `06-broken-test-stop` also requires the tool: without it the stop phase appends a
 "tool not installed" notice to the answer. CI installs `cargo-mutants` on every OS, so 08 runs
 and 07 is skipped there.
+
+## Java samples
+
+All three Java samples need network access on the first `setup.sh` (Maven Central and the Gradle
+plugin portal); `setup.sh` runs once online what `hookah` later runs offline (`mvn -o`,
+`gradle --offline`), so the scenarios themselves are fast and need no network. A JDK (21), Maven,
+and Gradle come from the pinned `.mise.toml`.
+
+- `java/maven` is a single module with Spotless (google-java-format), Checkstyle, JUnit 5, the
+  failsafe plugin (with a `CartIT` that `hookah` must not run), and PIT. The scenario's
+  `expected.out` shows what the agent sees.
+- `java/maven-reactor` is a two-module reactor (`core`, and `app` which depends on it) with
+  Checkstyle and JUnit 5. It shows the module addressing (`-pl`), the dependents' compile check,
+  and test scoping.
+- `java/gradle` is the Kotlin-DSL twin of `java/maven`: the same sources and scenarios through
+  `spotless`, `checkstyle`, `pitest` (with `outputFormats = ["XML"]` and incremental analysis
+  set, as Gradle needs), and the Gradle test task.
+- Windows is not covered (the CI job replays `rust/` only), see `.github/workflows/ci.yml`.
 
 ## Python samples
 

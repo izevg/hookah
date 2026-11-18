@@ -1,0 +1,12 @@
+diff --git a/app/src/main/java/shop/app/Receipt.java b/app/src/main/java/shop/app/Receipt.java
+index e48b47d..b472fe0 100644
+--- a/app/src/main/java/shop/app/Receipt.java
++++ b/app/src/main/java/shop/app/Receipt.java
+@@ -8,6 +8,6 @@ public final class Receipt {
+ 
+   /** The line shown under the items. */
+   public static String totalLine(Money total) {
+-    return "Total: " + total.format();
++    return "Sum: " + total.format();
+   }
+ }

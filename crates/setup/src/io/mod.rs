@@ -247,4 +247,39 @@ mod tests {
         assert!(!again.changed());
         assert!(!written.wrote);
     }
+
+    #[test]
+    fn windows_commands_are_rendered_per_harness_and_replace_the_old_form_in_place() {
+        use crate::shell_program;
+        let exe = r"C:\Users\a b\AppData\Local\hookah\bin\hookah.exe";
+        let program = shell_program(exe);
+        let new_form = "C:/Users/a b/AppData/Local/hookah/bin/hookah.exe";
+        for (target, needle) in [
+            (
+                Target::Claude,
+                r#""command": "\"C:/Users/a b/AppData/Local/hookah/bin/hookah.exe\" hook claude""#,
+            ),
+            (
+                Target::Qoder,
+                r#""command": "\"C:/Users/a b/AppData/Local/hookah/bin/hookah.exe\" hook qoder""#,
+            ),
+            (
+                Target::Codex,
+                r#"command = '"C:/Users/a b/AppData/Local/hookah/bin/hookah.exe" hook codex'"#,
+            ),
+            (
+                Target::Kimi,
+                r#"command = '"C:/Users/a b/AppData/Local/hookah/bin/hookah.exe" hook kimi'"#,
+            ),
+        ] {
+            let out = snippet(target, &program).unwrap();
+            assert!(out.contains(needle), "{target:?}: {out}");
+            // The old unquoted backslash form is recognized and replaced, not duplicated.
+            let old = snippet(target, exe).unwrap();
+            let merged = crate::merge::merge(target, Some(&old), &program).unwrap();
+            assert_eq!(merged, out, "{target:?}");
+            assert!(!merged.contains("AppData\\"), "{target:?}: {merged}");
+            assert!(merged.contains(new_form));
+        }
+    }
 }

@@ -125,6 +125,22 @@ pub fn quote_program(program: &str) -> String {
     }
 }
 
+/// The command line prefix that runs the executable at `exe` in the shell every harness uses.
+///
+/// A Windows path is written with `/`, and quoted when it contains whitespace. Git Bash (Claude
+/// Code) eats backslashes, and cmd.exe (Codex, and the Node and Python spawners of the others)
+/// accepts a drive-qualified path with `/`, so one spelling works in all of them. A `\\?\`
+/// verbatim prefix is dropped because shells do not understand it. Other paths are only quoted.
+pub fn shell_program(exe: &str) -> String {
+    let path = exe.strip_prefix(r"\\?\").unwrap_or(exe);
+    let drive = matches!(path.as_bytes(), [d, b':', b'\\' | b'/', ..] if d.is_ascii_alphabetic());
+    if drive || path.starts_with(r"\\") {
+        quote_program(&path.replace('\\', "/"))
+    } else {
+        quote_program(exe)
+    }
+}
+
 /// True if `text` mentions `hookah hook <name>` as a command, whatever the path before it, the
 /// quoting, or an `.exe` suffix. This is how an existing hookah entry is recognized.
 pub fn mentions_hookah(text: &str, name: &str) -> bool {
@@ -176,6 +192,53 @@ mod tests {
     fn quotes_only_paths_with_whitespace() {
         assert_eq!(quote_program("/a/hookah"), "/a/hookah");
         assert_eq!(quote_program("/a b/hookah"), "\"/a b/hookah\"");
+    }
+
+    #[test]
+    fn windows_paths_become_forward_slash_commands() {
+        assert_eq!(
+            shell_program(r"C:\Users\x\AppData\Local\hookah\bin\hookah.exe"),
+            "C:/Users/x/AppData/Local/hookah/bin/hookah.exe"
+        );
+        assert_eq!(
+            shell_program(r"D:\Program Files\hookah\hookah.exe"),
+            "\"D:/Program Files/hookah/hookah.exe\""
+        );
+        assert_eq!(shell_program(r"c:/a/hookah.exe"), "c:/a/hookah.exe");
+        assert_eq!(
+            shell_program(r"\\?\C:\a b\hookah.exe"),
+            "\"C:/a b/hookah.exe\""
+        );
+        assert_eq!(
+            shell_program(r"\\srv\share\hookah.exe"),
+            "//srv/share/hookah.exe"
+        );
+    }
+
+    #[test]
+    fn unix_paths_are_only_quoted() {
+        assert_eq!(shell_program("/a/hookah"), "/a/hookah");
+        assert_eq!(shell_program("/a b/hookah"), "\"/a b/hookah\"");
+        assert_eq!(shell_program(r"/a\b/hookah"), r"/a\b/hookah");
+        assert_eq!(shell_program("x:y"), "x:y");
+        assert_eq!(shell_program("C:"), "C:");
+        assert_eq!(shell_program(r"1:\a"), r"1:\a");
+    }
+
+    #[test]
+    fn windows_forms_are_still_recognized_as_configured() {
+        for c in [
+            "C:/Users/x/AppData/Local/hookah/bin/hookah.exe hook claude",
+            "\"D:/Program Files/hookah/hookah.exe\" hook codex",
+            "\\\"D:/Program Files/hookah/hookah.exe\\\" hook codex",
+        ] {
+            let name = if c.contains("codex") {
+                "codex"
+            } else {
+                "claude"
+            };
+            assert!(mentions_hookah(c, name), "{c}");
+        }
     }
 
     #[test]

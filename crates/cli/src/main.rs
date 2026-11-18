@@ -28,6 +28,7 @@ use hookah_harness::cursor::Cursor;
 use hookah_harness::kimi::Kimi;
 use hookah_harness::opencode::{Opencode, PLUGIN_SOURCE};
 use hookah_harness::orca::PLUGIN_FILES;
+use hookah_harness::plugins::hermes::{Hermes, PLUGIN_SOURCE as HERMES_PLUGIN_SOURCE};
 use hookah_harness::protocol::{Harness, Invocation, Response, canonical_dir, merge_outcomes};
 use hookah_harness::qoder::Qoder;
 
@@ -148,6 +149,14 @@ fn plugin(harness: PluginKind, out: Option<&Path>) -> i32 {
             );
             return 1;
         }
+        (PluginKind::Hermes, None) => print_out(HERMES_PLUGIN_SOURCE),
+        (PluginKind::Hermes, Some(_)) => {
+            let _ = writeln!(
+                std::io::stderr(),
+                "hookah: the Hermes plugin is installed by `hookah setup hermes`"
+            );
+            return 1;
+        }
         (PluginKind::Orca, None) => {
             let _ = writeln!(
                 std::io::stderr(),
@@ -241,6 +250,7 @@ fn hook(harness: HarnessKind, limit: usize) -> Response {
         HarnessKind::Kimi => run_harness(&Kimi, &stdin, limit),
         HarnessKind::Cursor => run_harness(&Cursor, &stdin, limit),
         HarnessKind::Opencode => run_harness(&Opencode, &stdin, limit),
+        HarnessKind::Hermes => run_harness(&Hermes, &stdin, limit),
     }
 }
 

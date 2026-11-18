@@ -159,6 +159,8 @@ pub enum HarnessKind {
     Cursor,
     /// opencode, through the bundled plugin (`hookah plugin opencode`).
     Opencode,
+    /// Hermes Agent, through the bundled plugin (`hookah setup hermes`).
+    Hermes,
 }
 
 /// Harnesses that ship a plugin.
@@ -168,6 +170,8 @@ pub enum PluginKind {
     Opencode,
     /// The Orca plugin: a folder with a manifest and TypeScript sources.
     Orca,
+    /// The Hermes Agent Python plugin (its `__init__.py`).
+    Hermes,
 }
 
 #[cfg(test)]
@@ -201,6 +205,25 @@ mod tests {
             cli.command,
             Command::Hook {
                 harness: HarnessKind::Claude
+            }
+        ));
+    }
+
+    #[test]
+    fn parses_plugin_and_hook_for_hermes() {
+        let cli = Cli::try_parse_from(["hookah", "plugin", "hermes"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Command::Plugin {
+                harness: PluginKind::Hermes,
+                out: None
+            }
+        ));
+        let cli = Cli::try_parse_from(["hookah", "hook", "hermes"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Command::Hook {
+                harness: HarnessKind::Hermes
             }
         ));
     }

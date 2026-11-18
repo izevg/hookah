@@ -122,7 +122,7 @@ function Install-Hookah {
 
     Write-Host 'hookah-install: next steps:'
     Write-Host '  hookah setup --detect      # which agent harnesses are installed'
-    Write-Host '  hookah setup <harness>     # claude, codex, cursor, qoder, kimi, or opencode'
+    Write-Host '  hookah setup <harness>     # claude, codex, cursor, qoder, kimi, opencode, or hermes'
 }
 
 Install-Hookah

@@ -1,5 +1,6 @@
 //! Where each harness keeps its config, and the environment that decides it.
 
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 
 use crate::error::SetupError;
@@ -26,7 +27,7 @@ impl Scope {
     /// The scope used when none is given: the project's, except where only a user config exists.
     pub fn default_for(target: Target) -> Self {
         match target {
-            Target::Kimi => Self::User,
+            Target::Kimi | Target::Hermes => Self::User,
             _ => Self::Project,
         }
     }
@@ -44,12 +45,33 @@ pub struct Env {
     pub xdg_config: Option<PathBuf>,
     /// The directories of `PATH`.
     pub path: Vec<PathBuf>,
+    /// Hermes's home directory when the environment names it: `HERMES_HOME`, else on Windows
+    /// `%LOCALAPPDATA%\hermes`. `None` means `~/.hermes`.
+    pub hermes_home: Option<PathBuf>,
 }
 
 impl Env {
+    /// Every environment variable that decides where a config file goes. A test sandbox must
+    /// override all of them, or `hookah setup` writes into the real home; [`Env::from_process`]
+    /// reads no other variable (it asserts so in debug builds).
+    pub const VARS: &'static [&'static str] = &[
+        "HOME",
+        "USERPROFILE",
+        "XDG_CONFIG_HOME",
+        "PATH",
+        "HERMES_HOME",
+        "LOCALAPPDATA",
+    ];
+
     /// Reads the real process environment.
     pub fn from_process() -> Self {
-        let var = |name: &str| std::env::var_os(name).filter(|v| !v.is_empty());
+        let var = |name: &str| {
+            debug_assert!(
+                Self::VARS.contains(&name),
+                "{name} is missing from Env::VARS"
+            );
+            std::env::var_os(name).filter(|v| !v.is_empty())
+        };
         Self {
             cwd: std::env::current_dir().unwrap_or_default(),
             home: var("HOME")
@@ -59,6 +81,7 @@ impl Env {
             path: var("PATH")
                 .map(|p| std::env::split_paths(&p).collect())
                 .unwrap_or_default(),
+            hermes_home: hermes_home_from(var("HERMES_HOME"), var("LOCALAPPDATA"), cfg!(windows)),
         }
     }
 
@@ -74,10 +97,19 @@ impl Env {
         }
     }
 
+    /// Hermes's home directory: [`Env::hermes_home`], else `~/.hermes`.
+    fn hermes_dir(&self) -> Result<PathBuf, SetupError> {
+        match &self.hermes_home {
+            Some(dir) => Ok(dir.clone()),
+            None => Ok(self.home()?.join(".hermes")),
+        }
+    }
+
     /// The harness's user-level config directory, for detection. `None` without a home.
     pub fn user_dir(&self, target: Target) -> Option<PathBuf> {
         match target {
             Target::Opencode => self.opencode_dir().ok(),
+            Target::Hermes => self.hermes_dir().ok(),
             _ => self.home().ok().map(|h| h.join(dir_name(target))),
         }
     }
@@ -90,12 +122,32 @@ impl Env {
                 scope: "project",
                 hint: "use --scope user (~/.kimi-code/config.toml)",
             }),
+            (Target::Hermes, Scope::Project) => Err(SetupError::UnsupportedScope {
+                target: "hermes",
+                scope: "project",
+                hint: "Hermes loads plugins from its home directory only; use --scope user (~/.hermes)",
+            }),
+            (Target::Hermes, Scope::User) => Ok(self.hermes_dir()?.join("config.yaml")),
             (Target::Opencode, Scope::Project) => Ok(self.cwd.join(".opencode").join(PLUGIN_PATH)),
             (Target::Opencode, Scope::User) => Ok(self.opencode_dir()?.join(PLUGIN_PATH)),
             (_, Scope::Project) => Ok(self.cwd.join(dir_name(target)).join(file_name(target))),
             (_, Scope::User) => Ok(self.home()?.join(dir_name(target)).join(file_name(target))),
         }
     }
+}
+
+/// Hermes's home directory from the environment: `HERMES_HOME`, else `%LOCALAPPDATA%\hermes` on
+/// Windows, else `None` (`~/.hermes`).
+fn hermes_home_from(
+    home: Option<OsString>,
+    local_appdata: Option<OsString>,
+    windows: bool,
+) -> Option<PathBuf> {
+    home.map(PathBuf::from).or_else(|| {
+        local_appdata
+            .filter(|_| windows)
+            .map(|dir| PathBuf::from(dir).join("hermes"))
+    })
 }
 
 const PLUGIN_PATH: &str = "plugins/hookah.ts";
@@ -108,6 +160,7 @@ fn dir_name(target: Target) -> &'static str {
         Target::Kimi => ".kimi-code",
         Target::Cursor => ".cursor",
         Target::Opencode => ".opencode",
+        Target::Hermes => ".hermes",
     }
 }
 
@@ -117,6 +170,7 @@ fn file_name(target: Target) -> &'static str {
         Target::Codex | Target::Kimi => "config.toml",
         Target::Cursor => "hooks.json",
         Target::Opencode => "plugins/hookah.ts",
+        Target::Hermes => "config.yaml",
     }
 }
 
@@ -131,6 +185,7 @@ mod tests {
             home: Some("/h".into()),
             xdg_config: None,
             path: vec![],
+            hermes_home: None,
         }
     }
 
@@ -186,6 +241,45 @@ mod tests {
         assert_eq!(Scope::default_for(Target::Claude), Scope::Project);
         assert_eq!(Scope::Project.name(), "project");
         assert_eq!(Scope::User.name(), "user");
+    }
+
+    #[test]
+    fn hermes_is_user_level_and_honors_its_home_variable() {
+        assert_eq!(
+            path(Target::Hermes, Scope::User),
+            Path::new("/h/.hermes/config.yaml")
+        );
+        assert_eq!(env().user_dir(Target::Hermes), Some("/h/.hermes".into()));
+        let err = env()
+            .config_path(Target::Hermes, Scope::Project)
+            .unwrap_err();
+        assert!(err.to_string().contains("--scope user"));
+        assert_eq!(Scope::default_for(Target::Hermes), Scope::User);
+        let mut e = env();
+        e.hermes_home = Some("/x/hermes".into());
+        assert_eq!(
+            e.config_path(Target::Hermes, Scope::User).unwrap(),
+            Path::new("/x/hermes/config.yaml")
+        );
+        e.home = None;
+        assert_eq!(e.user_dir(Target::Hermes), Some("/x/hermes".into()));
+        e.hermes_home = None;
+        assert_eq!(e.user_dir(Target::Hermes), None);
+    }
+
+    #[test]
+    fn hermes_home_comes_from_its_variable_then_local_app_data_on_windows() {
+        let var = |v: &str| Some(OsString::from(v));
+        assert_eq!(
+            hermes_home_from(var("/x"), var("/l"), true),
+            Some("/x".into())
+        );
+        assert_eq!(
+            hermes_home_from(None, var("/l"), true),
+            Some(PathBuf::from("/l").join("hermes"))
+        );
+        assert_eq!(hermes_home_from(None, var("/l"), false), None);
+        assert_eq!(hermes_home_from(None, None, true), None);
     }
 
     #[test]

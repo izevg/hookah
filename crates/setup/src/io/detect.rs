@@ -4,6 +4,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use super::env::{Env, Scope};
+use crate::merge::yaml;
 use crate::target::{Target, mentions_hookah};
 
 /// What is known about one harness on this machine.
@@ -48,10 +49,18 @@ pub fn detect(env: &Env) -> Vec<Detection> {
         .collect()
 }
 
-/// True if the file holds hookah's hooks (for opencode: the plugin file exists).
+/// True if the file holds hookah's hooks (for opencode: the plugin file exists; for Hermes: the
+/// plugin is installed next to the config file and enabled in it).
 fn configured(target: Target, path: &Path) -> bool {
     match fs::read_to_string(path) {
-        Ok(text) => target == Target::Opencode || mentions_hookah(&text, target.name()),
+        Ok(text) => match target {
+            Target::Opencode => true,
+            Target::Hermes => {
+                let plugin = path.with_file_name("plugins/hookah/__init__.py");
+                plugin.is_file() && yaml::enabled(&text)
+            }
+            _ => mentions_hookah(&text, target.name()),
+        },
         Err(_) => false,
     }
 }
@@ -98,6 +107,7 @@ mod tests {
             home: Some(root.join("home")),
             xdg_config: None,
             path: vec![root.join("bin")],
+            hermes_home: None,
         }
     }
 
@@ -116,6 +126,7 @@ mod tests {
             assert_ne!(d.project, Some(true));
         }
         assert_eq!(get(&found, Target::Kimi).project, None);
+        assert_eq!(get(&found, Target::Hermes).project, None);
         assert_eq!(get(&found, Target::Claude).project, Some(false));
     }
 
@@ -200,6 +211,26 @@ mod tests {
         assert_eq!(get(&found, Target::Qoder).project, Some(false));
         assert!(!get(&found, Target::Qoder).user);
         assert_eq!(get(&found, Target::Opencode).project, Some(true));
+    }
+
+    #[test]
+    fn hermes_is_configured_only_with_the_plugin_installed_and_enabled() {
+        let root = root("hermes");
+        let hermes = |root: &Path| get(&detect(&env(root)), Target::Hermes).clone();
+        write(&root.join("home/.hermes/config.yaml"), "model: x\n");
+        let found = hermes(&root);
+        assert!(found.config_dir && !found.user);
+        write(
+            &root.join("home/.hermes/config.yaml"),
+            "plugins:\n  enabled:\n    - hookah\n",
+        );
+        assert!(!hermes(&root).user, "enabled but not installed");
+        write(&root.join("home/.hermes/plugins/hookah/__init__.py"), "#");
+        assert!(hermes(&root).user);
+        write(&root.join("home/.hermes/config.yaml"), "model: x\n");
+        assert!(!hermes(&root).user, "installed but not enabled");
+        write(&root.join("bin/hermes"), "");
+        assert!(hermes(&root).binary.is_some());
     }
 
     #[test]

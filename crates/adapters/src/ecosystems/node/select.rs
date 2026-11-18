@@ -5,10 +5,11 @@
 //!   called `__tests__`, `test`, or `tests`. Everything else is source.
 //! - [`related_tests`]: the changed JavaScript and TypeScript files under the project, as absolute
 //!   paths. The runner's own import graph (`vitest related`, `jest --findRelatedTests`) finds the
-//!   tests that import them, so no test file is guessed here. No runner or no such file selects
-//!   nothing.
+//!   tests that import them, so no test file is guessed here. Heavy files (integration, e2e, see
+//!   [`super::heavy`]) are never handed over, and the runner is told to exclude heavy tests. No
+//!   runner or no such file selects nothing.
 //! - [`mutants`]: the sources to mutate. A changed test maps to its source by naming convention
-//!   (see [`sources_of_test`]); changed sources count directly. Only files that exist survive.
+//!   (see [`sources_of_test`]); heavy tests map to nothing; changed sources count directly. Only files that exist survive.
 //!   Stryker takes one comma-separated `--mutate` list, so the selection is a single target.
 
 use std::path::{Path, PathBuf};
@@ -16,6 +17,8 @@ use std::path::{Path, PathBuf};
 use hookah_domain::project::{Ecosystem, Project};
 use hookah_domain::session::FileRole;
 use hookah_domain::toolchain::{MutationSelection, TestSelection};
+
+use super::heavy;
 
 /// Extensions a source file can have, in the order candidates are tried.
 const SOURCE_EXTENSIONS: &[&str] = &["ts", "tsx", "js", "jsx", "mts", "cts", "mjs", "cjs"];
@@ -67,6 +70,7 @@ pub fn related_tests(project: &Project, changed: &[PathBuf], has_runner: bool) -
         .iter()
         .filter(|f| Ecosystem::Node.can_check(f))
         .filter(|f| project.relative(f).is_ok_and(|rel| !in_node_modules(&rel)))
+        .filter(|f| !heavy::is_heavy(project, f))
         .map(|f| f.to_string_lossy().into_owned())
         .collect();
     TestSelection::from_targets(targets)
@@ -157,6 +161,7 @@ pub fn mutants(
     let mut files: Vec<PathBuf> = Vec::new();
     let mapped = changed_tests
         .iter()
+        .filter(|t| !heavy::is_heavy(project, t))
         .flat_map(|t| sources_of_test(project, t));
     let direct = changed_sources
         .iter()
@@ -266,6 +271,38 @@ mod tests {
         assert_eq!(
             related_tests(&project(&s), &[s.path("README.md")], true),
             TestSelection::None
+        );
+    }
+
+    #[test]
+    fn heavy_files_are_never_handed_to_the_runner() {
+        let s = Scratch::new();
+        let changed = [
+            s.path("src/a.ts"),
+            s.path("e2e/flow.test.ts"),
+            s.path("src/cart.e2e.ts"),
+            s.path("src/db.int.test.ts"),
+            s.path("tests/integration/db.test.ts"),
+            s.path("playwright.config.ts"),
+            s.path("cypress/support.ts"),
+        ];
+        assert_eq!(
+            related_tests(&project(&s), &changed, true),
+            TestSelection::Targets(vec![s.path("src/a.ts").to_string_lossy().into_owned()])
+        );
+        assert_eq!(
+            related_tests(&project(&s), &changed[1..], true),
+            TestSelection::None
+        );
+    }
+
+    #[test]
+    fn a_changed_heavy_test_maps_to_no_mutation_target() {
+        let s = Scratch::new();
+        files(&s, &["e2e/cart.ts", "src/cart.ts", "src/cart.e2e.ts"]);
+        assert_eq!(
+            mutate(&s, &["e2e/cart.test.ts", "src/cart.e2e.test.ts"], &[]),
+            MutationSelection::None
         );
     }
 

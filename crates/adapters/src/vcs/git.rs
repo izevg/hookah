@@ -111,6 +111,14 @@ impl ChangeSource for GitChanges {
         ))))
     }
 
+    fn line_count(&self, file: &Path) -> Result<usize, PortError> {
+        let bytes = std::fs::read(file)
+            .map_err(|e| PortError::new(format!("reading {}: {e}", file.display())))?;
+        let newlines = bytes.iter().filter(|b| **b == b'\n').count();
+        // A last line without a newline still counts.
+        Ok(newlines + usize::from(bytes.last().is_some_and(|b| *b != b'\n')))
+    }
+
     fn changed_files(&self, root: &Path) -> Result<Vec<PathBuf>, PortError> {
         let top = git_ok(root, &["rev-parse", "--show-toplevel"])?;
         let top = top.strip_suffix(b"\n").unwrap_or(&top);

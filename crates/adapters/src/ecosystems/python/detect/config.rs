@@ -8,6 +8,8 @@
 use std::fs;
 use std::path::Path;
 
+use super::markers;
+
 /// How mypy finds its configuration.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MypyConfig {
@@ -23,6 +25,7 @@ pub struct Config {
     pyproject: String,
     setup_cfg: String,
     tox_ini: String,
+    pytest_ini: Option<String>,
     mypy_ini: String,
     mypy_ini_exists: bool,
     ruff_toml: bool,
@@ -38,6 +41,10 @@ impl Config {
             pyproject: read("pyproject.toml"),
             setup_cfg: read("setup.cfg"),
             tox_ini: read("tox.ini"),
+            pytest_ini: root
+                .join("pytest.ini")
+                .is_file()
+                .then(|| read("pytest.ini")),
             mypy_ini: format!("{}{}", read("mypy.ini"), read(".mypy.ini")),
             mypy_ini_exists: exists(&["mypy.ini", ".mypy.ini"]),
             ruff_toml: exists(&["ruff.toml", ".ruff.toml"]),
@@ -78,6 +85,24 @@ impl Config {
             || [&self.mypy_ini, &self.setup_cfg, &self.tox_ini]
                 .iter()
                 .any(|text| section_sets(text, "mypy", KEYS))
+    }
+
+    /// The pytest `-m` expression that deselects the heavy markers (`integration`, `e2e`,
+    /// `slow`) the project registers, or `None` when it registers none. pytest reads one config
+    /// source: `pytest.ini` (even without a section), else `pyproject.toml` with
+    /// `[tool.pytest.ini_options]`, else `tox.ini` with `[pytest]`, else `setup.cfg` with
+    /// `[tool:pytest]`.
+    pub fn heavy_marker_expression(&self) -> Option<String> {
+        let registered = if let Some(ini) = &self.pytest_ini {
+            markers::registered(ini, "pytest", false)
+        } else if has_table(&self.pyproject, "tool.pytest.ini_options") {
+            markers::registered(&self.pyproject, "tool.pytest.ini_options", true)
+        } else if has_section(&self.tox_ini, "pytest") {
+            markers::registered(&self.tox_ini, "pytest", false)
+        } else {
+            markers::registered(&self.setup_cfg, "tool:pytest", false)
+        };
+        markers::deselect_expression(&registered)
     }
 
     /// import-linter has a configuration.
@@ -154,7 +179,7 @@ fn is_name_char(c: char) -> bool {
     c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.')
 }
 
-fn leading_name(text: &str) -> &str {
+pub(super) fn leading_name(text: &str) -> &str {
     let end = text.find(|c| !is_name_char(c)).unwrap_or(text.len());
     &text[..end]
 }
@@ -186,6 +211,39 @@ mod tests {
             s.write(name, text);
         }
         Config::load(s.root())
+    }
+
+    #[test]
+    fn heavy_markers_come_from_the_one_config_pytest_reads() {
+        let expr = |files: &[(&str, &str)]| load(files).heavy_marker_expression();
+        let toml = "[tool.pytest.ini_options]\nmarkers = [\"slow: s\", \"unit\"]\n";
+        assert_eq!(
+            expr(&[("pyproject.toml", toml)]).as_deref(),
+            Some("not (slow)")
+        );
+        // pytest.ini wins over pyproject.toml, even without markers.
+        assert_eq!(expr(&[("pyproject.toml", toml), ("pytest.ini", "")]), None);
+        assert_eq!(
+            expr(&[("pytest.ini", "[pytest]\nmarkers =\n  e2e: x\n")]).as_deref(),
+            Some("not (e2e)")
+        );
+        assert_eq!(
+            expr(&[("tox.ini", "[pytest]\nmarkers =\n  integration\n")]).as_deref(),
+            Some("not (integration)")
+        );
+        assert_eq!(
+            expr(&[("setup.cfg", "[tool:pytest]\nmarkers =\n  slow\n")]).as_deref(),
+            Some("not (slow)")
+        );
+        // A heavy marker in a config pytest does not read counts for nothing.
+        assert_eq!(
+            expr(&[
+                ("pyproject.toml", "[tool.pytest.ini_options]\n"),
+                ("setup.cfg", "[tool:pytest]\nmarkers =\n  slow\n")
+            ]),
+            None
+        );
+        assert_eq!(expr(&[]), None);
     }
 
     #[test]

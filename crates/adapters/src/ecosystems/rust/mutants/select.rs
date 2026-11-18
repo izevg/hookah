@@ -8,12 +8,15 @@
 //! - A changed `tests/foo.rs` (or `tests/foo/...`) selects `src/foo.rs` or `src/foo/mod.rs` when
 //!   present. If it has no such twin, it selects the changed sources of the package, and if there
 //!   are none, `src/lib.rs` and `src/main.rs` (whichever exist).
+//! - A changed heavy test (`tests/integration_*.rs`, `tests/e2e/...`) selects nothing.
 //! - Changed sources under `src/` are always included.
 //! - Changed files under `benches/` and `examples/` select nothing; non-Rust files and
 //!   `build.rs` are ignored; files that do not exist are dropped.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
+
+use hookah_domain::light::TestWeight;
 
 /// The `cargo mutants` target string for one workspace-relative file. `--file` takes a glob, so
 /// the path is written with `/` on every OS: a `\` would escape the next character.
@@ -51,7 +54,7 @@ pub fn select(
     {
         if is_src(&test) {
             chosen.insert(test);
-        } else if test.starts_with("tests") {
+        } else if test.starts_with("tests") && !TestWeight::of_path(&test).is_heavy() {
             match twin(&test, exists) {
                 Some(src) => {
                     chosen.insert(src);
@@ -146,6 +149,23 @@ mod tests {
             ]
         );
         assert!(run(&["tests/api.rs"], &[], &[]).is_empty());
+    }
+
+    #[test]
+    fn heavy_integration_tests_select_nothing() {
+        let present = ["src/foo.rs", "src/lib.rs", "src/integration_flow.rs"];
+        for test in [
+            "tests/integration_flow.rs",
+            "tests/foo_e2e.rs",
+            "tests/e2e/main.rs",
+            "tests/integration/foo.rs",
+        ] {
+            assert!(run(&[test], &[], &present).is_empty(), "{test}");
+        }
+        assert_eq!(
+            run(&["tests/integration_flow.rs"], &["src/foo.rs"], &present),
+            ["--file=crates/core/src/foo.rs"]
+        );
     }
 
     #[test]

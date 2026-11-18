@@ -15,8 +15,10 @@
 //! | lint         | eslint     | `eslint --format json {targets}` when a flat or legacy config exists    |
 //! | typecheck    | tsc        | `tsc --noEmit --pretty false -p <tsconfig> --incremental --tsBuildInfoFile <cache>/tsc.tsbuildinfo`, or `tsc -b --pretty false <tsconfig>` with project references |
 //! | architecture | depcruise  | `depcruise --config <cfg> --output-type json {targets}` when a `.dependency-cruiser.*` config exists |
-//! | test         | vitest     | `vitest related --run --reporter=json --outputFile=<cache>/vitest-report.json --passWithNoTests {targets}` |
-//! | test         | jest       | `jest --ci --json --no-watchman --passWithNoTests --findRelatedTests {targets}` |
+//! | test         | vitest     | `vitest related --run --reporter=json --outputFile=<cache>/vitest-report.json --passWithNoTests --exclude=<heavy glob>... {targets}` |
+//! | test         | jest       | `jest --ci --json --no-watchman --passWithNoTests --testPathIgnorePatterns=<heavy regex>... --findRelatedTests {targets}` |
+//!
+//! The `<heavy ...>` flags keep integration and end-to-end tests out of the run, see [`super::heavy`].
 //! | mutation     | stryker    | `stryker run --incremental --reporters json --mutate {targets}` (one comma-joined target) |
 //!
 //! In a workspace, typecheck and test also run for the packages that depend on the edited one (see
@@ -37,6 +39,7 @@ use std::time::Duration;
 use hookah_domain::path::normalize;
 use hookah_domain::toolchain::{Arg, CheckKind, CommandSpec, MissingTool, Tool, Toolchain};
 
+use super::heavy;
 use package::PackageInfo;
 
 /// Name of the Biome tool.
@@ -204,24 +207,21 @@ fn test_tool(
                     dir.join(VITEST_REPORT).to_string_lossy()
                 )));
             }
-            args.extend([lit("--passWithNoTests"), Arg::Targets]);
+            args.push(lit("--passWithNoTests"));
+            args.extend(heavy::vitest_flags().iter().map(|f| lit(f)));
+            args.push(Arg::Targets);
             tool(VITEST, CheckKind::Test, bin, args, cwd, TEST_TIMEOUT)
         }
         Runner::Jest => tool(
             JEST,
             CheckKind::Test,
             bin,
-            [
-                "--ci",
-                "--json",
-                "--no-watchman",
-                "--passWithNoTests",
-                "--findRelatedTests",
-            ]
-            .iter()
-            .map(|a| lit(a))
-            .chain([Arg::Targets])
-            .collect(),
+            ["--ci", "--json", "--no-watchman", "--passWithNoTests"]
+                .iter()
+                .map(|a| lit(a))
+                .chain(heavy::jest_flags().iter().map(|f| lit(f)))
+                .chain([lit("--findRelatedTests"), Arg::Targets])
+                .collect(),
             cwd,
             TEST_TIMEOUT,
         ),
@@ -881,8 +881,12 @@ mod tests {
                 "--reporter=json",
                 &format!("--outputFile={}", cached("vitest-report.json")),
                 "--passWithNoTests",
-                "T"
             ]
+            .into_iter()
+            .map(String::from)
+            .chain(heavy::vitest_flags())
+            .chain(["T".to_string()])
+            .collect::<Vec<_>>()
         );
         assert_eq!(tc.tools()[0].command.timeout, Duration::from_secs(300));
     }
@@ -892,14 +896,12 @@ mod tests {
         let s = project(&[("jest", "29.7.0", "jest")]);
         assert_eq!(
             argv(&detect(&s), CheckKind::Test, JEST),
-            [
-                "--ci",
-                "--json",
-                "--no-watchman",
-                "--passWithNoTests",
-                "--findRelatedTests",
-                "T"
-            ]
+            ["--ci", "--json", "--no-watchman", "--passWithNoTests",]
+                .into_iter()
+                .map(String::from)
+                .chain(heavy::jest_flags())
+                .chain(["--findRelatedTests", "T"].map(String::from))
+                .collect::<Vec<_>>()
         );
     }
 

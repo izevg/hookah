@@ -15,6 +15,9 @@
 //!   `test_pkg.py`). A changed `conftest.py` or a helper inside a test directory selects the test
 //!   files in its own directory.
 //!
+//! Heavy tests (see [`TestWeight`]: `integration/`, `e2e/`, `*_integration.py`, ...) are dropped
+//! from every selection, and under testmon `heavy_ignores` makes pytest skip them itself.
+//!
 //! Without a match nothing is selected: the whole suite is never run instead. Hidden directories,
 //! virtual environments, `build/`, `dist/`, and `mutants/` are not searched.
 
@@ -23,6 +26,7 @@ pub mod mutants;
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
+use hookah_domain::light::TestWeight;
 use hookah_domain::project::Project;
 use hookah_domain::session::FileRole;
 use hookah_domain::toolchain::TestSelection;
@@ -86,7 +90,8 @@ fn test_names(rel: &Path) -> [String; 2] {
 /// Chooses the tests for the changed files (absolute paths). `testmon` says pytest runs with
 /// `--testmon`.
 pub fn tests(project: &Project, testmon: bool, changed: &[PathBuf]) -> TestSelection {
-    let rels = existing_python(project, changed);
+    let mut rels = existing_python(project, changed);
+    rels.retain(|rel| !TestWeight::of_path(rel).is_heavy());
     if testmon {
         return TestSelection::from_targets(path_strings(rels));
     }
@@ -121,7 +126,38 @@ pub fn tests(project: &Project, testmon: bool, changed: &[PathBuf]) -> TestSelec
             );
         }
     }
+    picked.retain(|rel| !TestWeight::of_path(rel).is_heavy());
     TestSelection::from_targets(path_strings(picked))
+}
+
+/// The pytest flags that skip heavy test paths below `root`, for runs where pytest picks the
+/// tests itself (testmon). `--ignore-glob` is an `fnmatch` against the file's absolute path, so
+/// the patterns start with the escaped project root: a project that lives under a directory
+/// called `e2e` is not ignored whole. Matching is by directory (`<root>*/e2e/*`) and by file
+/// stem word (`*_integration.py`, `integration_*.py`).
+pub fn heavy_ignores(root: &Path) -> Vec<String> {
+    let base: String = root
+        .to_string_lossy()
+        .chars()
+        .map(|c| match c {
+            '*' | '?' | '[' => format!("[{c}]"),
+            c => c.to_string(),
+        })
+        .collect();
+    let mut globs: Vec<String> = TestWeight::DIRS
+        .iter()
+        .map(|d| format!("{base}*/{d}/*"))
+        .collect();
+    for w in TestWeight::WORDS {
+        globs.push(format!("{base}*/{w}.py"));
+        globs.push(format!("{base}*/{w}[_-]*.py"));
+        globs.push(format!("{base}*[_-]{w}.py"));
+        globs.push(format!("{base}*[_-]{w}[_-]*.py"));
+    }
+    globs
+        .into_iter()
+        .map(|g| format!("--ignore-glob={g}"))
+        .collect()
 }
 
 fn path_strings(paths: impl IntoIterator<Item = PathBuf>) -> Vec<String> {
@@ -323,6 +359,57 @@ mod tests {
             ["src/shop/cart.py"]
         );
         assert_eq!(select(&s, true, &["README.md"]), TestSelection::None);
+    }
+
+    #[test]
+    fn heavy_tests_are_never_selected() {
+        let s = Scratch::new("sel-heavy");
+        layout(&s);
+        for f in [
+            "tests/integration/test_cart.py",
+            "tests/e2e/test_cart.py",
+            "tests/test_cart_integration.py",
+            "tests/integration/conftest.py",
+            "tests/integration/test_other.py",
+        ] {
+            s.write(f, "");
+        }
+        // A changed source picks only the light test of its name.
+        assert_eq!(
+            targets(select(&s, false, &["src/shop/cart.py"])),
+            ["tests/test_cart.py"]
+        );
+        // A changed heavy test, or a helper next to heavy tests, picks nothing.
+        for changed in [
+            "tests/integration/test_cart.py",
+            "tests/test_cart_integration.py",
+            "tests/integration/conftest.py",
+        ] {
+            assert_eq!(
+                select(&s, false, &[changed]),
+                TestSelection::None,
+                "{changed}"
+            );
+            assert_eq!(
+                select(&s, true, &[changed]),
+                TestSelection::None,
+                "{changed}"
+            );
+        }
+    }
+
+    #[test]
+    fn heavy_ignores_are_anchored_at_the_escaped_root() {
+        let flags = heavy_ignores(Path::new("/w/e2e/app[1]"));
+        assert!(
+            flags
+                .iter()
+                .all(|f| f.starts_with("--ignore-glob=/w/e2e/app[[]1]"))
+        );
+        assert!(flags.contains(&"--ignore-glob=/w/e2e/app[[]1]*/integration/*".to_string()));
+        assert!(flags.contains(&"--ignore-glob=/w/e2e/app[[]1]*[_-]e2e.py".to_string()));
+        assert!(flags.contains(&"--ignore-glob=/w/e2e/app[[]1]*/cypress[_-]*.py".to_string()));
+        assert_eq!(flags.len(), 5 + 4 * 4);
     }
 
     #[test]

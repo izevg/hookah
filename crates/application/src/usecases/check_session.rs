@@ -5,8 +5,12 @@
 //!
 //! 1. Lint, Typecheck, and Architecture over all its changed files. This catches files changed
 //!    outside edit hooks (a shell `sed`). Format never runs at stop.
-//! 2. Test, on the tests the detector selects as related. Without related tests nothing runs.
-//! 3. Mutation, only if at least one changed file is a test; the detector picks the targets.
+//! 2. Test, on the light tests the detector selects as related. Without related tests nothing
+//!    runs, and neither does anything when more targets than the test budget are selected.
+//! 3. Mutation, only if at least one changed file is a test and the change fits the mutation
+//!    budget; the detector picks the targets.
+//!
+//! Going over a budget is never a failure: the check is skipped and a notice tells the agent.
 //!
 //! Findings of kind `Test` and `Mutation` are never filtered by changed lines or a baseline. With
 //! a ready session baseline, the static findings reported are exactly the new ones. Tools the project
@@ -14,6 +18,7 @@
 //! request's display root, so projects in a monorepo stay distinguishable.
 
 use hookah_domain::finding::Severity;
+use hookah_domain::light::{Admission, Budgets};
 use hookah_domain::project::locate_project;
 use hookah_domain::session::{ChangeSet, ChangedLines, FileRole, Phase, TestRun, mutation_applies};
 use hookah_domain::toolchain::{CheckKind, MutationSelection, TestSelection};
@@ -29,6 +34,7 @@ use crate::ports::Ports;
 pub struct CheckSession<'a> {
     ports: Ports<'a>,
     report_limit: usize,
+    budgets: Budgets,
 }
 
 impl<'a> CheckSession<'a> {
@@ -37,7 +43,15 @@ impl<'a> CheckSession<'a> {
         Self {
             ports,
             report_limit,
+            budgets: Budgets::default(),
         }
+    }
+
+    /// Replaces the default [`Budgets`] of the light stop phase.
+    #[must_use]
+    pub fn with_budgets(mut self, budgets: Budgets) -> Self {
+        self.budgets = budgets;
+        self
     }
 
     /// Runs the stop phase. Never panics and never fails on a port error.
@@ -82,6 +96,7 @@ impl<'a> CheckSession<'a> {
             }
             let mut static_targets = Vec::new();
             let (mut tests, mut sources) = (Vec::new(), Vec::new());
+            let mut line_counts = Vec::new();
             for file in &group.files {
                 let Ok(rel) = project.relative(file) else {
                     continue;
@@ -98,6 +113,7 @@ impl<'a> CheckSession<'a> {
                     FileRole::Test => tests.push(file.clone()),
                     FileRole::Source => sources.push(file.clone()),
                 }
+                line_counts.push((file.clone(), lines.as_ref().and_then(ChangedLines::count)));
                 if let Some(lines) = lines {
                     filter.track(rel, lines);
                 }
@@ -105,7 +121,14 @@ impl<'a> CheckSession<'a> {
 
             let changed: Vec<_> = group.files.iter().cloned().collect();
             let test_targets = match self.ports.detector.select_tests(project, &changed) {
-                Ok(TestSelection::Targets(t)) => t,
+                Ok(TestSelection::Targets(t)) => match self.budgets.admit_tests(t.len()) {
+                    Admission::Run => t,
+                    Admission::Off => vec![],
+                    Admission::Skip(skip) => {
+                        log.skipped(&skip);
+                        vec![]
+                    }
+                },
                 Ok(TestSelection::None) => vec![],
                 Err(e) => {
                     log.fail(format!("selecting tests: {e}"));
@@ -117,7 +140,7 @@ impl<'a> CheckSession<'a> {
                 std::iter::repeat_n(FileRole::Test, tests.len())
                     .chain(std::iter::repeat_n(FileRole::Source, sources.len())),
             );
-            let mutant_targets = if mutation {
+            let mut mutant_targets = if mutation {
                 match self
                     .ports
                     .detector
@@ -130,6 +153,21 @@ impl<'a> CheckSession<'a> {
                 vec![]
             };
 
+            // Mutation is skipped, with a notice once it would have run, for a large change.
+            let mut mutation_skip = None;
+            if !mutant_targets.is_empty() && toolchain.of_kind(CheckKind::Mutation).next().is_some()
+            {
+                let lines = self.changed_line_total(&line_counts);
+                match self.budgets.admit_mutation(line_counts.len(), lines) {
+                    Admission::Run => {}
+                    Admission::Off => mutant_targets.clear(),
+                    Admission::Skip(skip) => {
+                        mutant_targets.clear();
+                        mutation_skip = Some(skip);
+                    }
+                }
+            }
+
             log.report_missing(&toolchain, |k| match k {
                 CheckKind::Format => false,
                 CheckKind::Test => !test_targets.is_empty(),
@@ -139,6 +177,12 @@ impl<'a> CheckSession<'a> {
             let mut test_run = TestRun::NotRun;
             for &kind in Phase::Stop.check_kinds() {
                 if kind == CheckKind::Mutation && !test_run.allows_mutation() {
+                    continue;
+                }
+                if kind == CheckKind::Mutation
+                    && let Some(skip) = &mutation_skip
+                {
+                    log.skipped(skip);
                     continue;
                 }
                 let targets = match kind {
@@ -177,6 +221,16 @@ impl<'a> CheckSession<'a> {
             self.record_clean(&request.root);
         }
         total.finish(self.report_limit)
+    }
+
+    /// The changed lines over all files; a new file counts as long as the file is.
+    fn changed_line_total(&self, counts: &[(std::path::PathBuf, Option<usize>)]) -> usize {
+        counts
+            .iter()
+            .map(|(file, count)| {
+                count.unwrap_or_else(|| self.ports.changes.line_count(file).unwrap_or(0))
+            })
+            .sum()
     }
 
     /// Nothing changed: the project at `root` is clean, which replaces an older failure.
@@ -311,6 +365,144 @@ mod tests {
         w.selection = TestSelection::Targets(vec!["t".into()]);
         w.mutants = MutationSelection::Targets(vec!["src/a.rs".into()]);
         w
+    }
+
+    fn run_with(w: &World, budgets: Budgets) -> Outcome {
+        CheckSession::new(w.ports(), 20)
+            .with_budgets(budgets)
+            .run(&StopRequest::new("/r"))
+    }
+
+    fn degraded(text: &str) -> Notice {
+        Notice::Degraded(text.into())
+    }
+
+    #[test]
+    fn tests_over_the_budget_are_not_run_and_a_notice_says_so() {
+        let mut w = world();
+        w.selection = TestSelection::Targets(vec!["a".into(), "b".into(), "c".into()]);
+        let out = run_with(&w, Budgets::new(2, 3, 150));
+        assert_eq!(out.verdict, Verdict::Pass);
+        assert_eq!(
+            out.notices,
+            [degraded(
+                "3 related tests selected; above the light budget of 2, run them yourself"
+            )]
+        );
+        assert!(w.calls().is_empty());
+        // Exactly at the budget still runs.
+        let out = run_with(&w, Budgets::new(3, 3, 150));
+        assert_eq!(out, Outcome::pass());
+        assert_eq!(w.calls(), ["test a,b,c"]);
+    }
+
+    #[test]
+    fn a_zero_test_budget_runs_no_tests_and_says_nothing() {
+        let mut w = world();
+        w.selection = TestSelection::Targets(vec!["a".into()]);
+        assert_eq!(run_with(&w, Budgets::new(0, 3, 150)), Outcome::pass());
+        assert!(w.calls().is_empty());
+    }
+
+    #[test]
+    fn skipped_tests_do_not_report_a_missing_test_tool() {
+        let mut w = world();
+        w.toolchain =
+            hookah_domain::toolchain::Toolchain::new(vec![]).with_missing(vec![MissingTool::new(
+                "runner",
+                CheckKind::Test,
+                "install it",
+            )]);
+        w.selection = TestSelection::Targets(vec!["a".into(), "b".into()]);
+        let out = run_with(&w, Budgets::new(1, 3, 150));
+        assert_eq!(out.notices.len(), 1);
+        assert!(matches!(&out.notices[0], Notice::Degraded(_)));
+    }
+
+    #[test]
+    fn mutation_over_the_file_budget_is_skipped_with_a_notice() {
+        let w = mutation_world();
+        // Two code files changed (a.rs and b.rs), ten lines each by default.
+        let out = run_with(&w, Budgets::new(25, 1, 150));
+        assert_eq!(out.verdict, Verdict::Pass);
+        assert_eq!(
+            out.notices,
+            [degraded(
+                "mutation testing skipped: change too large (2 files / 20 lines, budget 1 / 150)"
+            )]
+        );
+        assert_eq!(w.calls(), ["test t"]);
+        assert_eq!(run_with(&w, Budgets::new(25, 2, 20)), Outcome::pass());
+    }
+
+    #[test]
+    fn mutation_over_the_line_budget_counts_ranges_and_new_files() {
+        let mut w = mutation_world();
+        w.lines = ChangedLines::Ranges(vec![
+            hookah_domain::session::LineRange::new(3, 7).unwrap(),
+            hookah_domain::session::LineRange::new(9, 9).unwrap(),
+        ]);
+        let out = run_with(&w, Budgets::new(25, 3, 11));
+        assert_eq!(
+            out.notices,
+            [degraded(
+                "mutation testing skipped: change too large (2 files / 12 lines, budget 3 / 11)"
+            )]
+        );
+        assert_eq!(w.calls(), ["test t"]);
+        assert_eq!(run_with(&w, Budgets::new(25, 3, 12)), Outcome::pass());
+
+        // A new file counts as long as the file is; an unreadable one counts as nothing.
+        let mut w = mutation_world();
+        w.file_lines = 100;
+        assert_eq!(run_with(&w, Budgets::new(25, 3, 199)).notices.len(), 1);
+        assert_eq!(run_with(&w, Budgets::new(25, 3, 200)), Outcome::pass());
+        w.lines_fail = true;
+        assert_eq!(run_with(&w, Budgets::new(25, 3, 1)), Outcome::pass());
+    }
+
+    #[test]
+    fn a_zero_mutation_budget_switches_mutation_off_silently() {
+        let w = mutation_world();
+        for budgets in [Budgets::new(25, 0, 150), Budgets::new(25, 3, 0)] {
+            assert_eq!(run_with(&w, budgets), Outcome::pass());
+            assert_eq!(w.calls().last().unwrap(), "test t");
+        }
+        assert_eq!(w.calls(), ["test t", "test t"]);
+    }
+
+    #[test]
+    fn a_large_change_without_a_mutation_tool_says_nothing_about_mutation() {
+        let mut w = mutation_world();
+        w.toolchain = hookah_domain::toolchain::Toolchain::new(vec![tool("test", CheckKind::Test)]);
+        assert_eq!(run_with(&w, Budgets::new(25, 1, 1)), Outcome::pass());
+    }
+
+    #[test]
+    fn mutation_skip_is_not_announced_when_failed_tests_stop_the_run_first() {
+        let mut w = mutation_world();
+        w.findings.insert(
+            "test".into(),
+            vec![finding(
+                CheckKind::Test,
+                Severity::Error,
+                "src/a.rs",
+                3,
+                "assertion failed",
+            )],
+        );
+        let out = run_with(&w, Budgets::new(25, 1, 150));
+        assert!(matches!(out.verdict, Verdict::Fail(_)));
+        assert!(out.notices.is_empty());
+    }
+
+    #[test]
+    fn a_mutation_timeout_degrades_and_never_fails() {
+        let mut w = mutation_world();
+        w.timeouts = vec!["mut".into()];
+        let out = run(&w);
+        assert!(matches!(out.verdict, Verdict::Degraded(r) if r.contains("mut timed out")));
+        assert_eq!(w.calls(), ["test t", "mut src/a.rs"]);
     }
 
     #[test]

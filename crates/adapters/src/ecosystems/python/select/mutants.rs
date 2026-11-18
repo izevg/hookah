@@ -10,11 +10,13 @@
 //! flat layout, or nested packages). When several files share the name, only those whose
 //! directory shares the most path components with the test's directory are kept, so
 //! `tests/domain/test_cart.py` picks `shop/domain/cart.py` over `shop/infra/cart.py`. Files that
-//! no longer exist are dropped; an empty result selects nothing.
+//! no longer exist are dropped; an empty result selects nothing. Heavy tests (integration, e2e) map
+//! to nothing: they do not decide what gets mutated.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
+use hookah_domain::light::TestWeight;
 use hookah_domain::project::Project;
 use hookah_domain::toolchain::MutationSelection;
 
@@ -67,7 +69,7 @@ pub fn select(
             .collect();
         for test in &tests {
             let name = test.file_name().and_then(|n| n.to_str()).unwrap_or("");
-            if !is_test_module(name) {
+            if !is_test_module(name) || TestWeight::of_path(test).is_heavy() {
                 continue;
             }
             let Some(covered) = covered_name(name) else {
@@ -198,6 +200,29 @@ mod tests {
             &project(&s),
             &abs(&s, &["tests/domain/test_gone.py"]),
             &abs(&s, &["src/shop/gone.py", "tests/test_pricing.py"]),
+        );
+        assert_eq!(sel, MutationSelection::None);
+    }
+
+    #[test]
+    fn heavy_tests_map_to_no_mutation_target() {
+        let s = tree("mut-heavy");
+        for f in [
+            "tests/integration/test_pricing.py",
+            "tests/test_pricing_integration.py",
+        ] {
+            s.write(f, "");
+        }
+        let sel = select(
+            &project(&s),
+            &abs(
+                &s,
+                &[
+                    "tests/integration/test_pricing.py",
+                    "tests/test_pricing_integration.py",
+                ],
+            ),
+            &[],
         );
         assert_eq!(sel, MutationSelection::None);
     }

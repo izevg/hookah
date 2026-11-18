@@ -2,8 +2,8 @@ exit: 0
 --- stdout
 {
   "hookSpecificOutput": {
-    "additionalContext": "hookah reformatted src/cart.js. Re-read the file before editing it again.",
-    "hookEventName": "PostToolUse"
+    "hookEventName": "PostToolUse",
+    "additionalContext": "hookah reformatted src/cart.js. Re-read the file before editing it again."
   }
 }
 --- stderr

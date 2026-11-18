@@ -10,11 +10,12 @@
 //!   ones.
 //! - `--report-limit <N>` (global): cap on findings shown per report.
 //!
-//! `hookah init`, a post-MVP setup wizard, is not implemented yet.
+//! - `hookah setup <harness>` / `hookah setup --detect`: write the hook config of a harness, or
+//!   survey which harnesses are installed and configured.
 
 use std::path::PathBuf;
 
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 use hookah_domain::verdict::DEFAULT_LIMIT;
 
 /// Run format, lint, and related tests on files an AI coding agent edits.
@@ -50,6 +51,11 @@ pub enum Command {
         /// The harness the plugin is for.
         harness: PluginKind,
     },
+    /// Write or merge the hook config of an agent harness, or list the installed ones.
+    ///
+    /// Non-interactive and idempotent: existing settings are kept, hookah's entries are added or
+    /// updated in place, and the original file is backed up once to `<file>.hookah.bak`.
+    Setup(SetupArgs),
     /// Compute the finding baseline of a project for an agent session. Spawned by `hookah hook`
     /// on a session start; not meant to be run by hand.
     #[command(hide = true)]
@@ -66,6 +72,45 @@ pub enum Command {
         /// File or directory to inspect.
         path: PathBuf,
     },
+}
+
+/// Arguments of `hookah setup`.
+#[derive(Debug, Args)]
+pub struct SetupArgs {
+    /// The harness to configure.
+    #[arg(required_unless_present = "detect", conflicts_with = "detect")]
+    pub harness: Option<HarnessKind>,
+
+    /// List installed harnesses and which are already configured. Read-only.
+    #[arg(long)]
+    pub detect: bool,
+
+    /// Which config to edit: the project's or the user's. Defaults to `project`, or `user` for
+    /// Kimi Code, which has no project config.
+    #[arg(long, value_enum, conflicts_with = "detect")]
+    pub scope: Option<ScopeKind>,
+
+    /// Show the file that would be written, and write nothing.
+    #[arg(long, conflicts_with_all = ["detect", "print"])]
+    pub dry_run: bool,
+
+    /// Print only the config snippet, and write nothing.
+    #[arg(long, conflicts_with = "detect")]
+    pub print: bool,
+
+    /// The command that starts hookah in each hook, for example `mise exec -- hookah`. Defaults to
+    /// the absolute path of this binary.
+    #[arg(long, value_name = "CMD", conflicts_with = "detect")]
+    pub command: Option<String>,
+}
+
+/// Where a harness config lives.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum ScopeKind {
+    /// The current project's config.
+    Project,
+    /// The user's config, for every project.
+    User,
 }
 
 /// Supported agent harnesses.
@@ -143,6 +188,45 @@ mod tests {
                 assert_eq!(root, PathBuf::from("/p"));
             }
             other => panic!("expected baseline, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_setup_forms() {
+        let cli = Cli::try_parse_from([
+            "hookah",
+            "setup",
+            "kimi",
+            "--scope",
+            "user",
+            "--dry-run",
+            "--command",
+            "mise exec -- hookah",
+        ])
+        .unwrap();
+        match cli.command {
+            Command::Setup(a) => {
+                assert_eq!(a.harness, Some(HarnessKind::Kimi));
+                assert_eq!(a.scope, Some(ScopeKind::User));
+                assert!(a.dry_run && !a.print && !a.detect);
+                assert_eq!(a.command.as_deref(), Some("mise exec -- hookah"));
+            }
+            other => panic!("expected setup, got {other:?}"),
+        }
+        let cli = Cli::try_parse_from(["hookah", "setup", "--detect"]).unwrap();
+        assert!(matches!(cli.command, Command::Setup(a) if a.detect && a.harness.is_none()));
+    }
+
+    #[test]
+    fn rejects_inconsistent_setup_flags() {
+        for bad in [
+            &["hookah", "setup"][..],
+            &["hookah", "setup", "claude", "--detect"],
+            &["hookah", "setup", "--detect", "--dry-run"],
+            &["hookah", "setup", "claude", "--dry-run", "--print"],
+            &["hookah", "setup", "nope"],
+        ] {
+            assert!(Cli::try_parse_from(bad).is_err(), "{bad:?}");
         }
     }
 

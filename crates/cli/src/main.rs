@@ -7,6 +7,7 @@
 
 mod args;
 mod render;
+mod setup;
 mod wiring;
 
 use std::io::{Read, Write};
@@ -52,6 +53,7 @@ fn main() -> ExitCode {
         Command::Baseline { session, root } => exit(baseline(&root, &session)),
         Command::Hook { harness } => exit(guarded_hook(harness, limit)),
         Command::Plugin { harness } => exit(plugin(harness)),
+        Command::Setup(args) => exit(setup::run(&args)),
     }
 }
 

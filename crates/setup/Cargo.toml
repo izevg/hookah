@@ -1,0 +1,17 @@
+[package]
+name = "hookah-setup"
+description = "Writes and merges the hook configuration of each supported AI coding agent harness."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+hookah-harness.workspace = true
+# `preserve_order` keeps the user's key order when a settings file is rewritten.
+serde_json = { workspace = true, features = ["preserve_order"] }
+toml_edit = "0.23"
+
+[lints]
+workspace = true

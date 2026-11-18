@@ -1,6 +1,12 @@
-# Install and configure hookah (procedure for AI agents)
+# Let your agent install it
 
-Follow these steps literally, in order. Do not hand-edit settings files: `hookah setup` writes
+This page is the procedure an AI coding agent follows to install and configure hookah. A user
+only has to paste `https://github.com/izevg/hookah` into their agent and ask: "install and
+configure hookah for me." This page is also served as plain markdown at
+<https://izevg.github.io/hookah/setup/agents.md>, and the whole documentation as one text file at
+<https://izevg.github.io/hookah/llms-full.txt>.
+
+**For agents.** Follow these steps literally, in order. Do not hand-edit settings files: `hookah setup` writes
 them. Do not ask the user questions unless a step says so. Stop and report if a step fails.
 
 ## 1. Detect the operating system and the harness you run in

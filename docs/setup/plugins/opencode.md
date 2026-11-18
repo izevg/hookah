@@ -10,7 +10,7 @@ binary. The plugin source is embedded in the binary and printed by `hookah plugi
   only; subagent sessions get theirs lazily) and runs `hookah hook opencode` with
   `event: "start"` and the session id. `hookah` records the problems the project already has in
   the background, so later reports show only what the agent introduced (the baseline; see
-  [architecture](../architecture.md#baseline)), and answers at once with an empty reply.
+  [architecture](../../architecture.md#baseline)), and answers at once with an empty reply.
 - **Edit phase.** The plugin's `tool.execute.after` hook fires after the built-in tools that
   write files: `write` and `edit` (argument `filePath`) and `apply_patch` (argument
   `patchText`; the plugin reads the `*** Add File:`, `*** Update File:`, and `*** Move to:`

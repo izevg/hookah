@@ -19,11 +19,16 @@ feeds failures straight back to the agent, so it fixes them immediately.
 
 </div>
 
+> **AI agents:** to install and configure hookah, follow
+> <https://izevg.github.io/hookah/setup/agents.html> (raw markdown:
+> <https://izevg.github.io/hookah/setup/agents.md>, index for agents:
+> <https://izevg.github.io/hookah/llms.txt>).
+
 > **Status:** works for Rust, Node (TypeScript/JavaScript), and Python projects, with the Claude
 > Code, Codex, Qoder, Kimi, and opencode harnesses (`hookah check`, `hookah detect`, `hookah hook
 > <harness>`, `hookah plugin opencode`, `hookah setup`), including mutation testing at stop. Orca is still to come.
 > End-to-end [samples](samples/README.md) cover the behavior. Prebuilt binaries and the install
-> scripts arrive with the first release. This repository runs `hookah` on itself; see
+> scripts ship with each [release](https://github.com/izevg/hookah/releases). This repository runs `hookah` on itself; see
 > [Claude Code setup](docs/setup/hooks/claude-code.md#dogfooding).
 
 ## Why
@@ -53,8 +58,6 @@ old warnings from code it did not touch.
 
 ## Install
 
-> Available from the first release. Until then, build from source.
-
 | Platform      | Command |
 |---------------|---------|
 | Linux / macOS | `curl -fsSL https://izevg.github.io/hookah/install.sh \| sh` |
@@ -62,8 +65,10 @@ old warnings from code it did not touch.
 | From source   | `cargo install --git https://github.com/izevg/hookah --locked hookah` |
 
 > **Let your agent do it.** Paste `https://github.com/izevg/hookah` into your coding agent and
-> say: *"install and configure hookah for me."* The agent follows the deterministic procedure in
-> [docs/setup/agents.md](docs/setup/agents.md).
+> say: *"install and configure hookah for me."* The agent follows the deterministic procedure at
+> [izevg.github.io/hookah/setup/agents.html](https://izevg.github.io/hookah/setup/agents.html)
+> (source: [docs/setup/agents.md](docs/setup/agents.md); the whole site as plain text for agents:
+> [llms.txt](https://izevg.github.io/hookah/llms.txt)).
 
 ## Quick start
 
@@ -176,6 +181,8 @@ They run once, when the agent says it's done, and a red result blocks the finish
 | [Mutation testing](docs/mutation.md) | mutation-testing `hookah` itself |
 | [Harness setup](docs/setup/hooks/claude-code.md) | one page per harness, linked in Quick start |
 | [Setup for agents](docs/setup/agents.md) | the exact procedure an agent follows to install and configure `hookah` |
+
+The same pages are published as a searchable site at <https://izevg.github.io/hookah/>.
 
 ## Contributing
 

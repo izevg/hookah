@@ -1,7 +1,7 @@
 //! `Baseline` and the "only new findings" rule.
 //!
 //! A baseline is a multiset of fingerprints: the static findings (format, lint, typecheck,
-//! architecture) that existed when the agent session started. Comparing a fresh run with it
+//! architecture, unused) that existed when the agent session started. Comparing a fresh run with it
 //! gives the findings the agent introduced. Counts matter: with two occurrences in the baseline
 //! and three now, exactly one is new, and it is the last one by position.
 //!
@@ -24,7 +24,11 @@ impl Baseline {
     pub fn covers(kind: CheckKind) -> bool {
         matches!(
             kind,
-            CheckKind::Format | CheckKind::Lint | CheckKind::Typecheck | CheckKind::Architecture
+            CheckKind::Format
+                | CheckKind::Lint
+                | CheckKind::Typecheck
+                | CheckKind::Architecture
+                | CheckKind::Unused
         )
     }
 
@@ -107,6 +111,7 @@ mod tests {
             CheckKind::Lint,
             CheckKind::Typecheck,
             CheckKind::Architecture,
+            CheckKind::Unused,
         ] {
             assert!(Baseline::covers(kind));
         }

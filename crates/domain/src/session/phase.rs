@@ -5,7 +5,8 @@
 //!
 //! - `Edit`: Format, Lint, Typecheck, Architecture, on the edited file.
 //! - `Stop`: Lint, Typecheck, Architecture over all changed files of the project (this catches
-//!   files changed outside edit hooks, such as by a shell `sed`), then Test, then Mutation.
+//!   files changed outside edit hooks, such as by a shell `sed`), then Unused (whole-project
+//!   analysis, too slow for the edit phase), then Test, then Mutation.
 //!   Format never runs at stop: it rewrites files, and the agent has no chance to re-read them.
 //!   Mutation is skipped for a project whose tests failed or degraded ([`TestRun`]): mutating a
 //!   red baseline only adds noise.
@@ -50,6 +51,7 @@ impl Phase {
                 CheckKind::Lint,
                 CheckKind::Typecheck,
                 CheckKind::Architecture,
+                CheckKind::Unused,
                 CheckKind::Test,
                 CheckKind::Mutation,
             ],
@@ -113,8 +115,9 @@ mod tests {
         );
         assert_eq!(
             Phase::Stop.check_kinds(),
-            &[Lint, Typecheck, Architecture, Test, Mutation]
+            &[Lint, Typecheck, Architecture, Unused, Test, Mutation]
         );
         assert!(!Phase::Stop.check_kinds().contains(&Format));
+        assert!(!Phase::Edit.check_kinds().contains(&Unused));
     }
 }

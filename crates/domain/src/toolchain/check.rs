@@ -1,4 +1,4 @@
-//! `CheckKind`: `Format`, `Lint`, `Typecheck`, `Architecture`, `Test`, `Mutation`.
+//! `CheckKind`: `Format`, `Lint`, `Typecheck`, `Architecture`, `Unused`, `Test`, `Mutation`.
 //!
 //! Which kinds run in which phase is decided by `Phase::check_kinds`.
 
@@ -13,6 +13,9 @@ pub enum CheckKind {
     Typecheck,
     /// Checks module dependency rules (`dependency-cruiser`, `import-linter`).
     Architecture,
+    /// Finds unused files, exports, and dependencies across the whole project (`knip`). It needs
+    /// the whole import graph, so it runs in the stop phase only.
+    Unused,
     /// Runs tests related to the changed files.
     Test,
     /// Mutation testing of the sources covered by the changed tests.
@@ -27,6 +30,7 @@ impl CheckKind {
             Self::Lint => "lint",
             Self::Typecheck => "typecheck",
             Self::Architecture => "architecture",
+            Self::Unused => "unused",
             Self::Test => "test",
             Self::Mutation => "mutation",
         }
@@ -39,6 +43,7 @@ impl CheckKind {
             Self::Lint => "lint",
             Self::Typecheck => "typecheck",
             Self::Architecture => "architecture check",
+            Self::Unused => "unused code check",
             Self::Test => "test",
             Self::Mutation => "mutation testing",
         }
@@ -53,5 +58,7 @@ mod tests {
     fn names_and_descriptions() {
         assert_eq!(CheckKind::Typecheck.name(), "typecheck");
         assert_eq!(CheckKind::Mutation.description(), "mutation testing");
+        assert_eq!(CheckKind::Unused.name(), "unused");
+        assert_eq!(CheckKind::Unused.description(), "unused code check");
     }
 }

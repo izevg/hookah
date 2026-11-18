@@ -5,7 +5,8 @@
 //! project root (or to the tool's own directory, see [`parse`]):
 //!
 //! - [`lint`]: Biome and ESLint JSON, Prettier syntax errors (format and lint tools);
-//! - [`graph`]: `tsc` diagnostics and the dependency-cruiser JSON (whole-program checks);
+//! - [`graph`]: `tsc` diagnostics, the dependency-cruiser JSON, and the knip JSON (whole-program
+//!   checks);
 //! - [`runs`]: Vitest and Jest reports and the Stryker mutation report (test runs).
 //!
 //! A tool that fails and leaves nothing readable becomes a [`PortError`] with a short tail of its
@@ -56,6 +57,7 @@ fn parse_in(root: &Path, tool: &Tool, output: &ProcessOutput) -> Result<Vec<Find
         (detect::ESLINT, _) => lint::eslint(root, output),
         (detect::TSC, _) => graph::tsc(root, output),
         (detect::DEPCRUISE, _) => graph::depcruise(root, output),
+        (detect::KNIP, _) => graph::knip(root, output),
         (detect::VITEST, _) => runs::vitest(root, output),
         (detect::JEST, _) => runs::jest(root, output),
         (detect::STRYKER, _) => runs::stryker(root, output),

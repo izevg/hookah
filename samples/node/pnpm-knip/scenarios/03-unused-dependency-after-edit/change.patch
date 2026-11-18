@@ -1,0 +1,10 @@
+diff --git a/packages/app/src/main.ts b/packages/app/src/main.ts
+index cd6e4bf..be2d623 100644
+--- a/packages/app/src/main.ts
++++ b/packages/app/src/main.ts
+@@ -1,4 +1,3 @@
+ import { total } from "@shop/lib";
+-import leftPad from "left-pad";
+ 
+-console.log(leftPad(String(total([1.1, 2.2])), 8));
++console.log(String(total([1.1, 2.2])).padStart(8));

@@ -15,6 +15,7 @@
 //! | lint         | eslint     | `eslint --format json {targets}` when a flat or legacy config exists    |
 //! | typecheck    | tsc        | `tsc --noEmit --pretty false -p <tsconfig> --incremental --tsBuildInfoFile <cache>/tsc.tsbuildinfo`, or `tsc -b --pretty false <tsconfig>` with project references |
 //! | architecture | depcruise  | `depcruise --config <cfg> --output-type json {targets}` when a `.dependency-cruiser.*` config exists |
+//! | unused       | knip       | `knip --reporter json --no-progress --no-exit-code --no-config-hints [--workspace <dir>]`, stop phase only, when `knip` is declared |
 //! | test         | vitest     | `vitest related --run --reporter=json --outputFile=<cache>/vitest-report.json --passWithNoTests --exclude=<heavy glob>... {targets}` |
 //! | test         | jest       | `jest --ci --json --no-watchman --passWithNoTests --testPathIgnorePatterns=<heavy regex>... --findRelatedTests {targets}` |
 //!
@@ -24,6 +25,13 @@
 //! In a workspace, typecheck and test also run for the packages that depend on the edited one (see
 //! [`workspace`]): one `tsc -b` from a workspace solution `tsconfig.json` that references them,
 //! else one `tsc` per dependent, and the test runner of each dependent from its own directory.
+//!
+//! Knip analyses the whole project (all files, exports, and dependencies), so it is the one tool
+//! of the [`CheckKind::Unused`] kind and runs in the stop phase only. It needs no config file: it
+//! works out entries from `package.json` and its plugins, and reads `knip.json(c)`, `knip.ts`, or
+//! a `knip` key itself. In a workspace it runs from the workspace root with `--workspace <package
+//! dir>`: from a package directory alone it cannot see the other packages and would report their
+//! users' imports as unused.
 //!
 //! Both biome and eslint lint when both are configured. Of vitest and jest, vitest runs unless
 //! `scripts.test` mentions jest and not vitest. Only mutation testing reports a missing tool, and
@@ -52,6 +60,8 @@ pub const ESLINT: &str = "eslint";
 pub const TSC: &str = "tsc";
 /// Name of the dependency-cruiser tool.
 pub const DEPCRUISE: &str = "depcruise";
+/// Name of the Knip tool.
+pub const KNIP: &str = "knip";
 /// Name of the Vitest tool.
 pub const VITEST: &str = "vitest";
 /// Name of the Jest tool.
@@ -92,6 +102,7 @@ const FORMAT_TIMEOUT: Duration = Duration::from_secs(30);
 const LINT_TIMEOUT: Duration = Duration::from_secs(60);
 const TSC_TIMEOUT: Duration = Duration::from_secs(120);
 const DEPCRUISE_TIMEOUT: Duration = Duration::from_secs(60);
+const KNIP_TIMEOUT: Duration = Duration::from_secs(120);
 const TEST_TIMEOUT: Duration = Duration::from_secs(300);
 const STRYKER_TIMEOUT: Duration = Duration::from_secs(480);
 
@@ -321,6 +332,10 @@ pub fn toolchain(info: &PackageInfo, cache: impl Fn() -> Option<PathBuf>) -> Too
         ));
     }
 
+    if let Some(k) = installed(info, "knip", KNIP) {
+        tools.push(knip_tool(info, &k));
+    }
+
     let runner = find_runner(info);
     if let Some((runner, bin)) = &runner {
         tools.push(test_tool(*runner, bin, root, &cache));
@@ -355,6 +370,35 @@ pub fn toolchain(info: &PackageInfo, cache: impl Fn() -> Option<PathBuf>) -> Too
         }
     }
     Toolchain::new(tools).with_missing(missing)
+}
+
+/// The knip command: from the workspace root, narrowed to the package with `--workspace` when the
+/// package is not the root itself. It takes no file targets: knip always analyses the project.
+fn knip_tool(info: &PackageInfo, bin: &Installed) -> Tool {
+    let mut args: Vec<Arg> = [
+        "--reporter",
+        "json",
+        "--no-progress",
+        "--no-exit-code",
+        "--no-config-hints",
+    ]
+    .iter()
+    .map(|a| lit(a))
+    .collect();
+    if let Ok(dir) = info.root.strip_prefix(&info.workspace_root)
+        && !dir.as_os_str().is_empty()
+    {
+        args.push(lit("--workspace"));
+        args.push(lit(&dir.to_string_lossy().replace('\\', "/")));
+    }
+    tool(
+        KNIP,
+        CheckKind::Unused,
+        bin,
+        args,
+        &info.workspace_root,
+        KNIP_TIMEOUT,
+    )
 }
 
 fn eslint_configured(info: &PackageInfo) -> bool {
@@ -867,6 +911,50 @@ mod tests {
             ]
         );
         assert_eq!(tc.tools()[0].command.timeout, Duration::from_secs(60));
+    }
+
+    #[test]
+    fn knip_needs_to_be_declared_and_installed_and_takes_no_config_or_targets() {
+        let s = Scratch::new();
+        s.write("package.json", r#"{"devDependencies":{"knip":"6"}}"#);
+        assert!(detect(&s).tools().is_empty());
+        let s = project(&[("knip", "6.45.1", "knip")]);
+        let tc = detect(&s);
+        let tool = tc.of_kind(CheckKind::Unused).next().unwrap();
+        assert_eq!(tool.name, KNIP);
+        assert_eq!(
+            tool.command.expand_args(&["T".into()]),
+            [
+                "--reporter",
+                "json",
+                "--no-progress",
+                "--no-exit-code",
+                "--no-config-hints"
+            ]
+        );
+        assert_eq!(tool.command.cwd, s.0);
+        assert_eq!(tool.command.timeout, Duration::from_secs(120));
+    }
+
+    #[test]
+    fn knip_runs_from_the_workspace_root_narrowed_to_the_package() {
+        let s = workspace();
+        s.install("", "knip", "6.45.1", Some("knip"));
+        s.write(
+            "package.json",
+            r#"{"devDependencies":{"typescript":"5","vitest":"2","knip":"6"}}"#,
+        );
+        let tc = detect_in(&s, "packages/lib");
+        let tool = tc.of_kind(CheckKind::Unused).next().unwrap();
+        assert_eq!(tool.command.cwd, s.0);
+        assert_eq!(
+            tool.command.expand_args(&[])[5..],
+            ["--workspace", "packages/lib"]
+        );
+        // The workspace root itself is not narrowed.
+        let tc = detect_in(&s, "");
+        let tool = tc.of_kind(CheckKind::Unused).next().unwrap();
+        assert_eq!(tool.command.expand_args(&[]).len(), 5);
     }
 
     #[test]

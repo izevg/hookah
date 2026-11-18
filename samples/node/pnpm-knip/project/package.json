@@ -1,0 +1,9 @@
+{
+  "name": "shop",
+  "private": true,
+  "packageManager": "pnpm@12.21.0",
+  "devDependencies": {
+    "knip": "^6.45.1",
+    "typescript": "^5.9.3"
+  }
+}

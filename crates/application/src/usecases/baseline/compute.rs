@@ -1,6 +1,6 @@
 //! `ComputeBaseline`: the background job.
 //!
-//! Runs every Lint, Typecheck, and Architecture tool of the project over the whole project (the
+//! Runs every Lint, Typecheck, Architecture, and Unused tool of the project over the whole project (the
 //! detector says which targets make a tool cover it) and stores the fingerprints of what they
 //! find. Format never runs: it rewrites files. Test and Mutation do not run: they are not
 //! baseline-filtered. A baseline missing the findings of a tool that failed would make old
@@ -19,10 +19,11 @@ use crate::ports::Ports;
 use crate::usecases::request::RunLog;
 
 /// The kinds a baseline covers, in the order they run.
-const KINDS: [CheckKind; 3] = [
+const KINDS: [CheckKind; 4] = [
     CheckKind::Lint,
     CheckKind::Typecheck,
     CheckKind::Architecture,
+    CheckKind::Unused,
 ];
 
 /// Computes and stores the baseline of one project for one session.
@@ -100,6 +101,7 @@ mod tests {
                 tool("lint", CheckKind::Lint),
                 tool("types", CheckKind::Typecheck),
                 tool("arch", CheckKind::Architecture),
+                tool("unused", CheckKind::Unused),
                 tool("test", CheckKind::Test),
                 tool("mut", CheckKind::Mutation),
             ],
@@ -124,7 +126,7 @@ mod tests {
     fn runs_the_static_tools_over_the_whole_project_in_order() {
         let w = world();
         run(&w).unwrap();
-        assert_eq!(w.calls(), ["lint .", "types .", "arch ."]);
+        assert_eq!(w.calls(), ["lint .", "types .", "arch .", "unused ."]);
     }
 
     #[test]

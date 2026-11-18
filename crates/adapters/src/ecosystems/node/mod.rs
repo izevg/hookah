@@ -2,10 +2,11 @@
 //!
 //! [`NodeEcosystem`] implements [`ToolchainDetector`] for projects with a `package.json`. It runs
 //! the project's own tools straight from `node_modules/.bin`: Biome or Prettier to format, Biome
-//! and ESLint to lint, `tsc` to typecheck, dependency-cruiser for architecture rules, Vitest or
-//! Jest for the tests related to a change, and Stryker for mutation testing. Detection reads only
-//! the manifest, lockfile, and config files, so it is cheap enough to run on every edit; see
-//! [`detect`] for the rules and [`parse`] for the output formats.
+//! and ESLint to lint, `tsc` to typecheck, dependency-cruiser for architecture rules, Knip for
+//! unused files, exports, and dependencies (stop phase only), Vitest or Jest for the tests related
+//! to a change, and Stryker for mutation testing. Detection reads only the manifest, lockfile, and
+//! config files, so it is cheap enough to run on every edit; see [`detect`] for the rules and
+//! [`parse`] for the output formats.
 
 pub mod detect;
 pub mod heavy;

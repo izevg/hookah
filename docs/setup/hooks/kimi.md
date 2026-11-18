@@ -34,6 +34,13 @@ Comments and formatting of an existing `config.toml` are kept.
 
 Then restart Kimi Code.
 
+### Windows
+
+`hookah setup kimi` writes the path of `hookah.exe` with forward slashes and quotes it when it
+contains a space. The Kimi Code hooks page describes `command` only as "the shell command to run"
+and does not name the Windows shell, so setup uses the one spelling that works in Git Bash,
+`cmd.exe`, and PowerShell: a drive-qualified path with `/`, quoted only when it has whitespace.
+
 ### Manual setup
 
 Put `hookah` at `$HOME/.local/bin/hookah`. Add this to `~/.kimi-code/config.toml`:

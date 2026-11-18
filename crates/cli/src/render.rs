@@ -8,6 +8,7 @@ use std::path::Path;
 
 use hookah_adapters::ecosystems::cache::Origin;
 use hookah_application::Outcome;
+use hookah_domain::path::slashed;
 use hookah_domain::project::Project;
 use hookah_domain::toolchain::Toolchain;
 use hookah_domain::verdict::Verdict;
@@ -78,7 +79,7 @@ pub fn detection(style: Style, project: Option<(&Project, &Toolchain, Origin)>) 
     };
     let mut out = format!(
         "project: {}\necosystem: {}\ncache: {origin}\n",
-        project.root.display(),
+        slashed(&project.root),
         project.ecosystem.name()
     );
     for m in toolchain.missing() {
@@ -100,7 +101,7 @@ pub fn detection(style: Style, project: Option<(&Project, &Toolchain, Origin)>) 
             "  {} {}: {} {}\n",
             style.paint("1", tool.kind.name()),
             tool.name,
-            tool.command.program,
+            slashed(Path::new(&tool.command.program)),
             args.join(" ")
         ));
     }

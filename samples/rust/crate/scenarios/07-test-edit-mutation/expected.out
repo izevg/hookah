@@ -1,3 +1,6 @@
 exit: 0
 --- stdout
+{
+  "systemMessage": "hookah: tool not installed: cargo-mutants (mutation): cargo install --locked cargo-mutants (or pin it in mise)"
+}
 --- stderr

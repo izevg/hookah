@@ -24,4 +24,4 @@ pub use error::SetupError;
 pub use io::detect::{Detection, detect};
 pub use io::env::{Env, Scope};
 pub use io::{Plan, Written, commit, plan, snippet};
-pub use target::{Target, quote_program};
+pub use target::{Target, quote_program, shell_program};

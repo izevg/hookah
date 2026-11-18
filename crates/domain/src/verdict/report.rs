@@ -3,7 +3,8 @@
 //! One `path:line: message` per finding, in a total order (severity, path, line, column, kind,
 //! rule, message), cut off at a limit, followed by a `+N more` line. Findings with the same path,
 //! line, column, and rule id are one problem (the earliest check kind wins); findings without a
-//! rule id are de-duplicated only on exact equality. Agent-agnostic; harness adapters wrap it in their own protocol.
+//! rule id are one problem when path, line, column, severity, and message all match (again the
+//! earliest kind wins). Agent-agnostic; harness adapters wrap it in their own protocol.
 
 use std::collections::HashSet;
 use std::fmt;
@@ -25,8 +26,8 @@ impl Report {
     /// Orders and de-duplicates `findings`. Returns `None` if there are none.
     pub fn new(mut findings: Vec<Finding>, limit: usize) -> Option<Self> {
         findings.sort_by(|a, b| sort_key(a).cmp(&sort_key(b)));
-        let mut seen_exact = HashSet::new();
         let mut seen_ruled = HashSet::new();
+        let mut seen_ruleless = HashSet::new();
         findings.retain(|f| match &f.rule {
             Some(rule) => seen_ruled.insert((
                 f.location.path.clone(),
@@ -34,7 +35,13 @@ impl Report {
                 f.location.column,
                 rule.clone(),
             )),
-            None => seen_exact.insert(f.clone()),
+            None => seen_ruleless.insert((
+                f.location.path.clone(),
+                f.location.line,
+                f.location.column,
+                f.severity,
+                f.message.clone(),
+            )),
         });
         (!findings.is_empty()).then_some(Self { findings, limit })
     }
@@ -234,7 +241,7 @@ mod tests {
     }
 
     #[test]
-    fn findings_without_rule_dedupe_only_on_equality() {
+    fn findings_without_rule_with_different_messages_stay_apart() {
         let a = Finding::new(
             CheckKind::Lint,
             Severity::Error,
@@ -252,6 +259,52 @@ mod tests {
     }
 
     #[test]
+    fn ruleless_duplicate_from_lint_and_test_is_one_problem() {
+        let mk = |kind| {
+            Finding::new(
+                kind,
+                Severity::Error,
+                Location::at("crates/adapters/src/ecosystems/mod.rs", 10, 1),
+                "encountered diff marker",
+            )
+        };
+        let r = Report::new(vec![mk(CheckKind::Test), mk(CheckKind::Lint)], 20).unwrap();
+        assert_eq!(r.findings().len(), 1);
+        assert_eq!(r.findings()[0].kind, CheckKind::Lint);
+        assert_eq!(
+            r.lines(),
+            ["crates/adapters/src/ecosystems/mod.rs:10:1: encountered diff marker"]
+        );
+    }
+
+    #[test]
+    fn ruleless_findings_differing_in_severity_location_or_message_stay_apart() {
+        let base = Finding::new(
+            CheckKind::Lint,
+            Severity::Error,
+            Location::at("a.rs", 1, 1),
+            "m",
+        );
+        let mut warn = base.clone();
+        warn.kind = CheckKind::Test;
+        warn.severity = Severity::Warning;
+        let mut col = base.clone();
+        col.kind = CheckKind::Test;
+        col.location.column = Some(2);
+        let mut line = base.clone();
+        line.kind = CheckKind::Test;
+        line.location.line = Some(2);
+        let mut path = base.clone();
+        path.kind = CheckKind::Test;
+        path.location.path = "b.rs".into();
+        let mut msg = base.clone();
+        msg.kind = CheckKind::Test;
+        msg.message = "other".into();
+        let r = Report::new(vec![base, warn, col, line, path, msg], 20).unwrap();
+        assert_eq!(r.findings().len(), 6);
+    }
+
+    #[test]
     fn order_is_total_across_every_key() {
         let mk = |sev, col, kind, rule: Option<&str>, msg: &str| {
             let f = Finding::new(kind, sev, Location::at("a.rs", 1, col), msg);
@@ -265,7 +318,7 @@ mod tests {
             mk(Severity::Error, 1, CheckKind::Lint, None, "b"),
             mk(Severity::Error, 1, CheckKind::Lint, Some("r1"), "a"),
             mk(Severity::Error, 1, CheckKind::Lint, Some("r2"), "a"),
-            mk(Severity::Error, 1, CheckKind::Test, None, "a"),
+            mk(Severity::Error, 1, CheckKind::Test, None, "0"),
             mk(Severity::Error, 2, CheckKind::Lint, None, "a"),
             mk(Severity::Warning, 1, CheckKind::Lint, None, "a"),
         ];

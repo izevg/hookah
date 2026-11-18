@@ -2,7 +2,8 @@ name: ci
 
 # The same gates as AGENTS.md "Quality gates", on every push to main and every pull request.
 # Tools come from .mise.toml through mise, so that file stays the single source of truth; each job
-# installs only the tools it needs (`install_args`), because cargo-mutants compiles from source.
+# installs only the tools it needs (`install_args`), because cargo-mutants compiles from source
+# (the samples jobs need it too: scenarios 06 to 08 depend on whether it is installed).
 
 on:
   push:
@@ -83,7 +84,7 @@ jobs:
       # jdx/mise-action v5.2.9
       - uses: jdx/mise-action@236a21c3b91f5db6d4e174b348674a0f0caac06d
         with:
-          install_args: ${{ matrix.os == 'windows-latest' && 'rust' || 'rust node pnpm python uv' }}
+          install_args: ${{ matrix.os == 'windows-latest' && 'rust cargo:cargo-mutants' || 'rust node pnpm python uv cargo:cargo-mutants' }}
       # Swatinem/rust-cache v2.9.3
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0
       - name: Show the tools the runner uses
@@ -136,4 +137,8 @@ jobs:
         run: git diff "origin/${{ github.base_ref }}...HEAD" > "$RUNNER_TEMP/pr.diff"
       - name: Mutate the changed code
         # A standard runner has 4 cores. Settings come from .cargo/mutants.toml.
-        run: cargo mutants --workspace -j 3 --iterate --in-diff "$RUNNER_TEMP/pr.diff"
+        # cargo-mutants does not create the parent of its output directory (`output` in
+        # .cargo/mutants.toml), and a fresh runner has no `target/` when the cache is empty.
+        run: |
+          mkdir -p target
+          cargo mutants --workspace -j 3 --iterate --in-diff "$RUNNER_TEMP/pr.diff"

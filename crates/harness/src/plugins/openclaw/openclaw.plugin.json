@@ -1,0 +1,8 @@
+{
+  "id": "hookah",
+  "name": "hookah",
+  "description": "Runs the project's own checks after file edits and feeds failures back.",
+  "activation": { "onStartup": true },
+  "contracts": { "agentToolResultMiddleware": ["openclaw"] },
+  "configSchema": { "type": "object", "additionalProperties": false }
+}

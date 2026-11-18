@@ -53,6 +53,8 @@ impl Sandbox {
             .env("APPDATA", home.join("AppData").join("Roaming"))
             .env("HERMES_HOME", home.join(".hermes"))
             .env("PI_CODING_AGENT_DIR", home.join(".pi").join("agent"))
+            .env("OPENCLAW_STATE_DIR", home.join(".openclaw"))
+            .env("OPENCLAW_HOME", home.join("openclaw-home"))
             .env("PATH", self.root.join("bin"));
         cmd
     }
@@ -267,7 +269,7 @@ fn the_opencode_plugin_matches_hookah_plugin_opencode() {
 fn setup_never_writes_outside_the_sandbox() {
     let sb = Sandbox::new("guard");
     for harness in [
-        "claude", "codex", "qoder", "kimi", "cursor", "opencode", "hermes", "pi",
+        "claude", "codex", "qoder", "kimi", "cursor", "opencode", "hermes", "pi", "openclaw",
     ] {
         for scope in ["user", "project"] {
             let out = sb.hookah(&["setup", harness, "--scope", scope]);
@@ -432,6 +434,65 @@ fn dry_run_and_print_write_nothing() {
 }
 
 #[test]
+fn openclaw_installs_the_plugin_directory_into_the_state_directory() {
+    let sb = Sandbox::new("openclaw");
+    let out = sb.ok(&["setup", "openclaw"]);
+    assert!(
+        out.starts_with("hookah setup: openclaw, user scope\n"),
+        "{out}"
+    );
+    let dir = sb.home(".openclaw/extensions/hookah");
+    let printed = sb.ok(&["plugin", "openclaw"]);
+    assert_eq!(text(&dir.join("index.js")), printed);
+    assert_eq!(sb.ok(&["setup", "openclaw", "--print"]), printed);
+    let manifest = text(&dir.join("openclaw.plugin.json"));
+    assert!(manifest.contains("\"id\": \"hookah\""));
+    assert!(out.contains("openclaw.plugin.json"), "{out}");
+    assert!(
+        out.contains("installed the bundled openclaw plugin"),
+        "{out}"
+    );
+    assert!(out.contains("openclaw plugins enable hookah"), "{out}");
+    let again = sb.ok(&["setup", "openclaw"]);
+    assert!(
+        again.contains("already up to date, nothing written"),
+        "{again}"
+    );
+    // A stale manifest alone is repaired without touching the entry point.
+    fs::write(dir.join("openclaw.plugin.json"), "{}").unwrap();
+    let repaired = sb.ok(&["setup", "openclaw"]);
+    assert!(
+        repaired.contains("updated") && repaired.contains("openclaw.plugin.json"),
+        "{repaired}"
+    );
+    assert_eq!(text(&dir.join("openclaw.plugin.json")), manifest);
+    let refused = sb.hookah(&["setup", "openclaw", "--scope", "project"]);
+    assert_eq!(refused.status.code(), Some(1));
+    assert!(
+        String::from_utf8(refused.stderr)
+            .unwrap()
+            .contains("--scope user")
+    );
+    assert!(!sb.project(".openclaw").exists());
+}
+
+#[test]
+fn openclaw_honors_its_home_override() {
+    let sb = Sandbox::new("openclaw-home");
+    let alt = sb.root.join("alt");
+    let mut cmd = sb.command(&["setup", "openclaw"]);
+    cmd.env_remove("OPENCLAW_STATE_DIR")
+        .env("OPENCLAW_HOME", &alt);
+    assert!(cmd.output().unwrap().status.success());
+    assert!(alt.join(".openclaw/extensions/hookah/index.js").is_file());
+    let mut cmd = sb.command(&["setup", "openclaw"]);
+    cmd.env_remove("OPENCLAW_STATE_DIR")
+        .env_remove("OPENCLAW_HOME");
+    assert!(cmd.output().unwrap().status.success());
+    assert!(sb.home(".openclaw/extensions/hookah/index.js").is_file());
+}
+
+#[test]
 fn command_override_is_used_verbatim() {
     let sb = Sandbox::new("command");
     let kimi = sb.ok(&["setup", "kimi", "--command", "mise exec -- hookah"]);
@@ -444,6 +505,8 @@ fn command_override_is_used_verbatim() {
     assert!(!plain.contains("note:"));
     let out = sb.ok(&["setup", "pi", "--command", "x"]);
     assert!(out.contains("note: --command is ignored for pi"));
+    let out = sb.ok(&["setup", "openclaw", "--command", "x"]);
+    assert!(out.contains("note: --command is ignored for openclaw"));
 }
 
 #[test]
@@ -454,6 +517,7 @@ fn detect_reports_installed_and_configured_harnesses() {
     fs::create_dir_all(sb.home(".codex")).unwrap();
     sb.ok(&["setup", "claude"]);
     sb.ok(&["setup", "pi"]);
+    sb.ok(&["setup", "openclaw"]);
     sb.ok(&["setup", "qoder", "--scope", "user"]);
     let out = sb.ok(&["setup", "--detect"]);
     let line = |name: &str| {

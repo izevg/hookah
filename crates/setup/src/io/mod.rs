@@ -193,6 +193,7 @@ mod tests {
             home: Some(root.join("home")),
             xdg_config: None,
             pi_agent_dir: None,
+            openclaw_state: None,
             path: vec![],
             hermes_home: None,
         }
@@ -351,6 +352,34 @@ mod tests {
         fs::create_dir_all(home.join("plugins/hookah/__init__.py")).unwrap();
         let err = plan(Target::Hermes, Scope::User, &env, "hookah").unwrap_err();
         assert!(matches!(err, SetupError::Io { .. }));
+    }
+
+    #[test]
+    fn openclaw_writes_the_plugin_and_its_manifest_and_repairs_either() {
+        let env = temp_env("openclaw");
+        let (plan, written) = apply(&env, Target::Openclaw, Scope::User).unwrap();
+        assert!(written.wrote);
+        assert_eq!(plan.after, hookah_harness::plugins::openclaw::PLUGIN_SOURCE);
+        let manifest = plan.path.with_file_name("openclaw.plugin.json");
+        assert_eq!(plan.companions.len(), 1);
+        assert_eq!(plan.companions[0].path, manifest);
+        assert_eq!(
+            fs::read_to_string(&manifest).unwrap(),
+            hookah_harness::plugins::openclaw::MANIFEST
+        );
+        let (again, written) = apply(&env, Target::Openclaw, Scope::User).unwrap();
+        assert!(!again.changed() && !written.wrote);
+        // Only the manifest is stale: it is rewritten and backed up, the entry point is not.
+        fs::write(&manifest, "{}").unwrap();
+        let (_, written) = apply(&env, Target::Openclaw, Scope::User).unwrap();
+        assert!(written.wrote);
+        assert_eq!(written.backup, None);
+        assert_eq!(written.companion_backups, [backup_path(&manifest)]);
+        assert_eq!(
+            fs::read_to_string(&manifest).unwrap(),
+            hookah_harness::plugins::openclaw::MANIFEST
+        );
+        assert!(!backup_path(&plan.path).exists());
     }
 
     #[test]

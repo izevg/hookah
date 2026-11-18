@@ -25,7 +25,7 @@ feeds failures straight back to the agent, so it fixes them immediately.
 > <https://izevg.github.io/hookah/llms.txt>).
 
 > **Status:** works for Rust, Node (TypeScript/JavaScript), and Python projects, with the Claude
-> Code, Codex, Cursor, Qoder, Kimi, opencode, and Pi harnesses and the Hermes Agent assistant
+> Code, Codex, Cursor, Qoder, Kimi, opencode, Pi, and OpenClaw harnesses and the Hermes Agent assistant
 > (`hookah check`, `hookah detect`, `hookah hook <harness>`, `hookah plugin <harness>`, `hookah
 > setup`), including mutation testing at stop, and with [Orca](docs/setup/plugins/orca.md)
 > (`hookah plugin orca`, `hookah status`).
@@ -79,7 +79,7 @@ old warnings from code it did not touch.
 
    ```sh
    hookah setup --detect     # which harnesses are installed and configured
-   hookah setup claude       # or: codex, cursor, qoder, kimi, opencode, hermes, pi (add --scope user for every project)
+   hookah setup claude       # or: codex, cursor, qoder, kimi, opencode, hermes, pi, openclaw (add --scope user for every project)
    ```
 
    Setup merges into existing settings, is safe to repeat, and backs the original up once. Use
@@ -99,6 +99,7 @@ Per-harness details and the manual snippets:
 | opencode    | [docs/setup/plugins/opencode.md](docs/setup/plugins/opencode.md) |
 | Hermes Agent | [docs/setup/assistants/hermes.md](docs/setup/assistants/hermes.md) |
 | Pi          | [docs/setup/plugins/pi.md](docs/setup/plugins/pi.md) |
+| OpenClaw    | [docs/setup/assistants/openclaw.md](docs/setup/assistants/openclaw.md) |
 | Orca        | [docs/setup/plugins/orca.md](docs/setup/plugins/orca.md) (planned) |
 
 An agent doing this for you follows [docs/setup/agents.md](docs/setup/agents.md).
@@ -128,6 +129,7 @@ reports results in the format that harness expects. The table shows the integrat
 | opencode    | bundled plugin (`hookah plugin opencode`): `tool.execute.after`, `session.idle` | appended tool output (edit), injected message (stop) |
 | Hermes Agent | bundled plugin (`hookah setup hermes`): `transform_tool_result` (`write_file`, `patch`), `pre_verify`, `on_session_start` | tool result field (edit), `continue` directive (stop) |
 | Pi          | bundled extension (`hookah plugin pi`): `tool_result`, `agent_end` | appended tool result (edit), injected message (stop) |
+| OpenClaw    | bundled plugin (`hookah plugin openclaw`): tool-result middleware (`write`, `edit`, `apply_patch`), `before_agent_finalize` | appended tool result (edit), report queued for the next turn (stop) |
 | Kimi Code   | `PostToolUse` (`Write\|Edit`) `[[hooks]]` in `config.toml` (beta); no stop phase | stdout (may reach the model) |
 | Qoder       | `PostToolUse` (`Write\|Edit`), `Stop` in `.qoder/settings.json` | `additionalContext` (edit), exit 2 + stderr (stop) |
 | Cursor      | `afterFileEdit`, `stop`, `sessionStart` in `.cursor/hooks.json` (IDE and `cursor-agent`) | `followup_message` (stop); the edit hook cannot reach the model |

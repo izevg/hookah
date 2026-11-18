@@ -191,7 +191,7 @@ def finish():
         "> hookah is a single-binary CLI that AI coding agents call from their hooks after every file edit. "
         "It runs the project's own format, lint, typecheck, test, and mutation tools on what changed and "
         "feeds only the new failures back to the agent. It supports Claude Code, Codex CLI, Cursor, Qoder, Kimi "
-        "Code, opencode, Hermes Agent, and Pi, on Rust, Node (TypeScript/JavaScript), and Python projects.",
+        "Code, opencode, Hermes Agent, Pi, and OpenClaw, on Rust, Node (TypeScript/JavaScript), and Python projects.",
         "",
         f"To install and configure hookah, follow [Let your agent install it]({SITE_URL}/setup/agents.md) "
         "step by step. In short: install the binary "

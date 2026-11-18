@@ -29,6 +29,7 @@ use hookah_harness::kimi::Kimi;
 use hookah_harness::opencode::{Opencode, PLUGIN_SOURCE};
 use hookah_harness::orca::PLUGIN_FILES;
 use hookah_harness::plugins::hermes::{Hermes, PLUGIN_SOURCE as HERMES_PLUGIN_SOURCE};
+use hookah_harness::plugins::openclaw::{Openclaw, PLUGIN_SOURCE as OPENCLAW_PLUGIN_SOURCE};
 use hookah_harness::plugins::pi::{PLUGIN_SOURCE as PI_PLUGIN_SOURCE, Pi};
 use hookah_harness::protocol::{Harness, Invocation, Response, canonical_dir, merge_outcomes};
 use hookah_harness::qoder::Qoder;
@@ -158,6 +159,14 @@ fn plugin(harness: PluginKind, out: Option<&Path>) -> i32 {
             );
             return 1;
         }
+        (PluginKind::Openclaw, None) => print_out(OPENCLAW_PLUGIN_SOURCE),
+        (PluginKind::Openclaw, Some(_)) => {
+            let _ = writeln!(
+                std::io::stderr(),
+                "hookah: the OpenClaw plugin is installed by `hookah setup openclaw`"
+            );
+            return 1;
+        }
         (PluginKind::Pi, None) => print_out(PI_PLUGIN_SOURCE),
         (PluginKind::Pi, Some(_)) => {
             let _ = writeln!(
@@ -261,6 +270,7 @@ fn hook(harness: HarnessKind, limit: usize) -> Response {
         HarnessKind::Opencode => run_harness(&Opencode, &stdin, limit),
         HarnessKind::Hermes => run_harness(&Hermes, &stdin, limit),
         HarnessKind::Pi => run_harness(&Pi, &stdin, limit),
+        HarnessKind::Openclaw => run_harness(&Openclaw, &stdin, limit),
     }
 }
 

@@ -3,4 +3,5 @@
 //! versioned JSON document each way.
 
 pub mod hermes;
+pub mod openclaw;
 pub mod pi;

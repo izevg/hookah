@@ -8,8 +8,8 @@ protocol of its own for `hookah` to speak, so there are two layers, and they do 
 
 1. **Per-edit feedback comes from the agent Orca hosts.** An agent in an Orca worktree runs its own
    hooks, so `hookah setup <harness>` is all it takes. See the guide of that harness:
-   [Claude Code](../hooks/claude-code.md), [Codex](../hooks/codex.md), [Qoder](../hooks/qoder.md),
-   [Kimi Code](../hooks/kimi.md), [opencode](opencode.md). Nothing about Orca is needed for this.
+   [Claude Code](../hooks/cli/claude-code.md), [Codex](../hooks/cli/codex.md), [Qoder](../hooks/cli/qoder.md),
+   [Kimi Code](../hooks/cli/kimi.md), [opencode](opencode.md). Nothing about Orca is needed for this.
 2. **The Orca plugin adds what only Orca knows.** It is a small Orca plugin that ships inside the
    `hookah` binary. It never touches your code. It does three things:
    - shows the latest `hookah` verdict of every worktree, in a sidebar panel and in the status bar;

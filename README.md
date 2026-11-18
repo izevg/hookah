@@ -203,7 +203,7 @@ They run once, when the agent says it's done, and a red result blocks the finish
 |------|--------|
 | [Architecture](docs/architecture.md) | layers, request flow, baseline, failure handling |
 | [Ecosystems](docs/ecosystems.md) | detection, commands, output parsing, test selection per ecosystem |
-| [Configuration](docs/configuration.md) | `.hookah.toml` and the cache (in progress) |
+| [Configuration](docs/configuration.md) | per-project tool environment (`.hookah.local.toml`, user config), budgets, and the cache |
 | [Mutation testing](docs/mutation.md) | mutation-testing `hookah` itself |
 | [Changelog](https://izevg.github.io/hookah/changelog.html) | every release, generated from Conventional Commits |
 | [Harness setup](docs/setup/hooks/cli/claude-code.md) | one page per harness, linked in Quick start |

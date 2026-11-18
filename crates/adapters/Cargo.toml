@@ -14,6 +14,8 @@ serde.workspace = true
 serde_json.workspace = true
 dunce = "1"
 quick-xml = "0.38"
+# Already in the tree through `setup`; its `serde` feature parses config files.
+toml_edit = { version = "0.23", default-features = false, features = ["parse", "serde"] }
 
 [lints]
 workspace = true

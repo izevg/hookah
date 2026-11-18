@@ -150,3 +150,87 @@ fn windows_sets_the_environment_of_the_command() {
     let out = ProcessRunner.run(&spec, &[]).unwrap();
     assert_eq!(out.stdout.trim(), "from-spec");
 }
+
+mod project_env {
+    use std::fs;
+
+    use hookah_adapters::config::env::{Host, ProjectEnvRunner};
+
+    use super::*;
+
+    /// A host with an empty environment: the developer's real user config is never read.
+    fn sandbox() -> Host {
+        Host {
+            var: Box::new(|_| None),
+            windows: cfg!(windows),
+        }
+    }
+
+    fn echo(var: &str, cwd: &std::path::Path) -> CommandSpec {
+        let (program, args) = if cfg!(windows) {
+            ("cmd", vec!["/C".to_string(), format!("echo %{var}%")])
+        } else {
+            ("sh", vec!["-c".to_string(), format!("echo \"${var}\"")])
+        };
+        CommandSpec::new(
+            program,
+            args.into_iter().map(Arg::Literal).collect(),
+            cwd,
+            Duration::from_secs(10),
+        )
+    }
+
+    fn project(config: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "hookah-projenv-{}-{}",
+            std::process::id(),
+            config.len()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join(".hookah.local.toml"), config).unwrap();
+        dir
+    }
+
+    #[test]
+    fn the_tool_process_receives_the_configured_variables() {
+        let dir = project("[env]\nHOOKAH_TEST_VAR = \"from-config {root}\"\n");
+        let runner = ProjectEnvRunner::new(ProcessRunner, sandbox());
+        let out = runner.run(&echo("HOOKAH_TEST_VAR", &dir), &[]).unwrap();
+        let root = dunce::canonicalize(&dir).unwrap();
+        assert_eq!(out.stdout.trim(), format!("from-config {}", root.display()));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn config_wins_over_the_variables_the_detector_set() {
+        let dir = project("[env]\nHOOKAH_TEST_WINS = \"config\"\n");
+        let spec = echo("HOOKAH_TEST_WINS", &dir).with_env(vec![
+            ("HOOKAH_TEST_WINS".into(), "detector".into()),
+            ("HOOKAH_TEST_KEPT".into(), "kept".into()),
+        ]);
+        let runner = ProjectEnvRunner::new(ProcessRunner, sandbox());
+        assert_eq!(runner.run(&spec, &[]).unwrap().stdout.trim(), "config");
+        let kept = echo("HOOKAH_TEST_KEPT", &dir).with_env(spec.env.clone());
+        assert_eq!(runner.run(&kept, &[]).unwrap().stdout.trim(), "kept");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_project_without_config_runs_unchanged() {
+        let dir = std::env::temp_dir().join(format!("hookah-projenv-none-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let runner = ProjectEnvRunner::new(ProcessRunner, sandbox());
+        let spec = echo("HOOKAH_TEST_UNSET_VAR", &dir);
+        assert!(runner.run(&spec, &[]).unwrap().success());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_malformed_file_does_not_stop_the_tool() {
+        let dir = project("[env\n broken");
+        let runner = ProjectEnvRunner::new(ProcessRunner, sandbox());
+        let out = runner.run(&echo("HOOKAH_TEST_VAR", &dir), &[]).unwrap();
+        assert!(out.success());
+        let _ = fs::remove_dir_all(&dir);
+    }
+}

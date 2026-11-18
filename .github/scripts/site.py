@@ -33,7 +33,7 @@ DESCRIPTIONS = {
     "README.md": "what hookah is, install commands, and a quick start",
     "setup/agents.md": "the exact procedure an agent follows to install and configure hookah",
     "setup/uninstall.md": "hookah uninstall, the manual removal per harness, and how to verify that nothing is left",
-    "configuration.md": ".hookah.toml and the cache",
+    "configuration.md": "per-project tool environment, budgets, and the cache",
     "ecosystems.md": "detection, commands, output parsing, and test selection for Rust, Node, Python, and Java",
     "architecture.md": "layers, request flow, baseline, and failure handling",
     "mutation.md": "mutation testing of hookah itself",

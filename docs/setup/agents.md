@@ -94,6 +94,31 @@ user agrees, because setup does not edit OpenClaw's own config. See
 
 Do not restart the harness yourself: it would end your own session.
 
+## 7. Project-specific environment: never edit the hook command
+
+The hook that setup wrote may be global (`--scope user`, `~/.codex/config.toml`,
+`~/.claude/settings.json`): one command for every project. **Never add project-specific
+environment variables, wrappers (`env JAVA_HOME=... hookah ...`, `sh -c`, scripts), or paths to the
+hook command.** They would apply to every project of the user and break the others. This holds
+when a tool fails for a missing JDK, a Maven `settings.xml`, a registry, or a `PATH` entry.
+
+Put the variables where `hookah` reads them per project instead:
+
+- `<project root>/.hookah.local.toml`, for this clone only (keep it out of git:
+  `echo .hookah.local.toml >> .git/info/exclude`), or `.hookah.toml` when the team shares it;
+- the user config, `~/.config/hookah/config.toml` (`%APPDATA%\hookah\config.toml` on Windows),
+  with a `[[project]]` section whose `path` matches the repository, when the repository must not
+  be touched.
+
+```toml
+[env]
+JAVA_HOME = "/Library/Java/JavaVirtualMachines/temurin-17.jdk/Contents/Home"
+MAVEN_ARGS = "-s {root}/ci/settings.xml"
+```
+
+Then verify with `hookah config <project directory>`: it lists the files read and every variable
+with the file it came from. Details: [Configuration](../configuration.md).
+
 ## Uninstalling
 
 To remove hookah, follow [Uninstall](uninstall.md). In short, from the project root and before the

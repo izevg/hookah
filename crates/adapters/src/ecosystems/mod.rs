@@ -12,6 +12,8 @@ pub mod cache;
 pub mod node;
 pub mod python;
 pub mod rust;
+#[cfg(test)]
+mod testing;
 
 use std::path::{Path, PathBuf};
 

@@ -316,6 +316,7 @@ mod tests {
     use hookah_domain::toolchain::CheckKind;
 
     use super::*;
+    use crate::testing::abs;
 
     fn failing(path: &str) -> Outcome {
         let f = Finding::new(
@@ -332,13 +333,10 @@ mod tests {
 
     #[test]
     fn display_root_prefers_an_absolute_cwd_else_the_file_directory() {
-        let file = Path::new("/w/src/a.rs");
-        assert_eq!(display_root(file, Some(Path::new("/w"))), Path::new("/w"));
-        assert_eq!(
-            display_root(file, Some(Path::new("rel"))),
-            Path::new("/w/src")
-        );
-        assert_eq!(display_root(file, None), Path::new("/w/src"));
+        let file = abs("/w/src/a.rs");
+        assert_eq!(display_root(&file, Some(&abs("/w"))), abs("/w"));
+        assert_eq!(display_root(&file, Some(Path::new("rel"))), abs("/w/src"));
+        assert_eq!(display_root(&file, None), abs("/w/src"));
     }
 
     #[test]
@@ -427,8 +425,8 @@ mod tests {
     #[test]
     fn start_needs_an_absolute_cwd_and_a_session() {
         assert_eq!(
-            start_invocation(Some("/w".into()), Some("s".into())),
-            Invocation::Start(StartRequest::new("/w", "s"))
+            start_invocation(Some(abs("/w")), Some("s".into())),
+            Invocation::Start(StartRequest::new(abs("/w"), "s"))
         );
         assert_eq!(start_invocation(None, Some("s".into())), Invocation::Ignore);
         assert_eq!(
@@ -436,13 +434,10 @@ mod tests {
             Invocation::Ignore
         );
         assert_eq!(
-            start_invocation(Some("/w".into()), Some(String::new())),
+            start_invocation(Some(abs("/w")), Some(String::new())),
             Invocation::Ignore
         );
-        assert_eq!(
-            start_invocation(Some("/w".into()), None),
-            Invocation::Ignore
-        );
+        assert_eq!(start_invocation(Some(abs("/w")), None), Invocation::Ignore);
     }
 
     #[test]
@@ -456,22 +451,23 @@ mod tests {
 
     #[test]
     fn canonical_keeps_sessions_and_resolves_the_start_directory() {
-        let edit =
-            Invocation::Edit(EditRequest::new("/w/a.rs", "/w").with_session(Some("s".into())));
+        let edit = Invocation::Edit(
+            EditRequest::new(abs("/w/a.rs"), abs("/w")).with_session(Some("s".into())),
+        );
         assert_eq!(edit.clone().canonical(), edit);
         let batch = Invocation::EditBatch(vec![
-            EditRequest::new("/w/a.rs", "/w").with_session(Some("s".into())),
+            EditRequest::new(abs("/w/a.rs"), abs("/w")).with_session(Some("s".into())),
         ]);
         assert_eq!(batch.clone().canonical(), batch);
         let stop = Invocation::Stop {
-            request: StopRequest::new("/w").with_session(Some("s".into())),
+            request: StopRequest::new(abs("/w")).with_session(Some("s".into())),
             already_continuing: false,
         };
         assert_eq!(stop.clone().canonical(), stop);
-        let start = Invocation::Start(StartRequest::new("/w/x/..", "s"));
+        let start = Invocation::Start(StartRequest::new(abs("/w/x/.."), "s"));
         assert_eq!(
             start.canonical(),
-            Invocation::Start(StartRequest::new("/w", "s"))
+            Invocation::Start(StartRequest::new(abs("/w"), "s"))
         );
     }
 }

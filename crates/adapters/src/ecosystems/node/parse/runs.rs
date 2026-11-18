@@ -219,7 +219,7 @@ struct Position {
 pub fn stryker(root: &Path, output: &ProcessOutput) -> Result<Vec<Finding>, PortError> {
     let all = strip_ansi(&format!("{}\n{}", output.stdout, output.stderr));
     let url = written_to(&all, "Your report can be found at: ");
-    let Some(path) = url.as_deref().and_then(|u| u.strip_prefix("file://")) else {
+    let Some(path) = url.as_deref().and_then(file_url_path) else {
         return Err(stryker_failure(&all, output));
     };
     let path = percent_decode(path);
@@ -270,6 +270,16 @@ fn stryker_failure(all: &str, output: &ProcessOutput) -> PortError {
     ))
 }
 
+/// The path of a `file://` URL. A Windows URL is `file:///C:/dir/f.json`: the slash before the
+/// drive letter is not part of the path.
+fn file_url_path(url: &str) -> Option<&str> {
+    let path = url.strip_prefix("file://")?;
+    match path.as_bytes() {
+        [b'/', drive, b':', ..] if drive.is_ascii_alphabetic() => Some(&path[1..]),
+        _ => Some(path),
+    }
+}
+
 /// Decodes `%XX` escapes (spaces and non-ASCII in a `file://` URL).
 fn percent_decode(text: &str) -> String {
     let mut chunks = text.as_bytes().split(|b| *b == b'%');
@@ -302,14 +312,19 @@ fn hex_byte(digits: &[u8]) -> Option<u8> {
 mod tests {
     use super::*;
     use crate::ecosystems::node::detect::package::scratch::Scratch;
+    use crate::ecosystems::testing::{WS, rooted};
 
-    const ROOT: &str = "/ws/app";
+    const ROOT: &str = if cfg!(windows) {
+        "C:/ws/app"
+    } else {
+        "/ws/app"
+    };
 
     fn out(exit: i32, stdout: &str, stderr: &str) -> ProcessOutput {
         ProcessOutput {
             exit_code: Some(exit),
-            stdout: stdout.into(),
-            stderr: stderr.into(),
+            stdout: rooted(stdout),
+            stderr: rooted(stderr),
             timed_out: false,
         }
     }
@@ -399,7 +414,7 @@ mod tests {
         assert_eq!(found[1].location, Location::at("src/broken.test.js", 3, 0));
         assert_eq!(
             found[1].message,
-            "SyntaxError: /ws/app/src/broken.test.js: Unexpected token (3:0)"
+            rooted("SyntaxError: /ws/app/src/broken.test.js: Unexpected token (3:0)")
         );
     }
 
@@ -427,6 +442,16 @@ mod tests {
 
     /// `reports/mutation/mutation.json` of that run, without ids, coverage, and test lists.
     const STRYKER_REPORT: &str = r#"{"schemaVersion":"1.0","thresholds":{"high":80,"low":60},"files":{"src/m.js":{"language":"javascript","source":"export function add","mutants":[{"id":"9","mutatorName":"BooleanLiteral","replacement":"true","status":"NoCoverage","static":false,"location":{"end":{"column":15,"line":6},"start":{"column":10,"line":6}}},{"id":"5","mutatorName":"EqualityOperator","replacement":"a <= 0","status":"Survived","static":false,"location":{"end":{"column":12,"line":5},"start":{"column":7,"line":5}}},{"id":"3","mutatorName":"ConditionalExpression","replacement":"true","status":"Survived","static":false,"location":{"end":{"column":12,"line":5},"start":{"column":7,"line":5}}},{"id":"1","mutatorName":"ArithmeticOperator","replacement":"a - b","statusReason":"expected -1 to be 3","status":"Killed","static":false,"location":{"end":{"column":15,"line":2},"start":{"column":10,"line":2}}}]},"src/k.js":{"mutants":[{"id":"0","mutatorName":"BlockStatement","replacement":"{}\n  ","status":"Survived","location":{"end":{"column":2,"line":3},"start":{"column":27,"line":1}}}]}}}"#;
+
+    #[test]
+    fn a_file_url_names_a_path_on_every_os() {
+        assert_eq!(file_url_path("file:///a/b.json"), Some("/a/b.json"));
+        assert_eq!(file_url_path("file:///C:/a/b.json"), Some("C:/a/b.json"));
+        assert_eq!(file_url_path("file://C:\\a\\b.json"), Some("C:\\a\\b.json"));
+        // Only a letter before the colon is a drive.
+        assert_eq!(file_url_path("file:///1:/a"), Some("/1:/a"));
+        assert_eq!(file_url_path("/a/b.json"), None);
+    }
 
     #[test]
     fn stryker_reports_survivors_only() {
@@ -500,7 +525,7 @@ mod tests {
             stderr: String::new(),
             timed_out: false,
         };
-        assert!(jest(Path::new("/ws"), &ok).unwrap().is_empty());
+        assert!(jest(Path::new(WS), &ok).unwrap().is_empty());
     }
 
     #[test]

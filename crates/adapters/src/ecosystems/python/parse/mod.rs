@@ -163,16 +163,20 @@ pub mod testing {
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
+    use crate::ecosystems::testing::abs;
 
     #[test]
     fn relative_paths() {
-        let root = Root::new(Path::new("/proj"));
+        let root = Root::new(&abs("/proj"));
         assert_eq!(root.relative("src/a.py"), Path::new("src/a.py"));
         assert_eq!(root.relative("./src/a.py"), Path::new("src/a.py"));
-        assert_eq!(root.relative("/proj/src/a.py"), Path::new("src/a.py"));
         assert_eq!(
-            root.relative("/elsewhere/a.py"),
-            Path::new("/elsewhere/a.py")
+            root.relative(&abs("/proj/src/a.py").to_string_lossy()),
+            Path::new("src/a.py")
+        );
+        assert_eq!(
+            root.relative(&abs("/elsewhere/a.py").to_string_lossy()),
+            abs("/elsewhere/a.py")
         );
     }
 

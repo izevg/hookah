@@ -189,6 +189,7 @@ pub(crate) fn cap(text: &str, max: usize) -> String {
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
+    use crate::ecosystems::testing::{abs, rooted};
 
     fn tsc_tool(cwd: &str) -> Tool {
         use hookah_domain::toolchain::CommandSpec;
@@ -203,7 +204,7 @@ mod tests {
     fn findings_of_a_tool_in_another_directory_are_rebased_onto_the_project() {
         use hookah_domain::project::Ecosystem;
         let project = Project {
-            root: "/ws/packages/lib".into(),
+            root: abs("/ws/packages/lib"),
             ecosystem: Ecosystem::Node,
             manifests: vec![],
         };
@@ -212,17 +213,18 @@ mod tests {
             stdout: "src/main.ts(4,24): error TS2353: bad.\n".into(),
             ..ProcessOutput::default()
         };
-        let in_dependent = parse(&project, &tsc_tool("/ws/packages/app"), &output).unwrap();
+        let in_dependent =
+            parse(&project, &tsc_tool(&rooted("/ws/packages/app")), &output).unwrap();
         assert_eq!(
             in_dependent[0].location.path,
             Path::new("../app/src/main.ts")
         );
-        let in_workspace = parse(&project, &tsc_tool("/ws"), &output).unwrap();
+        let in_workspace = parse(&project, &tsc_tool(&rooted("/ws")), &output).unwrap();
         assert_eq!(
             in_workspace[0].location.path,
             Path::new("../../src/main.ts")
         );
-        let in_project = parse(&project, &tsc_tool("/ws/packages/lib"), &output).unwrap();
+        let in_project = parse(&project, &tsc_tool(&rooted("/ws/packages/lib")), &output).unwrap();
         assert_eq!(in_project[0].location.path, Path::new("src/main.ts"));
     }
 
@@ -246,12 +248,18 @@ mod tests {
 
     #[test]
     fn relative_paths() {
-        let root = Path::new("/ws/app");
+        let root = &abs("/ws/app");
         assert_eq!(relative(root, "src/a.ts"), Path::new("src/a.ts"));
         assert_eq!(relative(root, "./src/../src/a.ts"), Path::new("src/a.ts"));
-        assert_eq!(relative(root, "/ws/app/src/a.ts"), Path::new("src/a.ts"));
+        assert_eq!(
+            relative(root, &rooted("/ws/app/src/a.ts")),
+            Path::new("src/a.ts")
+        );
         assert_eq!(relative(root, "../lib/x.ts"), Path::new("../lib/x.ts"));
-        assert_eq!(relative(root, "/ws/lib/x.ts"), Path::new("../lib/x.ts"));
+        assert_eq!(
+            relative(root, &rooted("/ws/lib/x.ts")),
+            Path::new("../lib/x.ts")
+        );
     }
 
     #[cfg(unix)]

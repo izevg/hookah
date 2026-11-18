@@ -71,7 +71,7 @@ fn claude_project_setup_writes_hooks_pointing_at_this_binary() {
     let file = sb.project(".claude/settings.json");
     let written = text(&file);
     assert!(
-        written.contains(&format!("{HOOKAH} hook claude")),
+        written.contains(&format!("{} hook claude", HOOKAH.replace('\\', "\\\\"))),
         "{written}"
     );
     for event in ["SessionStart", "PostToolUse", "Stop", "SubagentStop"] {

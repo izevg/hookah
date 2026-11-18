@@ -214,9 +214,10 @@ mod tests {
         tests(&project(s), testmon, &abs(s, changed))
     }
 
+    /// The selected targets, written with `/` whatever the platform separator is.
     fn targets(sel: TestSelection) -> Vec<String> {
         match sel {
-            TestSelection::Targets(t) => t,
+            TestSelection::Targets(t) => t.iter().map(|p| p.replace('\\', "/")).collect(),
             TestSelection::None => vec![],
         }
     }

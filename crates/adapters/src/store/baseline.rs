@@ -393,13 +393,32 @@ mod tests {
         assert_eq!(store.state(root(), "new"), BaselineState::InProgress);
     }
 
+    /// A handle on a directory whose times can be set. Windows opens a directory only with
+    /// backup semantics, and setting times needs the attribute-writing right.
+    fn open_dir(path: &Path) -> File {
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::OpenOptionsExt;
+            const FILE_WRITE_ATTRIBUTES: u32 = 0x100;
+            const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
+            fs::OpenOptions::new()
+                .access_mode(FILE_WRITE_ATTRIBUTES)
+                .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
+                .open(path)
+                .unwrap()
+        }
+        #[cfg(not(windows))]
+        {
+            File::open(path).unwrap()
+        }
+    }
+
     #[test]
     fn prune_ignores_missing_directories_and_subdirectories() {
         let t = Temp::new("prune-odd");
         prune_in(&t.0, SystemTime::now(), MAX_AGE);
         fs::create_dir_all(t.0.join("sub")).unwrap();
-        File::open(t.0.join("sub"))
-            .unwrap()
+        open_dir(&t.0.join("sub"))
             .set_modified(SystemTime::now() - MAX_AGE * 2)
             .unwrap();
         prune_in(&t.0, SystemTime::now(), MAX_AGE);

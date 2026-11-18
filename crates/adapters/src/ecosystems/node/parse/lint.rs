@@ -250,14 +250,19 @@ fn prettier_error(root: &Path, line: &str) -> Option<Finding> {
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
+    use crate::ecosystems::testing::rooted;
 
-    const ROOT: &str = "/ws/app";
+    const ROOT: &str = if cfg!(windows) {
+        "C:/ws/app"
+    } else {
+        "/ws/app"
+    };
 
     fn out(exit: i32, stdout: &str, stderr: &str) -> ProcessOutput {
         ProcessOutput {
             exit_code: Some(exit),
-            stdout: stdout.into(),
-            stderr: stderr.into(),
+            stdout: rooted(stdout),
+            stderr: rooted(stderr),
             timed_out: false,
         }
     }

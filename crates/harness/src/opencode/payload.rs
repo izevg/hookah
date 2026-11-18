@@ -89,6 +89,11 @@ fn edit(p: &Payload) -> Result<Invocation, PayloadError> {
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
+    use crate::testing::{abs, os_json};
+
+    fn parse(json: &str) -> Result<Invocation, PayloadError> {
+        super::parse(&os_json(json))
+    }
     use hookah_application::StartRequest;
 
     fn edit_files(json: &str) -> Vec<PathBuf> {
@@ -105,8 +110,8 @@ mod tests {
             "session_id":"ses_1","already_continuing":false}"#;
         match parse(json).unwrap() {
             Invocation::Edit(r) => {
-                assert_eq!(r.file, PathBuf::from("/w/app/src/a.ts"));
-                assert_eq!(r.display_root, PathBuf::from("/w/app"));
+                assert_eq!(r.file, abs("/w/app/src/a.ts"));
+                assert_eq!(r.display_root, abs("/w/app"));
             }
             other => panic!("expected edit, got {other:?}"),
         }
@@ -115,10 +120,7 @@ mod tests {
     #[test]
     fn several_files_make_a_batch_and_relative_paths_resolve_against_cwd() {
         let json = r#"{"v":1,"event":"edit","cwd":"/w","files":["a.ts","/x/b.ts"]}"#;
-        assert_eq!(
-            edit_files(json),
-            [PathBuf::from("/w/a.ts"), PathBuf::from("/x/b.ts")]
-        );
+        assert_eq!(edit_files(json), [abs("/w/a.ts"), abs("/x/b.ts")]);
     }
 
     #[test]
@@ -146,7 +148,7 @@ mod tests {
         assert_eq!(
             parse(json).unwrap(),
             Invocation::Stop {
-                request: StopRequest::new(PathBuf::from("/w/app")).with_session(Some("s".into())),
+                request: StopRequest::new(abs("/w/app")).with_session(Some("s".into())),
                 already_continuing: true,
             }
         );
@@ -180,7 +182,7 @@ mod tests {
         let ok = r#"{"v":1,"event":"start","cwd":"/w/app","session_id":"ses_1"}"#;
         assert_eq!(
             parse(ok).unwrap(),
-            Invocation::Start(StartRequest::new("/w/app", "ses_1"))
+            Invocation::Start(StartRequest::new(abs("/w/app"), "ses_1"))
         );
         for json in [
             r#"{"v":1,"event":"start","cwd":"/w/app"}"#,

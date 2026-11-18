@@ -265,13 +265,32 @@ pub(crate) mod scratch {
             Self(dunce::canonicalize(dir).unwrap())
         }
 
+        /// `rel` (written with `/`) under the root, joined one component at a time so the
+        /// separators are the platform's.
         pub fn path(&self, rel: &str) -> PathBuf {
-            self.0.join(rel)
+            rel.split('/')
+                .filter(|part| !part.is_empty())
+                .fold(self.0.clone(), |path, part| path.join(part))
+        }
+
+        /// Where `install` puts the `.bin` entry `name` of the package in `dir`: a `.cmd` shim on
+        /// Windows, the bare name elsewhere.
+        pub fn bin_path(&self, dir: &str, name: &str) -> PathBuf {
+            let file = if cfg!(windows) {
+                format!("{name}.cmd")
+            } else {
+                name.to_owned()
+            };
+            self.path(dir).join("node_modules").join(".bin").join(file)
         }
 
         /// Writes `rel` (creating directories) and returns its absolute path.
         pub fn write(&self, rel: &str, text: &str) -> PathBuf {
-            let path = self.path(rel);
+            let path = if Path::new(rel).is_absolute() {
+                PathBuf::from(rel)
+            } else {
+                self.path(rel)
+            };
             fs::create_dir_all(path.parent().unwrap()).unwrap();
             fs::write(&path, text).unwrap();
             path
@@ -280,9 +299,9 @@ pub(crate) mod scratch {
         /// Installs a fake package: `node_modules/<name>/package.json` and, when `bin` is given,
         /// an executable-looking `node_modules/.bin/<bin>`, under `dir` (relative).
         pub fn install(&self, dir: &str, name: &str, version: &str, bin: Option<&str>) {
-            let base = Path::new(dir);
             self.write(
-                &base
+                &self
+                    .path(dir)
                     .join("node_modules")
                     .join(name)
                     .join("package.json")
@@ -290,14 +309,7 @@ pub(crate) mod scratch {
                 &format!(r#"{{"name":"{name}","version":"{version}"}}"#),
             );
             if let Some(bin) = bin {
-                self.write(
-                    &base
-                        .join("node_modules")
-                        .join(".bin")
-                        .join(bin)
-                        .to_string_lossy(),
-                    "#!/bin/sh\n",
-                );
+                self.write(&self.bin_path(dir, bin).to_string_lossy(), "#!/bin/sh\n");
             }
         }
     }
@@ -413,10 +425,10 @@ mod tests {
         assert_eq!(info.manager, PackageManager::Pnpm);
         assert!(info.declares("eslint") && info.declares("vitest"));
         // The root binary is found by walking up; the package's own wins when both exist.
-        assert_eq!(info.bin("eslint"), Some(s.path("node_modules/.bin/eslint")));
+        assert_eq!(info.bin("eslint"), Some(s.bin_path("", "eslint")));
         assert_eq!(
             info.bin("vitest"),
-            Some(s.path("packages/app/node_modules/.bin/vitest"))
+            Some(s.bin_path("packages/app", "vitest"))
         );
         assert_eq!(info.bin("tsc"), None);
         assert_eq!(info.installed_version("eslint").as_deref(), Some("9.1.0"));

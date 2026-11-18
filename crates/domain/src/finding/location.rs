@@ -1,6 +1,7 @@
 //! `Location` value object: project-relative path, optional line, and optional column.
 //!
-//! Renders as `path`, `path:line`, or `path:line:col` in reports.
+//! Renders as `path`, `path:line`, or `path:line:col` in reports. The path is written with `/` on
+//! every OS, like every other path in a report.
 
 use std::fmt;
 use std::path::PathBuf;
@@ -47,7 +48,12 @@ impl Location {
 
 impl fmt::Display for Location {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.path.display())?;
+        let path = self.path.to_string_lossy();
+        if cfg!(windows) {
+            write!(f, "{}", path.replace('\\', "/"))?;
+        } else {
+            write!(f, "{path}")?;
+        }
         if let Some(line) = self.line {
             write!(f, ":{line}")?;
             if let Some(col) = self.column {
@@ -67,5 +73,11 @@ mod tests {
         assert_eq!(Location::file("a.rs").to_string(), "a.rs");
         assert_eq!(Location::line("a.rs", 3).to_string(), "a.rs:3");
         assert_eq!(Location::at("a.rs", 3, 7).to_string(), "a.rs:3:7");
+    }
+
+    #[test]
+    fn nested_paths_render_with_forward_slashes() {
+        let path: PathBuf = ["src", "util", "a.rs"].iter().collect();
+        assert_eq!(Location::line(path, 3).to_string(), "src/util/a.rs:3");
     }
 }

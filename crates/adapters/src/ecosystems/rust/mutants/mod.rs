@@ -165,7 +165,7 @@ mod tests {
                 "--file=crates/core/src/a.rs",
                 "--no-shuffle",
                 "--output",
-                "/ws/target/hookah-mutants",
+                &output_dir(Path::new("/ws")).to_string_lossy(),
                 "--iterate",
                 "-j",
                 "2",

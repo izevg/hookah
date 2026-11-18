@@ -14,3 +14,6 @@ pub mod opencode;
 pub mod orca;
 pub mod protocol;
 pub mod qoder;
+
+#[cfg(test)]
+mod testing;

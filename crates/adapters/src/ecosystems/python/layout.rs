@@ -326,15 +326,18 @@ mod tests {
         for f in ["a.py", "d1/b.py", "d1/d2/c.py", "d1/d2/d3/d.py"] {
             s.write(f, "");
         }
-        let names = |depth, files| {
-            python_files_within(s.root(), depth, files)
-                .iter()
-                .map(|p| p.to_string_lossy().into_owned())
-                .collect::<Vec<_>>()
-        };
-        assert_eq!(names(0, 100), ["a.py"]);
-        assert_eq!(names(1, 100), ["a.py", "d1/b.py"]);
-        assert_eq!(names(2, 100), ["a.py", "d1/b.py", "d1/d2/c.py"]);
+        let names = |depth, files| python_files_within(s.root(), depth, files);
+        // Paths compare component by component, so `/` matches the platform separator.
+        assert_eq!(names(0, 100), [Path::new("a.py")]);
+        assert_eq!(names(1, 100), [Path::new("a.py"), Path::new("d1/b.py")]);
+        assert_eq!(
+            names(2, 100),
+            [
+                Path::new("a.py"),
+                Path::new("d1/b.py"),
+                Path::new("d1/d2/c.py")
+            ]
+        );
         assert_eq!(names(16, 100).len(), 4);
         assert_eq!(names(16, 2).len(), 2);
         assert_eq!(names(16, 4).len(), 4);

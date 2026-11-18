@@ -152,26 +152,29 @@ fn format_error(
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
-    use std::path::Path;
-
-    use super::super::testing::out;
+    use super::super::testing::out as plain;
     use super::*;
+    use crate::ecosystems::testing::{abs, rooted};
+
+    fn out(code: i32, stdout: &str, stderr: &str) -> ProcessOutput {
+        plain(code, &rooted(stdout), stderr)
+    }
 
     fn root() -> Root {
-        Root::new(Path::new("/w/proj"))
+        Root::new(&abs("/ws/proj"))
     }
 
     /// Captured from ruff 0.17.5 on a file with an unused import, an unsorted import block, and
     /// an unused variable.
     const RUFF_JSON: &str = r#"[
   {"cell": null, "code": "I001", "end_location": {"column": 34, "row": 2},
-   "filename": "/w/proj/src/shop/domain/cart.py",
+   "filename": "/ws/proj/src/shop/domain/cart.py",
    "fix": {"applicability": "safe", "edits": [], "message": "Organize imports"},
    "location": {"column": 1, "row": 1}, "message": "Import block is un-sorted or un-formatted",
    "name": "unsorted-imports", "noqa_row": 1, "severity": "error",
    "url": "https://docs.astral.sh/ruff/rules/unsorted-imports"},
   {"cell": null, "code": "F401", "end_location": {"column": 10, "row": 1},
-   "filename": "/w/proj/src/shop/domain/cart.py", "fix": null,
+   "filename": "/ws/proj/src/shop/domain/cart.py", "fix": null,
    "location": {"column": 8, "row": 1}, "message": "`os` imported but unused",
    "name": "unused-import", "noqa_row": 1, "severity": "error", "url": null}
 ]"#;
@@ -179,7 +182,7 @@ mod tests {
     /// Captured from ruff 0.17.5 on `def f(:`.
     const RUFF_SYNTAX: &str = r#"[
   {"cell": null, "code": "invalid-syntax", "end_location": {"column": 8, "row": 1},
-   "filename": "/w/proj/src/shop/bad.py", "fix": null,
+   "filename": "/ws/proj/src/shop/bad.py", "fix": null,
    "location": {"column": 7, "row": 1},
    "message": "Expected a parameter or the end of the parameter list",
    "name": "invalid-syntax", "noqa_row": null, "severity": "error", "url": null}

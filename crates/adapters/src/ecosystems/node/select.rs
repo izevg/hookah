@@ -127,6 +127,15 @@ pub fn sources_of_test(project: &Project, test: &Path) -> Vec<PathBuf> {
     found
 }
 
+/// `rel` written with `/` on every OS: Stryker reads the `--mutate` list as globs, where a `\`
+/// escapes the next character instead of separating directories.
+fn glob_path(rel: &Path) -> String {
+    rel.components()
+        .map(|c| c.as_os_str().to_string_lossy())
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
 /// Whether `rel` can go into a comma-separated Stryker `--mutate` list unchanged: no commas and
 /// no glob or negation characters, which Stryker would read as patterns.
 fn mutate_safe(rel: &Path) -> bool {
@@ -159,10 +168,7 @@ pub fn mutants(
         }
     }
     files.truncate(MAX_MUTANT_FILES);
-    let list: Vec<String> = files
-        .iter()
-        .map(|f| f.to_string_lossy().into_owned())
-        .collect();
+    let list: Vec<String> = files.iter().map(|f| glob_path(f)).collect();
     MutationSelection::from_targets(if list.is_empty() {
         vec![]
     } else {

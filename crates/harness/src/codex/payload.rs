@@ -108,6 +108,11 @@ fn patched_paths(patch: &str) -> Vec<String> {
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
+    use crate::testing::{abs, os_json};
+
+    fn parse(json: &str) -> Result<Invocation, PayloadError> {
+        super::parse(&os_json(json))
+    }
     use hookah_application::StartRequest;
 
     const PATCH: &str = "*** Begin Patch\n*** Update File: src/main.rs\n@@\n-a\n+b\n\
@@ -134,10 +139,7 @@ mod tests {
     fn patch_yields_one_request_per_added_or_updated_file() {
         assert_eq!(
             files(parse(&payload(PATCH)).unwrap()),
-            vec![
-                PathBuf::from("/w/app/src/main.rs"),
-                PathBuf::from("/w/app/src/new.rs")
-            ]
+            vec![abs("/w/app/src/main.rs"), abs("/w/app/src/new.rs")]
         );
     }
 
@@ -147,7 +149,7 @@ mod tests {
             "*** Begin Patch\n*** Update File: a.py\n*** Move to: pkg/b.py\n@@\n*** End Patch";
         assert_eq!(
             files(parse(&payload(patch)).unwrap()),
-            vec![PathBuf::from("/w/app/pkg/b.py")]
+            vec![abs("/w/app/pkg/b.py")]
         );
     }
 
@@ -155,7 +157,7 @@ mod tests {
     fn patch_field_is_accepted_too() {
         let json = r#"{"cwd":"/w","hook_event_name":"PostToolUse","tool_name":"apply_patch",
             "tool_input":{"patch":"*** Begin Patch\n*** Add File: a.rs\n+x\n*** End Patch"}}"#;
-        assert_eq!(files(parse(json).unwrap()), vec![PathBuf::from("/w/a.rs")]);
+        assert_eq!(files(parse(json).unwrap()), vec![abs("/w/a.rs")]);
     }
 
     #[test]
@@ -187,7 +189,7 @@ mod tests {
         assert_eq!(
             parse(json).unwrap(),
             Invocation::Stop {
-                request: StopRequest::new(PathBuf::from("/w/app")).with_session(Some("s".into())),
+                request: StopRequest::new(abs("/w/app")).with_session(Some("s".into())),
                 already_continuing: true,
             }
         );
@@ -203,7 +205,7 @@ mod tests {
         let ok = r#"{"session_id":"ses 1","cwd":"/w/app","hook_event_name":"SessionStart","source":"startup"}"#;
         assert_eq!(
             parse(ok).unwrap(),
-            Invocation::Start(StartRequest::new("/w/app", "ses 1"))
+            Invocation::Start(StartRequest::new(abs("/w/app"), "ses 1"))
         );
         for json in [
             r#"{"cwd":"/w/app","hook_event_name":"SessionStart"}"#,

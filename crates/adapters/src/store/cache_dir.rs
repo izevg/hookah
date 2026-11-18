@@ -153,10 +153,12 @@ mod tests {
 
     #[test]
     fn xdg_wins_when_absolute() {
-        let e = env(&[("XDG_CACHE_HOME", "/xdg"), ("HOME", "/home/u")]);
-        assert_eq!(cache_base(e, Platform::Mac), Some("/xdg/hookah".into()));
-        let e = env(&[("XDG_CACHE_HOME", "/xdg"), ("HOME", "/home/u")]);
-        assert_eq!(cache_base(e, Platform::Unix), Some("/xdg/hookah".into()));
+        // A Windows path needs a drive to be absolute.
+        let xdg = if cfg!(windows) { "C:/xdg" } else { "/xdg" };
+        let want = Some(Path::new(xdg).join("hookah"));
+        let pairs = [("XDG_CACHE_HOME", xdg), ("HOME", "/home/u")];
+        assert_eq!(cache_base(env(&pairs), Platform::Mac), want);
+        assert_eq!(cache_base(env(&pairs), Platform::Unix), want);
     }
 
     #[test]

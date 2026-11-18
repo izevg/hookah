@@ -3,6 +3,7 @@
 
 use std::path::Path;
 
+use hookah_domain::path::display_path;
 use hookah_setup::{Detection, Plan, Target, Written};
 
 /// The result of an applied plan.
@@ -90,9 +91,10 @@ fn what(target: Target, program: &str) -> String {
     )
 }
 
-/// A path relative to the project when it is inside it, absolute otherwise.
+/// A path relative to the project when it is inside it, absolute otherwise, written with `/`
+/// on every OS like the paths of a report.
 fn shown(path: &Path, cwd: &Path) -> String {
-    path.strip_prefix(cwd).unwrap_or(path).display().to_string()
+    display_path(path, cwd).display().to_string()
 }
 
 #[cfg(test)]

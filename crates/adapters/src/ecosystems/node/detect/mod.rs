@@ -480,6 +480,14 @@ mod tests {
         Some("/cache".into())
     }
 
+    /// `name` in the fake cache directory, spelled the way the tools receive it.
+    fn cached(name: &str) -> String {
+        Path::new("/cache")
+            .join(name)
+            .to_string_lossy()
+            .into_owned()
+    }
+
     fn detect(s: &Scratch) -> Toolchain {
         toolchain(&PackageInfo::read(&s.0).unwrap(), cache)
     }
@@ -529,10 +537,7 @@ mod tests {
             ["--write", "--ignore-unknown", "T"]
         );
         let spec = &tc.tools()[0].command;
-        assert_eq!(
-            spec.program,
-            s.path("node_modules/.bin/prettier").to_string_lossy()
-        );
+        assert_eq!(spec.program, s.bin_path("", "prettier").to_string_lossy());
         assert_eq!(spec.cwd, s.0);
         assert_eq!(spec.timeout, Duration::from_secs(30));
     }
@@ -648,7 +653,7 @@ mod tests {
                 "tsconfig.json",
                 "--incremental",
                 "--tsBuildInfoFile",
-                "/cache/tsc.tsbuildinfo"
+                &cached("tsc.tsbuildinfo")
             ]
         );
         assert_eq!(tc.tools()[0].command.timeout, Duration::from_secs(120));
@@ -874,7 +879,7 @@ mod tests {
                 "related",
                 "--run",
                 "--reporter=json",
-                "--outputFile=/cache/vitest-report.json",
+                &format!("--outputFile={}", cached("vitest-report.json")),
                 "--passWithNoTests",
                 "T"
             ]

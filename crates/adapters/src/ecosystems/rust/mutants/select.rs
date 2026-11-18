@@ -15,9 +15,14 @@
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
-/// The `cargo mutants` target string for one workspace-relative file.
+/// The `cargo mutants` target string for one workspace-relative file. `--file` takes a glob, so
+/// the path is written with `/` on every OS: a `\` would escape the next character.
 pub fn file_target(path: &Path) -> String {
-    format!("--file={}", path.display())
+    let parts: Vec<_> = path
+        .components()
+        .map(|c| c.as_os_str().to_string_lossy())
+        .collect();
+    format!("--file={}", parts.join("/"))
 }
 
 /// Chooses `--file=` targets. `crate_dir` is the project root relative to the workspace root;

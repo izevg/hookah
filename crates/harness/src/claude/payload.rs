@@ -93,6 +93,11 @@ fn resolve(path: &Path, cwd: Option<&Path>) -> Result<PathBuf, PayloadError> {
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
+    use crate::testing::{abs, os_json};
+
+    fn parse(json: &str) -> Result<Invocation, PayloadError> {
+        super::parse(&os_json(json))
+    }
     use hookah_application::StartRequest;
 
     const WRITE: &str = r#"{
@@ -117,10 +122,7 @@ mod tests {
 
     #[test]
     fn write_is_an_edit() {
-        assert_eq!(
-            edit_of(parse(WRITE).unwrap()),
-            PathBuf::from("/work/app/src/main.rs")
-        );
+        assert_eq!(edit_of(parse(WRITE).unwrap()), abs("/work/app/src/main.rs"));
     }
 
     #[test]
@@ -128,7 +130,7 @@ mod tests {
         let Invocation::Edit(r) = parse(WRITE).unwrap() else {
             panic!("expected edit");
         };
-        assert_eq!(r.display_root, PathBuf::from("/work/app"));
+        assert_eq!(r.display_root, abs("/work/app"));
     }
 
     #[test]
@@ -138,7 +140,7 @@ mod tests {
                 r#"{{"cwd":"/w","hook_event_name":"PostToolUse","tool_name":"{tool}",
                 "tool_input":{{"file_path":"/w/a.py","old_string":"a","new_string":"b"}}}}"#
             );
-            assert_eq!(edit_of(parse(&json).unwrap()), PathBuf::from("/w/a.py"));
+            assert_eq!(edit_of(parse(&json).unwrap()), abs("/w/a.py"));
         }
     }
 
@@ -146,17 +148,14 @@ mod tests {
     fn notebook_edit_uses_notebook_path() {
         let json = r#"{"cwd":"/w","hook_event_name":"PostToolUse","tool_name":"NotebookEdit",
             "tool_input":{"notebook_path":"/w/n.ipynb","new_source":"x"}}"#;
-        assert_eq!(edit_of(parse(json).unwrap()), PathBuf::from("/w/n.ipynb"));
+        assert_eq!(edit_of(parse(json).unwrap()), abs("/w/n.ipynb"));
     }
 
     #[test]
     fn relative_path_resolves_against_cwd() {
         let json = r#"{"cwd":"/w/app","hook_event_name":"PostToolUse","tool_name":"Edit",
             "tool_input":{"file_path":"src/lib.rs"}}"#;
-        assert_eq!(
-            edit_of(parse(json).unwrap()),
-            PathBuf::from("/w/app/src/lib.rs")
-        );
+        assert_eq!(edit_of(parse(json).unwrap()), abs("/w/app/src/lib.rs"));
     }
 
     #[test]
@@ -185,7 +184,7 @@ mod tests {
             assert_eq!(
                 parse(&json).unwrap(),
                 Invocation::Stop {
-                    request: StopRequest::new("/w/app").with_session(Some("s".into())),
+                    request: StopRequest::new(abs("/w/app")).with_session(Some("s".into())),
                     already_continuing: active,
                 }
             );
@@ -215,7 +214,7 @@ mod tests {
         let ok = r#"{"session_id":"ses 1","cwd":"/w/app","hook_event_name":"SessionStart","source":"startup"}"#;
         assert_eq!(
             parse(ok).unwrap(),
-            Invocation::Start(StartRequest::new("/w/app", "ses 1"))
+            Invocation::Start(StartRequest::new(abs("/w/app"), "ses 1"))
         );
         for json in [
             r#"{"cwd":"/w/app","hook_event_name":"SessionStart"}"#,

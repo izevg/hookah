@@ -71,6 +71,11 @@ fn edit(p: &Payload) -> Result<Invocation, PayloadError> {
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
+    use crate::testing::{abs, os_json};
+
+    fn parse(json: &str) -> Result<Invocation, PayloadError> {
+        super::parse(&os_json(json))
+    }
     use hookah_application::StartRequest;
 
     const WRITE: &str = r#"{
@@ -94,20 +99,14 @@ mod tests {
 
     #[test]
     fn write_is_an_edit() {
-        assert_eq!(
-            edit_of(parse(WRITE).unwrap()),
-            PathBuf::from("/work/app/src/app.ts")
-        );
+        assert_eq!(edit_of(parse(WRITE).unwrap()), abs("/work/app/src/app.ts"));
     }
 
     #[test]
     fn edit_tool_and_relative_path() {
         let json = r#"{"cwd":"/w/app","hook_event_name":"PostToolUse","tool_name":"Edit",
             "tool_input":{"file_path":"src/a.py","old_string":"a","new_string":"b"}}"#;
-        assert_eq!(
-            edit_of(parse(json).unwrap()),
-            PathBuf::from("/w/app/src/a.py")
-        );
+        assert_eq!(edit_of(parse(json).unwrap()), abs("/w/app/src/a.py"));
     }
 
     #[test]
@@ -133,7 +132,7 @@ mod tests {
         assert_eq!(
             parse(json).unwrap(),
             Invocation::Stop {
-                request: StopRequest::new(PathBuf::from("/w/app")).with_session(Some("s".into())),
+                request: StopRequest::new(abs("/w/app")).with_session(Some("s".into())),
                 already_continuing: true,
             }
         );
@@ -149,7 +148,7 @@ mod tests {
         let ok = r#"{"session_id":"ses 1","cwd":"/w/app","hook_event_name":"SessionStart","source":"startup"}"#;
         assert_eq!(
             parse(ok).unwrap(),
-            Invocation::Start(StartRequest::new("/w/app", "ses 1"))
+            Invocation::Start(StartRequest::new(abs("/w/app"), "ses 1"))
         );
         for json in [
             r#"{"cwd":"/w/app","hook_event_name":"SessionStart"}"#,

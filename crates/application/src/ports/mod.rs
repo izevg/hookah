@@ -8,7 +8,7 @@ pub mod storage;
 
 pub use discovery::{ChangeSource, ProjectLocator, ToolchainDetector};
 pub use execution::{CheckRunner, ContentHasher, ProcessOutput};
-pub use storage::{BaselineSpawner, BaselineState, BaselineStore};
+pub use storage::{BaselineSpawner, BaselineState, BaselineStore, StatusStore};
 
 /// All ports the use cases need, borrowed. Built by the composition root.
 #[derive(Clone, Copy)]
@@ -27,6 +27,8 @@ pub struct Ports<'a> {
     pub baselines: &'a dyn BaselineStore,
     /// Starts baseline jobs in the background.
     pub spawner: &'a dyn BaselineSpawner,
+    /// Remembers the latest check status per project.
+    pub statuses: &'a dyn StatusStore,
 }
 
 #[cfg(test)]
@@ -43,6 +45,7 @@ pub(crate) mod fakes {
     use hookah_domain::finding::baseline::Baseline;
     use hookah_domain::project::{Manifest, Project};
     use hookah_domain::session::{ChangedLines, FileRole};
+    use hookah_domain::status::{RecordedStatus, Status};
     use hookah_domain::toolchain::{
         Arg, CheckKind, CommandSpec, MutationSelection, TestSelection, Tool, Toolchain,
     };
@@ -81,6 +84,9 @@ pub(crate) mod fakes {
         pub spawn_fails: bool,
         /// `(root, session)` of every `spawn` call.
         pub spawned: RefCell<Vec<(PathBuf, String)>>,
+        /// The latest status per project root.
+        pub statuses: RefCell<HashMap<PathBuf, Status>>,
+        pub record_fails: bool,
     }
 
     impl World {
@@ -110,6 +116,8 @@ pub(crate) mod fakes {
                 begin_fails: false,
                 spawn_fails: false,
                 spawned: RefCell::new(vec![]),
+                statuses: RefCell::new(HashMap::new()),
+                record_fails: false,
             }
         }
 
@@ -122,6 +130,7 @@ pub(crate) mod fakes {
                 hasher: self,
                 baselines: self,
                 spawner: self,
+                statuses: self,
             }
         }
 
@@ -298,6 +307,28 @@ pub(crate) mod fakes {
                 .borrow_mut()
                 .push((root.to_path_buf(), session.into()));
             Ok(())
+        }
+    }
+
+    impl StatusStore for World {
+        fn record(&self, root: &Path, status: &Status) -> Result<(), PortError> {
+            if self.record_fails {
+                return Err(PortError::new("store unavailable"));
+            }
+            self.statuses
+                .borrow_mut()
+                .insert(root.to_path_buf(), status.clone());
+            Ok(())
+        }
+
+        fn latest(&self, root: &Path) -> Option<RecordedStatus> {
+            self.statuses
+                .borrow()
+                .get(root)
+                .map(|status| RecordedStatus {
+                    at_ms: 7,
+                    status: status.clone(),
+                })
         }
     }
 }

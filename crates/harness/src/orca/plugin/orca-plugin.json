@@ -1,0 +1,84 @@
+{
+  "manifestVersion": 2,
+  "id": "hookah",
+  "name": "hookah",
+  "version": "0.1.0",
+  "description": "Shows the latest hookah verdict of each worktree, checks a worktree on demand, and sets up hookah hooks for the agents Orca hosts.",
+  "license": "MIT",
+  "repository": "https://github.com/izevg/hookah",
+  "engines": {
+    "orca": ">=1.4.248"
+  },
+  "execution": "trusted-worker",
+  "pluginApi": 1,
+  "main": "src/worker.ts",
+  "capabilities": [
+    { "kind": "workspace:read" },
+    { "kind": "agent:read" },
+    { "kind": "notifications:show" },
+    { "kind": "settings:own" }
+  ],
+  "contributes": {
+    "panels": [
+      {
+        "id": "hookah",
+        "title": "hookah",
+        "icon": "check",
+        "entry": "src/panel.tsx",
+        "ui": "components"
+      }
+    ],
+    "commands": [
+      { "id": "hookah.check", "title": "hookah: check this worktree", "when": "workspace" },
+      {
+        "id": "hookah.setup",
+        "title": "hookah: set up hooks for this worktree",
+        "when": "workspace"
+      },
+      { "id": "hookah.status", "title": "hookah: show status of this worktree", "when": "workspace" }
+    ],
+    "events": [
+      { "on": "agent.status.changed" },
+      { "on": "workspace.changed" },
+      { "on": "workspace.created" },
+      { "on": "workspace.removed" }
+    ],
+    "hooks": [{ "event": "agent.launch.before" }],
+    "statusBarItems": [
+      {
+        "id": "status",
+        "text": "hookah",
+        "icon": "check",
+        "tooltip": "hookah: latest check of the focused worktree",
+        "command": "hookah.status"
+      }
+    ],
+    "settings": [
+      {
+        "key": "hookahPath",
+        "title": "hookah command",
+        "description": "The hookah executable. Use an absolute path when Orca's PATH does not include it.",
+        "type": "string",
+        "default": "hookah"
+      },
+      {
+        "key": "setup",
+        "title": "Hooks for hosted agents",
+        "description": "What to do when an agent starts in a worktree where hookah is not set up for it. 'suggest' shows a notification. 'auto' writes the agent's project config into the worktree (a tracked file such as .claude/settings.json) before the agent starts. 'off' does nothing.",
+        "type": "string",
+        "enum": ["suggest", "auto", "off"],
+        "enumLabels": ["Suggest", "Set up automatically", "Off"],
+        "default": "suggest"
+      },
+      {
+        "key": "checkTimeoutSeconds",
+        "title": "Check timeout (seconds)",
+        "description": "How long 'hookah: check this worktree' may run, tests included.",
+        "type": "integer",
+        "default": 300,
+        "minimum": 10,
+        "maximum": 1800
+      }
+    ]
+  }
+}

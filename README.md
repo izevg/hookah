@@ -26,7 +26,8 @@ feeds failures straight back to the agent, so it fixes them immediately.
 
 > **Status:** works for Rust, Node (TypeScript/JavaScript), and Python projects, with the Claude
 > Code, Codex, Cursor, Qoder, Kimi, and opencode harnesses (`hookah check`, `hookah detect`, `hookah hook
-> <harness>`, `hookah plugin opencode`, `hookah setup`), including mutation testing at stop. Orca is still to come.
+> <harness>`, `hookah plugin opencode`, `hookah setup`), including mutation testing at stop, and
+> with [Orca](docs/setup/plugins/orca.md) (`hookah plugin orca`, `hookah status`).
 > End-to-end [samples](samples/README.md) cover the behavior. Prebuilt binaries and the install
 > scripts ship with each [release](https://github.com/izevg/hookah/releases). This repository runs `hookah` on itself; see
 > [Claude Code setup](docs/setup/hooks/cli/claude-code.md#dogfooding).
@@ -115,8 +116,7 @@ Details, commands, and test-selection rules: [docs/ecosystems.md](docs/ecosystem
 ## Supported agent harnesses
 
 Each harness gets a thin adapter that reads that harness's hook payload, calls the core, and
-reports results in the format that harness expects. The table shows the integration points; Orca
-is still planned.
+reports results in the format that harness expects. The table shows the integration points.
 
 | Harness     | Integration point                                   | Feedback channel                         |
 |-------------|-----------------------------------------------------|------------------------------------------|
@@ -126,7 +126,7 @@ is still planned.
 | Kimi Code   | `PostToolUse` (`Write\|Edit`) `[[hooks]]` in `config.toml` (beta); no stop phase | stdout (may reach the model) |
 | Qoder       | `PostToolUse` (`Write\|Edit`), `Stop` in `.qoder/settings.json` | `additionalContext` (edit), exit 2 + stderr (stop) |
 | Cursor      | `afterFileEdit`, `stop`, `sessionStart` in `.cursor/hooks.json` (IDE and `cursor-agent`) | `followup_message` (stop); the edit hook cannot reach the model |
-| Orca        | through the hooks of the agent it runs; Orca plugin for workspace-level events | per hosted agent |
+| Orca        | the hooks of the agent it runs, plus a bundled Orca plugin (`hookah plugin orca --out <dir>`): status bar, sidebar panel, palette commands | per hosted agent; plugin shows the verdict per worktree |
 
 Each harness is configured by `hookah setup <harness>`, and the manual steps are written down per
 harness.

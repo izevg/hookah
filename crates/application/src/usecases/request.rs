@@ -137,7 +137,7 @@ impl Outcome {
 }
 
 /// Collects findings, notices, and failures while tools run.
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub(crate) struct RunLog {
     pub findings: Vec<Finding>,
     pub notices: Vec<Notice>,

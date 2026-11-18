@@ -70,7 +70,7 @@ impl Invocation {
 }
 
 /// Canonicalizes the longest existing prefix of `path` and appends the rest unchanged.
-fn canonical_dir(path: &Path) -> PathBuf {
+pub fn canonical_dir(path: &Path) -> PathBuf {
     let path = normalize(path);
     let mut rest = Vec::new();
     let mut head = path.as_path();

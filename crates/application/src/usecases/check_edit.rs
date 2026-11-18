@@ -17,6 +17,7 @@ use hookah_domain::verdict::{Notice, ReportingFilter};
 
 use super::baseline::lookup;
 use super::request::{EditRequest, Outcome, RunLog};
+use super::status::record;
 use crate::ports::Ports;
 
 /// Runs format and lint on one changed file.
@@ -89,7 +90,9 @@ impl<'a> CheckEdit<'a> {
             }
         }
         log.filter(&filter, &project.root, &request.display_root);
-        log.finish(self.report_limit)
+        let outcome = log.finish(self.report_limit);
+        record(&self.ports, &project.root, Phase::Edit, &outcome.verdict);
+        outcome
     }
 }
 
@@ -488,5 +491,32 @@ mod tests {
             assert_eq!(lines(run_in_session(&w, Some("s"))), ["src/a.rs:1: msg"]);
             assert!(matches!(w.baseline_state("s"), BaselineState::Failed(_)));
         }
+    }
+
+    #[test]
+    fn records_the_edit_status() {
+        use hookah_domain::status::Standing;
+        let mut w = world();
+        w.findings
+            .insert("lint".into(), vec![lint(Severity::Error, "src/a.rs", 1)]);
+        run(&w);
+        {
+            let statuses = w.statuses.borrow();
+            assert_eq!(statuses[Path::new("/r")].standing, Standing::Fail);
+            assert_eq!(statuses[Path::new("/r")].phase, Phase::Edit);
+        }
+        w.findings.clear();
+        run(&w);
+        assert_eq!(
+            w.statuses.borrow()[Path::new("/r")].standing,
+            Standing::Pass
+        );
+    }
+
+    #[test]
+    fn a_skipped_file_records_nothing() {
+        let w = world();
+        run_with(&w, "/r/README.md", "/r");
+        assert!(w.statuses.borrow().is_empty());
     }
 }

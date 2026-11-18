@@ -29,7 +29,7 @@ use crate::ports::{BaselineState, Ports};
 const PROBE: &str = ".hookah-probe";
 
 /// The probe path inside `dir`, for `ProjectLocator::manifests_above`.
-fn probe(dir: &Path) -> std::path::PathBuf {
+pub(super) fn probe(dir: &Path) -> std::path::PathBuf {
     dir.join(PROBE)
 }
 

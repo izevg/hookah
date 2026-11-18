@@ -13,7 +13,7 @@
 //! | format       | prettier   | `prettier --write --ignore-unknown {targets}` when biome does not format |
 //! | lint         | biome      | `biome lint --reporter=json --no-errors-on-unmatched --max-diagnostics=200 {targets}` when configured, Biome 1.9 or newer |
 //! | lint         | eslint     | `eslint --format json {targets}` when a flat or legacy config exists    |
-//! | typecheck    | tsc        | `tsc --noEmit --pretty false -p <tsconfig> --incremental --tsBuildInfoFile <cache>/tsc.tsbuildinfo`, or `tsc -b --pretty false <tsconfig>` with project references |
+//! | typecheck    | tsc        | `tsc --noEmit --pretty false -p <tsconfig> --composite false --incremental --tsBuildInfoFile <cache>/tsc.tsbuildinfo`, never `tsc -b`; see [`typecheck`] |
 //! | architecture | depcruise  | `depcruise --config <cfg> --output-type json {targets}` when a `.dependency-cruiser.*` config exists |
 //! | unused       | knip       | `knip --reporter json --no-progress --no-exit-code --no-config-hints [--workspace <dir>]`, stop phase only, when `knip` is declared |
 //! | test         | vitest     | `vitest related --run --reporter=json --outputFile=<cache>/vitest-report.json --passWithNoTests --exclude=<heavy glob>... {targets}` |
@@ -23,7 +23,7 @@
 //! | mutation     | stryker    | `stryker run --incremental --reporters json --mutate {targets}` (one comma-joined target) |
 //!
 //! In a workspace, typecheck and test also run for the packages that depend on the edited one (see
-//! [`workspace`]): one `tsc -b` from a workspace solution `tsconfig.json` that references them,
+//! [`workspace`]): one `tsc` per project of a workspace solution `tsconfig.json` that references them,
 //! else one `tsc` per dependent, and the test runner of each dependent from its own directory.
 //!
 //! Knip analyses the whole project (all files, exports, and dependencies), so it is the one tool
@@ -39,12 +39,12 @@
 
 pub mod package;
 pub mod tsconfig;
+pub mod typecheck;
 pub mod workspace;
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use hookah_domain::path::normalize;
 use hookah_domain::toolchain::{Arg, CheckKind, CommandSpec, MissingTool, Tool, Toolchain};
 
 use super::heavy;
@@ -310,7 +310,7 @@ pub fn toolchain(info: &PackageInfo, cache: impl Fn() -> Option<PathBuf>) -> Too
     }
 
     if let Some(t) = installed(info, "typescript", TSC) {
-        tools.extend(tsc_tools(info, &t, &cache));
+        tools.extend(typecheck::tools(info, &t, &cache));
     }
 
     if let Some(d) = installed(info, "dependency-cruiser", DEPCRUISE)
@@ -407,96 +407,6 @@ fn eslint_configured(info: &PackageInfo) -> bool {
             .ok()
             .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
             .is_some_and(|m| m.get("eslintConfig").is_some())
-}
-
-/// The typecheck commands of an edit in the package: the package itself plus the workspace
-/// packages that depend on it, since an API change breaks them, not the package.
-///
-/// A workspace root `tsconfig.json` with `references` to the package or one of its dependents is
-/// a solution config: one `tsc -b` from the workspace root covers all of them. Otherwise the
-/// package and each dependent with a `tsconfig.json` run on their own, from their directory.
-fn tsc_tools(
-    info: &PackageInfo,
-    bin: &Installed,
-    cache: &impl Fn() -> Option<PathBuf>,
-) -> Vec<Tool> {
-    if let Some(args) = solution_args(info) {
-        return vec![tool(
-            TSC,
-            CheckKind::Typecheck,
-            bin,
-            args,
-            &info.workspace_root,
-            TSC_TIMEOUT,
-        )];
-    }
-    let own = tsc_args(&info.root, cache).map(|args| (info.root.as_path(), args));
-    let dependents = info
-        .dependents
-        .iter()
-        .filter_map(|d| Some((d.root.as_path(), tsc_args(&d.root, &|| None)?)));
-    own.into_iter()
-        .chain(dependents)
-        .map(|(dir, args)| tool(TSC, CheckKind::Typecheck, bin, args, dir, TSC_TIMEOUT))
-        .collect()
-}
-
-/// The `tsc -b` arguments for a workspace root solution config that references the package or a
-/// dependent, or `None` without dependents or such a config.
-fn solution_args(info: &PackageInfo) -> Option<Vec<Arg>> {
-    if info.dependents.is_empty() || info.workspace_root == info.root {
-        return None;
-    }
-    let text = std::fs::read_to_string(info.workspace_root.join(TSCONFIG)).ok()?;
-    let referenced: Vec<PathBuf> = tsconfig::reference_paths(&text)
-        .iter()
-        .map(|r| {
-            let path = normalize(&info.workspace_root.join(r));
-            if path.extension().is_some_and(|e| e == "json") {
-                path.parent().map(Path::to_path_buf).unwrap_or(path)
-            } else {
-                path
-            }
-        })
-        .collect();
-    std::iter::once(&info.root)
-        .chain(info.dependents.iter().map(|d| &d.root))
-        .any(|dir| referenced.contains(dir))
-        .then(build_args)
-}
-
-fn build_args() -> Vec<Arg> {
-    ["-b", "--pretty", "false", TSCONFIG]
-        .iter()
-        .map(|a| lit(a))
-        .collect()
-}
-
-/// The `tsc` arguments for the package at `dir`, or `None` without a `tsconfig.json`.
-///
-/// Project references need `tsc -b`: a plain `-p` run fails with TS6305 for every import of a
-/// referenced project until that project has been built, and checks nothing at all for a
-/// solution-style `files: []` root. Build mode is incremental by itself and takes no
-/// `--noEmit` (TypeScript rejects it for referenced projects, TS6310), so it writes the
-/// declared build outputs of the projects, as the project's own `tsc -b` would. Everything else
-/// runs `--noEmit` with incremental state kept in the cache directory.
-fn tsc_args(dir: &Path, cache: &impl Fn() -> Option<PathBuf>) -> Option<Vec<Arg>> {
-    let text = std::fs::read_to_string(dir.join(TSCONFIG)).ok()?;
-    if tsconfig::has_references(&text) {
-        return Some(build_args());
-    }
-    let mut args: Vec<Arg> = ["--noEmit", "--pretty", "false", "-p", TSCONFIG]
-        .iter()
-        .map(|a| lit(a))
-        .collect();
-    if let Some(dir) = cache() {
-        args.extend([
-            lit("--incremental"),
-            lit("--tsBuildInfoFile"),
-            lit(&dir.join(TSBUILDINFO).to_string_lossy()),
-        ]);
-    }
-    Some(args)
 }
 
 fn stryker_hint(info: &PackageInfo, runner: Runner) -> String {
@@ -679,7 +589,7 @@ mod tests {
     }
 
     #[test]
-    fn tsc_is_incremental_in_the_cache_dir() {
+    fn tsc_is_incremental_in_the_cache_dir_and_never_emits() {
         let s = project(&[("typescript", "5.6.2", "tsc")]);
         assert!(detect(&s).tools().is_empty(), "no tsconfig, no tsc");
         s.write(
@@ -695,32 +605,46 @@ mod tests {
                 "false",
                 "-p",
                 "tsconfig.json",
+                "--composite",
+                "false",
                 "--incremental",
                 "--tsBuildInfoFile",
                 &cached("tsc.tsbuildinfo")
             ]
         );
         assert_eq!(tc.tools()[0].command.timeout, Duration::from_secs(120));
-        // Without a cache directory the incremental flags are dropped, not the check.
+        // Without a cache directory the state is off, not the check.
         let info = PackageInfo::read(&s.0).unwrap();
         let tc = toolchain(&info, || None);
         assert_eq!(
             argv(&tc, CheckKind::Typecheck, TSC),
-            ["--noEmit", "--pretty", "false", "-p", "tsconfig.json"]
+            [
+                "--noEmit",
+                "--pretty",
+                "false",
+                "-p",
+                "tsconfig.json",
+                "--composite",
+                "false",
+                "--incremental",
+                "false"
+            ]
         );
     }
 
     #[test]
-    fn tsc_uses_build_mode_with_project_references() {
+    fn tsc_never_uses_build_mode_even_with_project_references() {
         let s = project(&[("typescript", "5.6.2", "tsc")]);
         s.write(
             "tsconfig.json",
             r#"{ // solution style
               "files": [], "references": [{ "path": "./packages/lib" }] }"#,
         );
+        let args = argv(&detect(&s), CheckKind::Typecheck, TSC);
+        assert!(!args.contains(&"-b".to_string()));
         assert_eq!(
-            argv(&detect(&s), CheckKind::Typecheck, TSC),
-            ["-b", "--pretty", "false", "tsconfig.json"]
+            &args[..5],
+            ["--noEmit", "--pretty", "false", "-p", "tsconfig.json"]
         );
     }
 
@@ -767,15 +691,25 @@ mod tests {
         assert_eq!(checks[1].0, s.path("packages/app"));
         assert_eq!(
             checks[1].1,
-            ["--noEmit", "--pretty", "false", "-p", "tsconfig.json"]
+            [
+                "--noEmit",
+                "--pretty",
+                "false",
+                "-p",
+                "tsconfig.json",
+                "--composite",
+                "false",
+                "--incremental",
+                "false"
+            ]
         );
-        // A dependent with references builds; one without a tsconfig is skipped.
+        // A dependent with references is checked the same way; one without a tsconfig is skipped.
         s.write(
             "packages/app/tsconfig.json",
             r#"{"references":[{"path":"../lib"}]}"#,
         );
         let checks = typechecks(&detect_in(&s, "packages/lib"));
-        assert_eq!(checks[1].1, ["-b", "--pretty", "false", "tsconfig.json"]);
+        assert!(!checks[1].1.contains(&"-b".to_string()));
         std::fs::remove_file(s.path("packages/app/tsconfig.json")).unwrap();
         assert_eq!(typechecks(&detect_in(&s, "packages/lib")).len(), 1);
         // Without a tsconfig of its own, the package leaves only its dependents.
@@ -790,7 +724,7 @@ mod tests {
     }
 
     #[test]
-    fn a_workspace_solution_config_is_one_build_from_the_root() {
+    fn a_workspace_solution_config_is_one_check_from_the_root() {
         let s = workspace();
         s.write("packages/lib/tsconfig.json", "{}");
         s.write("packages/app/tsconfig.json", "{}");
@@ -798,12 +732,20 @@ mod tests {
             "tsconfig.json",
             r#"{"files":[],"references":[{"path":"packages/lib"},{"path":"./packages/app/tsconfig.json"}]}"#,
         );
-        let build = vec![
-            "-b".to_string(),
-            "--pretty".into(),
-            "false".into(),
-            "tsconfig.json".into(),
-        ];
+        let build: Vec<String> = [
+            "--noEmit",
+            "--pretty",
+            "false",
+            "-p",
+            "tsconfig.json",
+            "--composite",
+            "false",
+            "--incremental",
+            "false",
+        ]
+        .iter()
+        .map(|a| a.to_string())
+        .collect();
         assert_eq!(
             typechecks(&detect_in(&s, "packages/lib")),
             [(s.0.clone(), build.clone())]

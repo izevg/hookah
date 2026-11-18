@@ -171,7 +171,8 @@ impl RunLog {
         self.failures.len()
     }
 
-    /// Runs `tool` on `targets`, then parses its output. Every error becomes a failure entry.
+    /// Runs `tool` on `targets`, then parses its output. The detector may turn the tool into
+    /// several commands, or none. Every error becomes a failure entry.
     pub fn run_tool(
         &mut self,
         ports: &Ports<'_>,
@@ -179,17 +180,19 @@ impl RunLog {
         tool: &Tool,
         targets: &[String],
     ) {
-        match ports.runner.run(&tool.command, targets) {
-            Err(e) => self.fail(format!("{}: {e}", tool.name)),
-            Ok(out) if out.timed_out => self.fail(format!(
-                "{} timed out after {}s",
-                tool.name,
-                tool.command.timeout.as_secs()
-            )),
-            Ok(out) => match ports.detector.parse(project, tool, &out) {
-                Ok(found) => self.findings.extend(found),
+        for tool in &ports.detector.specialize(project, tool, targets) {
+            match ports.runner.run(&tool.command, targets) {
                 Err(e) => self.fail(format!("{}: {e}", tool.name)),
-            },
+                Ok(out) if out.timed_out => self.fail(format!(
+                    "{} timed out after {}s",
+                    tool.name,
+                    tool.command.timeout.as_secs()
+                )),
+                Ok(out) => match ports.detector.parse(project, tool, &out) {
+                    Ok(found) => self.findings.extend(found),
+                    Err(e) => self.fail(format!("{}: {e}", tool.name)),
+                },
+            }
         }
     }
 

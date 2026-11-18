@@ -1,0 +1,4 @@
+start
+edit src/cart.ts
+stop
+clean

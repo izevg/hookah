@@ -1,8 +1,11 @@
 //! Reading `tsconfig.json`.
 //!
 //! `tsconfig.json` is JSON with comments and trailing commas, which `serde_json` rejects.
-//! [`strip_jsonc`] removes both outside of strings, and [`has_references`] asks the one question
-//! the detector needs: does the project use TypeScript project references? Those need `tsc -b`.
+//! [`strip_jsonc`] removes both outside of strings, [`reference_paths`] lists the project
+//! references, and [`owner`] works out which referenced project owns a file.
+
+pub mod glob;
+pub mod owner;
 
 use serde_json::Value;
 
@@ -98,19 +101,6 @@ pub fn reference_paths(text: &str) -> Vec<String> {
         .collect()
 }
 
-/// Whether the tsconfig text declares at least one project reference. Unreadable text counts as
-/// "no references": the plain `-p` command then reports whatever is wrong with it.
-pub fn has_references(text: &str) -> bool {
-    serde_json::from_str::<Value>(&strip_jsonc(text))
-        .ok()
-        .and_then(|v| {
-            v.get("references")
-                .and_then(Value::as_array)
-                .map(|r| !r.is_empty())
-        })
-        .unwrap_or(false)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -173,15 +163,5 @@ mod tests {
     fn a_lone_slash_is_not_a_comment() {
         assert_eq!(strip_jsonc("a / b"), "a / b");
         assert_eq!(strip_jsonc("a /* c */ b"), "a  b");
-    }
-
-    #[test]
-    fn detects_references() {
-        assert!(has_references(
-            r#"{ "files": [], "references": [ { "path": "./a" }, ] }"#
-        ));
-        assert!(!has_references(r#"{ "references": [] }"#));
-        assert!(!has_references(r#"{ "compilerOptions": {} }"#));
-        assert!(!has_references("not json at all"));
     }
 }

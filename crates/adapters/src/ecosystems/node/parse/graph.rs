@@ -29,14 +29,25 @@ use serde_json::Value;
 use super::{first_line, json_in, relative, strip_ansi, unreadable};
 use crate::ecosystems::node::detect::{DEPCRUISE, KNIP, TSC, TSCONFIG};
 
-/// Findings from `tsc` (also `tsc -b`) output.
+/// The diagnostic that says a referenced project has not been built.
+const NOT_BUILT: &str = "TS6305";
+
+/// Findings from `tsc` output.
+///
+/// `TS6305` ("Output file ... has not been built from source file ...") is dropped: hookah never
+/// builds the referenced projects of the project it checks (see `detect::typecheck`), so every
+/// import of one raises it. It says nothing about the edit. A run that only raised it is still
+/// understood, not a crash.
 pub fn tsc(root: &Path, output: &ProcessOutput) -> Result<Vec<Finding>, PortError> {
     let text = strip_ansi(&output.stdout);
-    let findings: Vec<Finding> = text.lines().filter_map(|l| tsc_line(root, l)).collect();
-    if findings.is_empty() && !output.success() {
+    let diagnostics: Vec<Finding> = text.lines().filter_map(|l| tsc_line(root, l)).collect();
+    if diagnostics.is_empty() && !output.success() {
         return Err(unreadable(TSC, output));
     }
-    Ok(findings)
+    Ok(diagnostics
+        .into_iter()
+        .filter(|f| f.rule.as_deref() != Some(NOT_BUILT))
+        .collect())
 }
 
 /// `src/a.ts(6,14): error TS2322: Type 'number' is not assignable to type 'string'.`
@@ -261,7 +272,7 @@ mod tests {
     }
 
     #[test]
-    fn tsc_build_mode_without_a_position_and_with_parenthesized_paths() {
+    fn tsc_diagnostics_without_a_position_and_with_parenthesized_paths() {
         let text = "packages/app/tsconfig.json(1,177): error TS6310: Referenced project '/ws/packages/lib' may not disable emit.\nerror TS18003: No inputs were found in config file.\napp/(group)/page.tsx(2,5): error TS2322: Bad (type): mismatch.\n";
         let found = tsc(Path::new(ROOT), &out(2, text)).unwrap();
         assert_eq!(found.len(), 3);
@@ -276,6 +287,19 @@ mod tests {
             Location::at("app/(group)/page.tsx", 2, 5)
         );
         assert_eq!(found[2].message, "Bad (type): mismatch.");
+    }
+
+    #[test]
+    fn tsc_drops_unbuilt_references_but_keeps_the_rest() {
+        let text = "src/m.ts(1,17): error TS6305: Output file '/ws/lib/dist/index.d.ts' has not been built from source file '/ws/lib/src/index.ts'.\nsrc/m.ts(2,1): error TS2322: Bad.\n";
+        let found = tsc(Path::new(ROOT), &out(2, text)).unwrap();
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].rule.as_deref(), Some("TS2322"));
+        // A run that only raised it is understood, and reports nothing.
+        let only = text.lines().next().unwrap();
+        assert!(tsc(Path::new(ROOT), &out(2, only)).unwrap().is_empty());
+        // A crash without any diagnostic is still an error.
+        assert!(tsc(Path::new(ROOT), &out(2, "")).is_err());
     }
 
     #[test]

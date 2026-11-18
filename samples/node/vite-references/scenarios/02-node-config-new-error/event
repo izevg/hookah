@@ -1,0 +1,3 @@
+start
+edit node/vite.config.ts
+clean

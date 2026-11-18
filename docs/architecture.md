@@ -322,3 +322,14 @@ Every squash merge to `main` that passes CI can become a release, with no commit
   `[workspace.package]`; before building, `.github/scripts/set-version.sh` rewrites it (and
   `Cargo.lock`) in the CI checkout, so a release binary reports its version through
   `hookah --version` while local builds report `0.0.0`.
+
+## Self-update
+
+The release binary updates itself from these releases, see [Updates](setup/update.md) for what a user
+sees. The layers: the rules (versions, which archive fits a platform, the 24-hour throttle, what is
+announced once) are pure code in `domain::update`; the use cases `ScheduleUpdate` (session start) and
+`RunUpdate` (the check and install) and their ports (`ReleaseSource`, `Installer`, `UpdateStore`,
+`Clock`, `UpdateSpawner`) are in `application`; the HTTP client, the checksum and archive code, the
+atomic swap, and the state file are in `adapters::update`; `cli` wires them. A session start only reads
+the state and spawns `hookah update --background`; the job is detached and never waited for, like the
+baseline job.

@@ -8,6 +8,7 @@
 mod args;
 mod render;
 mod setup;
+mod update;
 mod wiring;
 
 use std::io::{Read, Write};
@@ -65,6 +66,7 @@ fn main() -> ExitCode {
         Command::Config { path } => exit(config(&path)),
         Command::Detect { path } => exit(detect(&path)),
         Command::Baseline { session, root } => exit(baseline(&root, &session)),
+        Command::Update { check, background } => exit(update::run(check, background)),
         Command::Hook { harness } => exit(guarded_hook(harness, limit)),
         Command::Plugin { harness, out } => exit(plugin(harness, out.as_deref())),
         Command::Setup(args) => exit(setup::run(&args)),
@@ -308,7 +310,11 @@ fn run_harness(harness: &dyn Harness, stdin: &str, limit: usize) -> Response {
         Invocation::Stop { request, .. } => CheckSession::new(ports, limit)
             .with_budgets(wiring::budgets())
             .run(request),
-        Invocation::Start(request) => StartSession::new(ports).run(request),
+        Invocation::Start(request) => {
+            let mut outcome = StartSession::new(ports).run(request);
+            outcome.notices.extend(update::session_start_notice());
+            outcome
+        }
         Invocation::Ignore => Outcome::pass(),
     };
     harness.render(&invocation, &outcome)

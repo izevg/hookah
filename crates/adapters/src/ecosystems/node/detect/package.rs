@@ -171,10 +171,15 @@ impl PackageInfo {
         self.declared.contains(package)
     }
 
-    /// The first `node_modules/.bin/<name>` found from the package up to the workspace root.
+    /// The first `node_modules/.bin/<name>` found from the package up to the workspace root. On
+    /// Windows that is the `.cmd` shim the package manager writes.
     pub fn bin(&self, name: &str) -> Option<PathBuf> {
         self.dirs()
-            .map(|dir| dir.join("node_modules").join(".bin").join(name))
+            .flat_map(|dir| {
+                bin_names(name, cfg!(windows))
+                    .into_iter()
+                    .map(move |n| dir.join("node_modules").join(".bin").join(n))
+            })
             .find(|path| path.is_file())
     }
 
@@ -198,6 +203,17 @@ impl PackageInfo {
 
 fn string_field(manifest: &Value, key: &str) -> Option<String> {
     manifest.get(key)?.as_str().map(str::to_owned)
+}
+
+/// The file names a `.bin` entry can have. Unix links the script under its bare name. Windows
+/// cannot run that name (it is a `sh` script), so package managers add `<name>.cmd` shims, and
+/// std runs a `.cmd` through `cmd.exe` with its own argument escaping.
+fn bin_names(name: &str, windows: bool) -> Vec<String> {
+    if windows {
+        vec![format!("{name}.cmd"), format!("{name}.exe")]
+    } else {
+        vec![name.to_string()]
+    }
 }
 
 /// Reads and parses a `package.json`.
@@ -246,7 +262,7 @@ pub(crate) mod scratch {
             let dir = std::env::temp_dir().join(format!("hookah-node-{}-{n}", std::process::id()));
             let _ = fs::remove_dir_all(&dir);
             fs::create_dir_all(&dir).unwrap();
-            Self(dir.canonicalize().unwrap())
+            Self(dunce::canonicalize(dir).unwrap())
         }
 
         pub fn path(&self, rel: &str) -> PathBuf {
@@ -298,6 +314,12 @@ pub(crate) mod scratch {
 mod tests {
     use super::scratch::Scratch;
     use super::*;
+
+    #[test]
+    fn bin_names_per_platform() {
+        assert_eq!(bin_names("biome", false), ["biome"]);
+        assert_eq!(bin_names("biome", true), ["biome.cmd", "biome.exe"]);
+    }
 
     #[test]
     fn standalone_package_declares_its_own_dependencies() {

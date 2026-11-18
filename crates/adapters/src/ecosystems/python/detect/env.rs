@@ -22,7 +22,6 @@
 //! ruff, even if one is installed globally. Nothing is ever installed.
 
 use std::fs;
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
 use super::config::normalize;
@@ -43,17 +42,15 @@ pub struct Invocation {
     pub program: String,
     /// Arguments that come before the tool's own.
     pub args: Vec<String>,
+    /// Environment variables to set for the tool.
+    pub env: Vec<(String, String)>,
 }
 
 impl Invocation {
-    /// The same invocation with an environment variable set for the tool, through `env(1)`.
-    pub fn with_env(self, key: &str, value: &str) -> Self {
-        let mut args = vec![format!("{key}={value}"), self.program];
-        args.extend(self.args);
-        Self {
-            program: "env".into(),
-            args,
-        }
+    /// The same invocation with an environment variable set for the tool.
+    pub fn with_env(mut self, key: &str, value: &str) -> Self {
+        self.env.push((key.into(), value.into()));
+        self
     }
 }
 
@@ -149,21 +146,28 @@ impl Env {
         match &self.kind {
             Kind::Venv(venv) => ["bin", "Scripts"]
                 .iter()
-                .map(|d| venv.join(d).join(tool.exe))
+                .flat_map(|d| {
+                    exe_names(tool.exe, cfg!(windows))
+                        .into_iter()
+                        .map(move |n| venv.join(d).join(n))
+                })
                 .find(|p| is_executable(p))
                 .map(|p| Invocation {
                     program: p.to_string_lossy().into_owned(),
                     args: vec![],
+                    env: vec![],
                 }),
             Kind::Poetry => {
                 lock_has(self.poetry_lock.as_deref(), tool.package).then(|| Invocation {
                     program: "poetry".into(),
                     args: vec!["run".into(), tool.exe.into()],
+                    env: vec![],
                 })
             }
             Kind::Path => self.on_path(tool.exe).map(|p| Invocation {
                 program: p.to_string_lossy().into_owned(),
                 args: vec![],
+                env: vec![],
             }),
         }
     }
@@ -189,7 +193,11 @@ impl Env {
     fn on_path(&self, exe: &str) -> Option<PathBuf> {
         self.path_dirs
             .iter()
-            .map(|d| d.join(exe))
+            .flat_map(|d| {
+                exe_names(exe, cfg!(windows))
+                    .into_iter()
+                    .map(move |n| d.join(n))
+            })
             .find(|p| is_executable(p))
     }
 
@@ -224,8 +232,36 @@ fn is_uv_workspace_root(dir: &Path) -> bool {
     })
 }
 
+/// The file names a tool can have on disk. Unix has the bare name; Windows tools carry an
+/// executable extension (`ruff.exe` from a wheel, `.cmd` or `.bat` from some installers).
+fn exe_names(exe: &str, windows: bool) -> Vec<String> {
+    if windows {
+        ["exe", "cmd", "bat"]
+            .iter()
+            .map(|ext| format!("{exe}.{ext}"))
+            .collect()
+    } else {
+        vec![exe.to_string()]
+    }
+}
+
 fn is_executable(path: &Path) -> bool {
-    fs::metadata(path).is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+    fs::metadata(path).is_ok_and(|m| m.is_file() && has_execute_permission(&m))
+}
+
+/// Unix: any execute bit. Windows has no execute bit, and [`exe_names`] already restricted the
+/// name to an executable extension, so that branch accepts every file.
+fn has_execute_permission(meta: &fs::Metadata) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        meta.permissions().mode() & 0o111 != 0
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = meta;
+        true
+    }
 }
 
 /// Whether a lock file lists `package` (`name = "<package>"`).
@@ -272,6 +308,21 @@ fn parse_version(version: &str) -> Option<(u32, u32)> {
 }
 
 #[cfg(test)]
+mod name_tests {
+    use super::exe_names;
+
+    #[test]
+    fn executable_names_per_platform() {
+        assert_eq!(exe_names("ruff", false), ["ruff"]);
+        assert_eq!(
+            exe_names("ruff", true),
+            ["ruff.exe", "ruff.cmd", "ruff.bat"]
+        );
+    }
+}
+
+// Unix only: the fake tools are files with an execute bit named without an extension.
+#[cfg(all(test, unix))]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use crate::ecosystems::python::fixture::Scratch;
@@ -500,14 +551,25 @@ mod tests {
     }
 
     #[test]
-    fn env_wrapper_and_hints() {
+    fn executable_names_per_platform() {
+        assert_eq!(exe_names("ruff", false), ["ruff"]);
+        assert_eq!(
+            exe_names("ruff", true),
+            ["ruff.exe", "ruff.cmd", "ruff.bat"]
+        );
+    }
+
+    #[test]
+    fn env_and_hints() {
         let inv = Invocation {
             program: "uv".into(),
             args: vec!["run".into(), "x".into()],
+            env: vec![],
         }
         .with_env("PYTHONPATH", "src");
-        assert_eq!(inv.program, "env");
-        assert_eq!(inv.args, ["PYTHONPATH=src", "uv", "run", "x"]);
+        assert_eq!(inv.program, "uv");
+        assert_eq!(inv.args, ["run", "x"]);
+        assert_eq!(inv.env, [("PYTHONPATH".to_string(), "src".to_string())]);
         assert_eq!(Manager::Uv.install_hint("mutmut"), "uv add --dev mutmut");
         assert_eq!(
             Manager::Poetry.install_hint("mutmut"),

@@ -128,7 +128,7 @@ pub(crate) mod tests {
                 std::env::temp_dir().join(format!("hookah-fp-{tag}-{}-{n}", std::process::id()));
             let _ = fs::remove_dir_all(&dir);
             fs::create_dir_all(&dir).unwrap();
-            Self(dir.canonicalize().unwrap())
+            Self(dunce::canonicalize(dir).unwrap())
         }
 
         pub fn write(&self, rel: &str, text: &str) -> PathBuf {

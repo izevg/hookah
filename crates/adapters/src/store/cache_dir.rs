@@ -73,9 +73,7 @@ fn cache_base(env: impl Fn(&str) -> Option<OsString>, os: Platform) -> Option<Pa
 
 /// `<base>/<hash of root>`, created private to the user.
 fn project_dir_in(base: &Path, project_root: &Path) -> Result<PathBuf, PortError> {
-    let root = project_root
-        .canonicalize()
-        .unwrap_or_else(|_| project_root.to_path_buf());
+    let root = dunce::canonicalize(project_root).unwrap_or_else(|_| project_root.to_path_buf());
     let dir = base.join(root_hash(&root));
     let mut builder = DirBuilder::new();
     builder.recursive(true);
@@ -208,7 +206,7 @@ mod tests {
             return; // no base directory is set
         };
         assert!(dir.is_dir());
-        let canonical = root.canonicalize().unwrap();
+        let canonical = dunce::canonicalize(root).unwrap();
         assert_eq!(dir.file_name().unwrap(), root_hash(&canonical).as_str());
     }
 

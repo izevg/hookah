@@ -57,7 +57,7 @@ impl Root {
     pub fn new(path: &Path) -> Self {
         Self {
             path: path.to_path_buf(),
-            canonical: path.canonicalize().unwrap_or_else(|_| path.to_path_buf()),
+            canonical: dunce::canonicalize(path).unwrap_or_else(|_| path.to_path_buf()),
         }
     }
 
@@ -73,7 +73,7 @@ impl Root {
         if !path.is_absolute() {
             return path.strip_prefix(".").unwrap_or(path).to_path_buf();
         }
-        let canon = path.canonicalize().ok();
+        let canon = dunce::canonicalize(path).ok();
         for candidate in [Some(path.to_path_buf()), canon].into_iter().flatten() {
             for root in [&self.path, &self.canonical] {
                 if let Ok(rel) = candidate.strip_prefix(root) {

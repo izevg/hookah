@@ -6,8 +6,6 @@
 //! changed.
 
 use std::collections::BTreeSet;
-use std::ffi::OsStr;
-use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 
@@ -67,11 +65,21 @@ fn has_head(dir: &Path) -> bool {
     succeeds(dir, &["rev-parse", "--verify", "--quiet", "HEAD^{commit}"])
 }
 
+/// A path as git prints it. Git always writes `/` separators, which Windows accepts too. Unix
+/// keeps the raw bytes (a file name need not be UTF-8); Windows has no byte paths, so a name
+/// that is not valid UTF-8 is converted lossily.
+fn path_from_git(bytes: &[u8]) -> PathBuf {
+    #[cfg(unix)]
+    return PathBuf::from(<std::ffi::OsStr as std::os::unix::ffi::OsStrExt>::from_bytes(bytes));
+    #[cfg(not(unix))]
+    return PathBuf::from(String::from_utf8_lossy(bytes).into_owned());
+}
+
 fn nul_paths(bytes: &[u8]) -> impl Iterator<Item = PathBuf> + '_ {
     bytes
         .split(|b| *b == 0)
         .filter(|s| !s.is_empty())
-        .map(|s| PathBuf::from(OsStr::from_bytes(s)))
+        .map(path_from_git)
 }
 
 impl ChangeSource for GitChanges {
@@ -105,7 +113,8 @@ impl ChangeSource for GitChanges {
 
     fn changed_files(&self, root: &Path) -> Result<Vec<PathBuf>, PortError> {
         let top = git_ok(root, &["rev-parse", "--show-toplevel"])?;
-        let top = PathBuf::from(OsStr::from_bytes(top.strip_suffix(b"\n").unwrap_or(&top)));
+        let top = top.strip_suffix(b"\n").unwrap_or(&top);
+        let top = path_from_git(top);
         let mut rel: BTreeSet<PathBuf> = BTreeSet::new();
         if has_head(root) {
             let diff = git_ok(

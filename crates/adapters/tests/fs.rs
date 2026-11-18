@@ -18,7 +18,7 @@ fn temp_dir(name: &str) -> PathBuf {
     ));
     let _ = fs::remove_dir_all(&dir);
     fs::create_dir_all(&dir).unwrap();
-    fs::canonicalize(dir).unwrap()
+    dunce::canonicalize(dir).unwrap()
 }
 
 fn touch(path: &Path) {

@@ -151,7 +151,7 @@ fn spec(
     let mut all: Vec<Arg> = inv.args.into_iter().map(Arg::Literal).collect();
     all.extend(args.iter().map(|a| Arg::Literal((*a).to_string())));
     all.extend(tail);
-    CommandSpec::new(inv.program, all, root, timeout)
+    CommandSpec::new(inv.program, all, root, timeout).with_env(inv.env)
 }
 
 fn tool(name: &str, kind: CheckKind, command: CommandSpec) -> Tool {
@@ -327,7 +327,8 @@ fn missing_tool(package: &str, kind: CheckKind, manager: Manager) -> MissingTool
     MissingTool::new(package, kind, manager.install_hint(package))
 }
 
-#[cfg(test)]
+// Unix only: the fake tools are files with an execute bit named without an extension.
+#[cfg(all(test, unix))]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
 
@@ -449,8 +450,15 @@ mod tests {
         );
         // The src layout needs src on the import path for import-linter.
         let (program, args) = argv(&tc, "import-linter", &["a.py"]);
-        assert_eq!(program, "env");
-        assert_eq!(args, ["PYTHONPATH=src".to_string(), bin("lint-imports")]);
+        assert_eq!(program, bin("lint-imports"));
+        assert!(args.is_empty());
+        let spec = &tc
+            .tools()
+            .iter()
+            .find(|t| t.name == "import-linter")
+            .unwrap()
+            .command;
+        assert_eq!(spec.env, [("PYTHONPATH".to_string(), "src".to_string())]);
         assert_eq!(
             argv(&tc, "pytest", &["tests/test_a.py"]).1,
             [

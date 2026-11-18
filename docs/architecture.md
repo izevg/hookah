@@ -132,7 +132,7 @@ tools such as eslint, biome, and ruff; none for tools whose command is already p
 
 Spawning: on Unix the child leads its own process group and its three standard streams are the null
 device, so a harness waiting for the hook's pipes never waits for it. On Windows the same code
-uses `DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP` (compiles in principle, not run there yet).
+uses `DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP` (cross-compiled and linted in CI, not exercised by a test).
 `HOOKAH_BASELINE_FOREGROUND=1` makes the hook wait for the child instead; tests and
 `samples/run.sh` use it to get a baseline synchronously.
 
@@ -182,3 +182,28 @@ claimed.
 
 Timeouts, missing tools, and internal errors, and how each becomes a degraded, non-blocking
 outcome.
+
+## Windows
+
+`hookah` builds for `x86_64-pc-windows-msvc` and `-gnu`. CI builds, lints, and tests on Windows;
+the sample runner (`samples/run.sh`) is a bash script and runs on Linux and macOS only. The
+platform-specific parts, each behind a portable function so Unix hosts can unit-test the logic:
+
+- **Killing a timed-out tool.** Every check command is started by `process::tree`. On Unix the
+  child leads its own process group and a timeout sends `SIGKILL` to the group (`nix`). On
+  Windows the child is assigned to a Job Object with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`, and
+  dropping the job kills the whole tree, grandchildren included. The `win32job` crate provides a
+  safe wrapper, which keeps `unsafe` out of the workspace; `command-group` would also work but
+  would replace the Unix path that already works, and `taskkill /T` is racy and needs a second
+  process. The job is created right after the spawn, so a grandchild started in that window could
+  escape; for test runners that is not a practical risk. If the job cannot be created the child
+  alone is killed (fail open).
+- **Detaching the baseline job.** `DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP`, see Baseline.
+- **Environment variables for a tool** (`PYTHONPATH=src` for import-linter) travel in
+  `CommandSpec::env`, not through `env(1)`, which Windows does not have.
+- **Paths.** Canonical paths come from `dunce::canonicalize`, which drops the `\\?\` verbatim
+  prefix `std::fs::canonicalize` adds, so they compare equal to the paths tools print. Paths git
+  prints always use `/`, which Windows accepts everywhere. Anything shown to the agent goes
+  through `display_path`, which writes `/` separators on Windows too: reports read
+  `src/lib.rs:3: message` and `C:/other/a.rs` on every platform.
+- **Home boundary.** The project walk stops at `%USERPROFILE%` where Unix uses `$HOME`.

@@ -151,10 +151,8 @@ impl ToolchainDetector for RustEcosystem {
         tool: &Tool,
         output: &ProcessOutput,
     ) -> Result<Vec<Finding>, PortError> {
-        let project_root = project
-            .root
-            .canonicalize()
-            .unwrap_or_else(|_| project.root.clone());
+        let project_root =
+            dunce::canonicalize(&project.root).unwrap_or_else(|_| project.root.clone());
         match tool.name.as_str() {
             detect::RUSTFMT => parse::rustfmt(&project_root, output),
             detect::CLIPPY | detect::CARGO_TEST | mutants::CARGO_MUTANTS => {

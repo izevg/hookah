@@ -36,6 +36,8 @@ pub struct CommandSpec {
     pub cwd: PathBuf,
     /// Hard time limit.
     pub timeout: Duration,
+    /// Environment variables set for this command on top of the inherited ones.
+    pub env: Vec<(String, String)>,
 }
 
 impl CommandSpec {
@@ -51,7 +53,14 @@ impl CommandSpec {
             args,
             cwd: cwd.into(),
             timeout,
+            env: Vec::new(),
         }
+    }
+
+    /// The same command with the variables `env` set.
+    pub fn with_env(mut self, env: Vec<(String, String)>) -> Self {
+        self.env = env;
+        self
     }
 
     /// The final argument list with each [`Arg::Targets`] replaced by `targets`.

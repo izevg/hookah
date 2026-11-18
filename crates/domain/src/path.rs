@@ -5,6 +5,11 @@
 //! absolute (still normalized) only when it lies outside that root. Pure string work: the
 //! filesystem is never touched, so symlinks and aliases such as `/var` vs `/private/var` are
 //! the caller's job to canonicalize before building requests.
+//!
+//! On Windows the result is written with `/` separators (`src/a.rs`, `C:/other/a.rs`), so reports
+//! look the same on every platform, match the paths of the VCS, and need no escaping in JSON.
+//! Windows accepts `/` in every path API, so the result stays usable as a path. The caller should
+//! strip verbatim prefixes (`\\?\`) with `dunce::canonicalize` before building requests.
 
 use std::path::{Component, Path, PathBuf};
 
@@ -41,11 +46,22 @@ pub fn display_path(path: &Path, display_root: &Path) -> PathBuf {
     } else {
         normalize(&root.join(path))
     };
-    match abs.strip_prefix(&root) {
+    let shown = match abs.strip_prefix(&root) {
         Ok(rel) if rel.as_os_str().is_empty() => PathBuf::from("."),
         Ok(rel) => rel.to_path_buf(),
         Err(_) => abs,
+    };
+    if cfg!(windows) {
+        forward_slashes(&shown)
+    } else {
+        shown
     }
+}
+
+/// `path` with every `\` separator turned into `/`. Only Windows calls this: on Unix a
+/// backslash is a legal file name character.
+fn forward_slashes(path: &Path) -> PathBuf {
+    PathBuf::from(path.to_string_lossy().replace('\\', "/"))
 }
 
 #[cfg(test)]
@@ -97,6 +113,15 @@ mod tests {
     #[test]
     fn display_root_is_normalized_too() {
         assert_eq!(shown("/r/src/a.rs", "/r/x/.."), "src/a.rs");
+    }
+
+    #[test]
+    fn backslashes_become_slashes() {
+        assert_eq!(
+            forward_slashes(Path::new(r"C:\r\src\a.rs")),
+            Path::new("C:/r/src/a.rs")
+        );
+        assert_eq!(forward_slashes(Path::new("a/b")), Path::new("a/b"));
     }
 
     #[test]

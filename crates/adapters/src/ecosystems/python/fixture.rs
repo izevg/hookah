@@ -20,7 +20,7 @@ impl Scratch {
         let dir = std::env::temp_dir().join(format!("hookah-py-{name}-{}-{n}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
-        Self(dir.canonicalize().unwrap())
+        Self(dunce::canonicalize(dir).unwrap())
     }
 
     /// The canonical root.
@@ -35,6 +35,7 @@ impl Scratch {
         fs::write(path, text).unwrap();
     }
 
+    #[cfg(unix)]
     /// Creates an executable file, creating parent directories.
     pub fn executable(&self, rel: &str) {
         use std::os::unix::fs::PermissionsExt;

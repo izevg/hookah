@@ -14,4 +14,9 @@ minimum_test_timeout = 60
 
 # The Windows branch of the detached spawn (`detach_from_console`) is not compiled on the Unix hosts
 # that run mutation testing, so its mutants can never be caught there.
-exclude_re = ["detach_from_console"]
+# The Windows job object of the process runner (`contain` in process/tree.rs) is excluded for the
+# same reason.
+exclude_re = [
+    "detach_from_console",
+    'process/tree\.rs:\d+:\d+: replace contain',
+]

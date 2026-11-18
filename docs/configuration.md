@@ -42,3 +42,11 @@ rmdir /s /q "%LOCALAPPDATA%\hookah\cache"   # Windows
 ```
 
 To clear one project only, delete its `<16 hex digits>` directory.
+
+## Windows
+
+Reports show paths with `/` separators on every platform (`src/lib.rs:3: message`), and an
+absolute path outside the project as `C:/other/a.rs`. Tools are the ones the project provides:
+`node_modules\.bin\<tool>.cmd` for Node and `<venv>\Scripts\<tool>.exe` for Python. A tool that
+runs past its time limit is killed together with its child processes. See `architecture.md`
+("Windows") for the mechanism.

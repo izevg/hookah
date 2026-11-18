@@ -79,7 +79,7 @@ struct Dependency {
 }
 
 pub(super) fn canonical(path: &Path) -> PathBuf {
-    path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
+    dunce::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
 }
 
 /// Runs `cargo metadata` at `root` and returns the package owning `root/Cargo.toml`, or `None`

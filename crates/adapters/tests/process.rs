@@ -2,12 +2,15 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-use std::time::{Duration, Instant};
+use std::time::Duration;
+#[cfg(unix)]
+use std::time::Instant;
 
 use hookah_adapters::process::runner::ProcessRunner;
 use hookah_application::ports::CheckRunner;
 use hookah_domain::toolchain::{Arg, CommandSpec};
 
+#[cfg(unix)]
 fn sh(script: &str, timeout: Duration) -> CommandSpec {
     CommandSpec::new(
         "sh",
@@ -17,6 +20,7 @@ fn sh(script: &str, timeout: Duration) -> CommandSpec {
     )
 }
 
+#[cfg(unix)]
 #[test]
 fn captures_output_and_zero_exit() {
     let out = ProcessRunner
@@ -27,6 +31,7 @@ fn captures_output_and_zero_exit() {
     assert_eq!(out.stderr, "err\n");
 }
 
+#[cfg(unix)]
 #[test]
 fn reports_non_zero_exit() {
     let out = ProcessRunner
@@ -36,6 +41,7 @@ fn reports_non_zero_exit() {
     assert!(!out.success() && !out.timed_out);
 }
 
+#[cfg(unix)]
 #[test]
 fn expands_targets() {
     let spec = CommandSpec::new(
@@ -53,6 +59,7 @@ fn expands_targets() {
     assert_eq!(out.stdout, "a b\n");
 }
 
+#[cfg(unix)]
 #[test]
 fn large_output_does_not_deadlock() {
     let out = ProcessRunner
@@ -65,6 +72,7 @@ fn large_output_does_not_deadlock() {
     assert_eq!(out.stderr.len(), 1_000_000);
 }
 
+#[cfg(unix)]
 #[test]
 fn timeout_kills_the_whole_process_group() {
     let start = Instant::now();
@@ -86,4 +94,59 @@ fn missing_program_is_an_error() {
         Duration::from_secs(1),
     );
     assert!(ProcessRunner.run(&spec, &[]).is_err());
+}
+
+/// `cmd /C <script>`: the Windows counterpart of the `sh` helper.
+#[cfg(windows)]
+fn cmd(script: &str, timeout: Duration) -> CommandSpec {
+    CommandSpec::new(
+        "cmd",
+        vec![Arg::Literal("/C".into()), Arg::Literal(script.into())],
+        ".",
+        timeout,
+    )
+}
+
+#[cfg(windows)]
+#[test]
+fn windows_captures_output_and_exit_code() {
+    let out = ProcessRunner
+        .run(&cmd("echo out& exit 3", Duration::from_secs(10)), &[])
+        .unwrap();
+    assert_eq!(out.exit_code, Some(3));
+    assert_eq!(out.stdout.trim(), "out");
+}
+
+#[cfg(windows)]
+#[test]
+fn windows_timeout_kills_the_whole_process_tree() {
+    let start = std::time::Instant::now();
+    // `ping` is a grandchild of `cmd` and holds the pipes; the job object kills it too.
+    let out = ProcessRunner
+        .run(
+            &cmd("ping -n 30 127.0.0.1 >nul", Duration::from_millis(500)),
+            &[],
+        )
+        .unwrap();
+    assert!(out.timed_out);
+    assert_eq!(out.exit_code, None);
+    assert!(start.elapsed() < Duration::from_secs(10));
+}
+
+#[cfg(unix)]
+#[test]
+fn sets_the_environment_of_the_command() {
+    let spec = sh("echo \"$HOOKAH_TEST_VAR\"", Duration::from_secs(5))
+        .with_env(vec![("HOOKAH_TEST_VAR".into(), "from-spec".into())]);
+    let out = ProcessRunner.run(&spec, &[]).unwrap();
+    assert_eq!(out.stdout, "from-spec\n");
+}
+
+#[cfg(windows)]
+#[test]
+fn windows_sets_the_environment_of_the_command() {
+    let spec = cmd("echo %HOOKAH_TEST_VAR%", Duration::from_secs(10))
+        .with_env(vec![("HOOKAH_TEST_VAR".into(), "from-spec".into())]);
+    let out = ProcessRunner.run(&spec, &[]).unwrap();
+    assert_eq!(out.stdout.trim(), "from-spec");
 }

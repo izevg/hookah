@@ -75,7 +75,7 @@ fn canonical_dir(path: &Path) -> PathBuf {
     let mut rest = Vec::new();
     let mut head = path.as_path();
     loop {
-        if let Ok(real) = head.canonicalize() {
+        if let Ok(real) = dunce::canonicalize(head) {
             return rest.iter().rev().fold(real, |acc, part| acc.join(part));
         }
         match (head.parent(), head.file_name()) {
@@ -402,7 +402,7 @@ mod tests {
         std::fs::create_dir_all(real.join("src")).unwrap();
         let alias = base.join("alias");
         std::os::unix::fs::symlink(&real, &alias).unwrap();
-        let real = real.canonicalize().unwrap();
+        let real = dunce::canonicalize(real).unwrap();
 
         let edit = Invocation::Edit(EditRequest::new(alias.join("src/new.rs"), &alias)).canonical();
         assert_eq!(

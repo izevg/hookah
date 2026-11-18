@@ -59,7 +59,7 @@ fn real_venv() -> Option<PathBuf> {
     let venv = std::env::var_os("HOOKAH_TEST_VENV")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/py/.venv"));
-    let venv = venv.canonicalize().ok()?;
+    let venv = dunce::canonicalize(venv).ok()?;
     ["ruff", "mypy", "lint-imports", "pytest", "mutmut"]
         .iter()
         .all(|t| venv.join("bin").join(t).is_file())

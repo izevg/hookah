@@ -2,6 +2,7 @@
 
 pub mod background;
 pub mod runner;
+mod tree;
 
 pub use background::BackgroundSpawner;
 pub use runner::ProcessRunner;

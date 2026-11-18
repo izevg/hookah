@@ -128,8 +128,8 @@ pub(crate) fn relative(root: &Path, file: &str) -> PathBuf {
     if let Ok(rel) = path.strip_prefix(root) {
         return normalize(rel);
     }
-    let real_root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
-    let real = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    let real_root = dunce::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
+    let real = dunce::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
     match real.strip_prefix(&real_root) {
         Ok(rel) => normalize(rel),
         Err(_) => diff(&real_root, &normalize(&real)),
@@ -254,6 +254,7 @@ mod tests {
         assert_eq!(relative(root, "/ws/lib/x.ts"), Path::new("../lib/x.ts"));
     }
 
+    #[cfg(unix)]
     #[test]
     fn relative_follows_symlinked_roots() {
         let dir = std::env::temp_dir().join(format!("hookah-rel-{}", std::process::id()));
@@ -262,7 +263,7 @@ mod tests {
         std::fs::write(dir.join("real/src/a.ts"), "").unwrap();
         std::os::unix::fs::symlink(dir.join("real"), dir.join("link")).unwrap();
         let root = dir.join("link");
-        let real_file = dir.join("real/src/a.ts").canonicalize().unwrap();
+        let real_file = dunce::canonicalize(dir.join("real/src/a.ts")).unwrap();
         assert_eq!(
             relative(&root, &real_file.to_string_lossy()),
             Path::new("src/a.ts")

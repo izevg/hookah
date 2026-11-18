@@ -10,6 +10,9 @@
 //!   result of `npm i -D typescript eslint prettier @biomejs/biome vitest` in a scratch folder);
 //!   without it they print a note and pass, so CI without network stays green.
 
+// The fake tools are `sh` scripts, so this suite is Unix only; on Windows the shim lookup is
+// covered by unit tests in `ecosystems::node::detect::package`.
+#![cfg(unix)]
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use std::fs;
@@ -33,7 +36,7 @@ impl Scratch {
         let dir = std::env::temp_dir().join(format!("hookah-node-{name}-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
-        Self(dir.canonicalize().unwrap())
+        Self(dunce::canonicalize(dir).unwrap())
     }
 
     fn write(&self, rel: &str, text: &str) -> PathBuf {
@@ -226,7 +229,7 @@ fn real_modules() -> Option<PathBuf> {
         eprintln!("skipping: node is not on PATH");
         return None;
     }
-    Some(dir.canonicalize().unwrap())
+    Some(dunce::canonicalize(dir).unwrap())
 }
 
 /// A project that reuses the tools of the shared `node_modules`.

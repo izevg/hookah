@@ -16,7 +16,7 @@ pub mod layout;
 pub mod parse;
 pub mod select;
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod e2e;
 
 use std::path::{Path, PathBuf};
@@ -79,7 +79,7 @@ impl ToolchainDetector for PythonEcosystem {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use hookah_domain::project::Ecosystem;

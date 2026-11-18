@@ -26,7 +26,7 @@ impl Scratch {
             "[package]\nname = \"scratch\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[workspace]\n",
         )
         .unwrap();
-        Self(dir.canonicalize().unwrap())
+        Self(dunce::canonicalize(dir).unwrap())
     }
 
     fn write(&self, rel: &str, text: &str) {

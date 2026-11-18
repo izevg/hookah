@@ -28,10 +28,11 @@ impl Default for FsLocator {
 }
 
 impl FsLocator {
-    /// A locator that stops at `$HOME` (read from the environment).
+    /// A locator that stops at the home directory: `$HOME`, or `%USERPROFILE%` on Windows.
     pub fn new() -> Self {
+        let var = if cfg!(windows) { "USERPROFILE" } else { "HOME" };
         Self {
-            home: std::env::var_os("HOME")
+            home: std::env::var_os(var)
                 .filter(|h| !h.is_empty())
                 .map(PathBuf::from),
         }

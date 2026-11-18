@@ -135,8 +135,13 @@ directory below the project root. Everything else is source.
 
 **Known gaps.** The nearest `package.json` wins, so a marker file such as `src/esm/package.json`
 (`{"type":"module"}`) becomes a project with no tools. Nested ESLint or Biome configs are found
-only from the package up to the workspace root. `tsc -b` writes build outputs. Windows `.cmd`
-shims are not resolved.
+only from the package up to the workspace root. `tsc -b` writes build outputs.
+
+**Windows.** The tool is the `node_modules\.bin\<tool>.cmd` shim that npm, pnpm, and Yarn write
+(`<tool>.exe` is the fallback). Rust's standard library runs a `.cmd` through `cmd.exe` and
+escapes the arguments itself (the fix for CVE-2024-24576, "BatBadBut"); an argument it cannot
+escape safely makes the spawn fail, which `hookah` reports as a tool that could not start and
+never as a block. The `sh` scripts of the same names are not used.
 
 ## Python
 
@@ -152,7 +157,7 @@ Tools run from the project's own environment, the first of:
 1. A virtual environment: `$UV_PROJECT_ENVIRONMENT` if set, else `.venv/` or `venv/` (a directory
    with `pyvenv.cfg`) in the project, or in a parent directory up to the repository root (a
    directory with `.git`) or the uv workspace root (`[tool.uv.workspace]`). Tools run as
-   `<venv>/bin/<tool>`. This is what `uv sync`, `python -m venv`, and Poetry with
+   `<venv>/bin/<tool>` (`<venv>\Scripts\<tool>.exe`, `.cmd`, or `.bat` on Windows). This is what `uv sync`, `python -m venv`, and Poetry with
    `virtualenvs.in-project` produce. A member's own venv shadows the root venv.
 2. `poetry.lock` and `poetry` on `PATH`: tools run as `poetry run <tool>`. A tool is available when
    its package is in the lock file. Poetry keeps its environments in its cache directory, so this
@@ -180,7 +185,7 @@ files (edit hook) or all changed files of the project (stop hook).
 | format       | `black`       | `black {files}`; only without ruff, and only if `[tool.black]` exists or black is a declared dependency | 30 s |
 | lint         | `ruff`        | `ruff check --output-format json --force-exclude --no-fix {files}`                   | 30 s    |
 | typecheck    | `mypy`        | `mypy [-O json] --show-column-numbers --show-error-codes --no-error-summary --no-color-output [{packages} {files outside them}]` | 120 s |
-| architecture | `lint-imports`| `lint-imports` (project-wide; `env PYTHONPATH=src` is prepended in the src layout)   | 60 s    |
+| architecture | `lint-imports`| `lint-imports` (project-wide; `PYTHONPATH=src` is set in the src layout)   | 60 s    |
 | test         | `pytest`      | `pytest [--testmon] -rfE --tb=short -q --color=no --rootdir=. {tests}`               | 300 s   |
 | mutation     | `mutmut`      | `mutmut run {globs}` (mutmut 3 only)                                                 | 480 s   |
 

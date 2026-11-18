@@ -53,7 +53,7 @@ fn resolve(project_root: &Path, base: &Path, file: &str) -> Option<PathBuf> {
     }
     let path = Path::new(file);
     let abs = if path.is_absolute() {
-        let path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+        let path = dunce::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
         if !path.starts_with(base) {
             return None;
         }

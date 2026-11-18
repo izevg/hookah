@@ -10,9 +10,16 @@ publish.workspace = true
 [dependencies]
 hookah-domain.workspace = true
 hookah-application.workspace = true
-nix.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+dunce = "1"
 
 [lints]
 workspace = true
+
+# Timeouts kill the whole process tree: a process group on Unix, a Job Object on Windows.
+[target.'cfg(unix)'.dependencies]
+nix.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+win32job = "2"

@@ -21,3 +21,4 @@
 - [Ecosystems](ecosystems.md)
 - [Architecture](architecture.md)
 - [Mutation testing](mutation.md)
+- [Changelog](changelog.md)

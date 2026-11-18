@@ -20,6 +20,28 @@ with an agent's default behavior, these rules win.
 - One logical change per commit. Never commit failing formatting, lint, or tests.
 - Commit or push only when asked. Never force-push shared branches.
 
+## Pull requests and releases
+
+After the first release, `main` is protected and changes land through pull requests.
+
+- Work on a feature branch and open a PR into `main`. **Squash merge only.** The squash commit
+  title is the PR title, and the `pr-title` check requires it to be a Conventional Commit:
+  `type(scope)!: description`, type one of `feat fix perf docs chore ci test refactor style build`.
+- Every squash merge to `main` that passes CI is versioned automatically
+  (`.github/workflows/auto-release.yml`). git-cliff reads the Conventional Commits since the last
+  `vX.Y.Z` tag: `feat` bumps the minor, `fix` and `perf` the patch, and a `!` or a
+  `BREAKING CHANGE:` footer the major, except below 1.0.0, where it bumps the minor. `docs`,
+  `chore`, `ci`, `test`, `refactor`, `style`, and `build` alone release nothing. The first release
+  is `v0.1.0`.
+- Nothing is committed back for a release: `Cargo.toml` stays at `0.0.0` and the version lives in
+  the tag. The build injects it. See "Releases" in [docs/architecture.md](docs/architecture.md).
+  The release notes are generated from the commits; there is no committed changelog (the docs
+  site has a generated one).
+- Manual or emergency release: push a `vX.Y.Z` tag on the commit you want (`git tag vX.Y.Z <sha>
+  && git push origin vX.Y.Z`). `release.yml` builds that commit with the tag's version and
+  publishes it. To rehearse, run the `release` workflow by hand (dry run: builds, publishes
+  nothing). To skip a release, make the change a `docs`/`chore`/... type.
+
 ## The rule of four
 
 Keeps the tree shallow enough to read and deep enough to mean something.

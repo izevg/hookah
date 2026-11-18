@@ -12,7 +12,9 @@ docs/ stays the single source of truth. The book lives one level above it: docs/
 import html.parser
 import os
 import re
+import shlex
 import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -34,7 +36,27 @@ DESCRIPTIONS = {
     "ecosystems.md": "detection, commands, output parsing, and test selection for Rust, Node, and Python",
     "architecture.md": "layers, request flow, baseline, and failure handling",
     "mutation.md": "mutation testing of hookah itself",
+    "changelog.md": "every release, generated from Conventional Commits",
 }
+
+# The changelog page: one section per release, newest first, plus "Unreleased" for the commits
+# after the last `v*` tag (all of them before the first release). Same commit rules as the release
+# notes, so the groups are the ones in .github/cliff.toml.
+CHANGELOG_BODY = """\
+{% if version %}## {{ version | trim_start_matches(pat="v") }} ({{ timestamp | date(format="%Y-%m-%d") }})
+{% else %}## Unreleased
+{% endif %}\
+{% for group, commits in commits | group_by(attribute="group") %}
+### {{ group | striptags | trim | upper_first }}
+
+{% for commit in commits %}\
+- {% if commit.scope %}**{{ commit.scope }}**: {% endif %}\
+{% if commit.breaking %}**BREAKING** {% endif %}\
+{{ commit.message | upper_first }} \
+([`{{ commit.id | truncate(length=7, end="") }}`](https://github.com/izevg/hookah/commit/{{ commit.id }}))
+{% endfor %}\
+{% endfor %}
+"""
 
 
 def rewrite_links(text, mapper):
@@ -93,6 +115,22 @@ def to_absolute_link(src_file):
     return mapper
 
 
+def changelog():
+    """The changelog page, generated with git-cliff (on PATH, or the command in $CLIFF)."""
+    command = [
+        *shlex.split(os.environ.get("CLIFF", "git-cliff")),
+        "--config", str(ROOT / ".github" / "cliff.toml"),
+        "--body", CHANGELOG_BODY, "--strip", "all",
+    ]
+    try:
+        done = subprocess.run(command, cwd=ROOT, capture_output=True, text=True, check=True)
+    except (OSError, subprocess.CalledProcessError) as error:
+        detail = getattr(error, "stderr", "") or error
+        sys.exit(f"site: git-cliff failed (install it with mise; CI needs fetch-depth 0): {detail}")
+    body = re.sub(r"\n{3,}", "\n\n", done.stdout.replace("\n## ", "\n\n## ")).strip()
+    return "# Changelog\n\nGenerated from Conventional Commits at build time.\n\n" + (body or "No releasable changes yet.") + "\n"
+
+
 def assemble():
     if OUT.exists():
         shutil.rmtree(OUT)
@@ -110,6 +148,7 @@ def assemble():
             shutil.copy2(source, dest)
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
     (SRC / "README.md").write_text(rewrite_links(readme, to_book_link("README.md")), encoding="utf-8")
+    (SRC / "changelog.md").write_text(changelog(), encoding="utf-8")
     shutil.copy2(ROOT / "site" / "SUMMARY.md", SRC / "SUMMARY.md")
     shutil.copy2(ROOT / "site" / "book.toml", OUT / "book.toml")
     (OUT / "theme").mkdir()

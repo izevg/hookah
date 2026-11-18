@@ -1,13 +1,20 @@
 name: release
 
-# Cutting a release (one edit, then a tag):
-#   1. Set `version` under `[workspace.package]` in Cargo.toml (every crate inherits it).
-#   2. Run `cargo check --workspace` so Cargo.lock follows, and commit both files.
-#   3. Tag the commit `vX.Y.Z` and push the tag. A tag with a `-` in it (`v1.0.0-rc.1`) publishes
-#      a prerelease. The `preflight` job fails the run when the tag and Cargo.toml disagree.
+# Builds every target and publishes the GitHub Release. Three ways in:
+#   - `workflow_call` from auto-release.yml: the normal path, on every release-worthy squash merge
+#     to main (version computed from Conventional Commits by git-cliff, see .github/cliff.toml).
+#     Tags and releases made with GITHUB_TOKEN start no other workflow, so auto-release calls this
+#     one directly. The release job creates the `vX.Y.Z` tag itself, after every build passed, so
+#     a failed build never burns a version.
+#   - a `v*` tag pushed by a human: the manual and emergency path. The build uses that tag's version.
+#   - `workflow_dispatch`: a dry run. It builds everything and uploads the archives as run
+#     artifacts, but publishes nothing. The `version` input is only a label for the archives.
 #
-# `workflow_dispatch` builds everything and uploads the archives as run artifacts, but publishes
-# nothing: use it as a dry run.
+# The version lives in the tag, never in Cargo.toml: the repository keeps `0.0.0` and local builds
+# say so. Before building, .github/scripts/set-version.sh rewrites `version` under
+# `[workspace.package]` (and Cargo.lock) in the CI checkout only, so `hookah --version` prints the
+# release version. Nothing is committed back to main. A version with a `-` (`1.0.0-rc.1`) is a
+# prerelease.
 #
 # Targets are built natively where a runner exists. Exceptions, on purpose:
 #   - x86_64-apple-darwin is cross-compiled on the Apple Silicon runner. Intel macOS runners are
@@ -21,12 +28,28 @@ on:
   push:
     tags: ["v*"]
   workflow_dispatch:
+    inputs:
+      version:
+        description: "Version label for the dry-run archives (X.Y.Z)"
+        type: string
+        default: "0.0.0"
+  workflow_call:
+    inputs:
+      version:
+        description: "Version to release (X.Y.Z, no leading v)"
+        type: string
+        required: true
+      ref:
+        description: "Commit SHA to build and tag"
+        type: string
+        required: true
 
 permissions:
   contents: read
 
+# Not the caller's group: a called workflow sharing its caller's group would deadlock on it.
 concurrency:
-  group: release-${{ github.ref }}
+  group: release-build-${{ github.ref }}
   cancel-in-progress: false
 
 env:
@@ -43,27 +66,46 @@ jobs:
     timeout-minutes: 15
     outputs:
       version: ${{ steps.version.outputs.version }}
+      sha: ${{ steps.version.outputs.sha }}
+      publish: ${{ steps.version.outputs.publish }}
     steps:
       # actions/checkout v7.0.1
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-      - name: Check the tag against the Cargo version
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+      - name: Resolve the version and the mode
         id: version
         env:
           REF_TYPE: ${{ github.ref_type }}
           REF_NAME: ${{ github.ref_name }}
+          INPUT_VERSION: ${{ inputs.version }}
+          INPUT_REF: ${{ inputs.ref }}
         run: |
-          cargo_version="$(awk -F'"' '/^\[workspace\.package\]/ {p=1; next} /^\[/ {p=0} p && /^version[[:space:]]*=/ {print $2; exit}' Cargo.toml)"
-          if [ -z "$cargo_version" ]; then
-            echo "::error::no version under [workspace.package] in Cargo.toml"
+          if [ "$REF_TYPE" = tag ]; then
+            # A human pushed the tag: it is the version.
+            version="${REF_NAME#v}"
+            sha="$GITHUB_SHA"
+            publish=true
+          elif [ -n "$INPUT_REF" ]; then
+            # Called from auto-release: the publish job creates the tag.
+            version="$INPUT_VERSION"
+            sha="$INPUT_REF"
+            publish=true
+          else
+            # Dry run.
+            version="$INPUT_VERSION"
+            sha="$GITHUB_SHA"
+            publish=false
+          fi
+          if ! printf '%s' "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'; then
+            echo "::error::'$version' is not a semantic version (X.Y.Z or X.Y.Z-pre)"
             exit 1
           fi
-          if [ "$REF_TYPE" = tag ]; then
-            if [ "$REF_NAME" != "v$cargo_version" ]; then
-              echo "::error::tag $REF_NAME does not match Cargo.toml version $cargo_version (expected v$cargo_version)"
-              exit 1
-            fi
-          fi
-          echo "version=$cargo_version" >> "$GITHUB_OUTPUT"
+          {
+            echo "version=$version"
+            echo "sha=$sha"
+            echo "publish=$publish"
+          } >> "$GITHUB_OUTPUT"
       - name: Shellcheck the installer and scripts
         run: shellcheck site/install.sh .github/scripts/*.sh
       - name: Test the installers against a fake release
@@ -91,6 +133,10 @@ jobs:
     steps:
       # actions/checkout v7.0.1
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ needs.preflight.outputs.sha }}
+      - name: Set the release version (not committed)
+        run: .github/scripts/set-version.sh "$VERSION"
       - name: Install the Rust target
         run: |
           rustup toolchain install stable --profile minimal --target "$TARGET" --no-self-update
@@ -157,26 +203,63 @@ jobs:
   publish:
     name: publish
     # Dry runs (workflow_dispatch) stop at the checksums job.
-    if: github.ref_type == 'tag'
+    if: needs.preflight.outputs.publish == 'true'
     needs: [preflight, checksums]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
       contents: write
+    env:
+      VERSION: ${{ needs.preflight.outputs.version }}
+      SHA: ${{ needs.preflight.outputs.sha }}
     steps:
+      # The notes need the whole history and the tags.
+      # actions/checkout v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ needs.preflight.outputs.sha }}
+          fetch-depth: 0
+      # jdx/mise-action v5.2.9
+      - uses: jdx/mise-action@236a21c3b91f5db6d4e174b348674a0f0caac06d
+        with:
+          install_args: aqua:orhun/git-cliff
       # actions/download-artifact v8.0.2
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:
           merge-multiple: true
           path: dist
+      - name: Write the release notes
+        run: |
+          tag="v$VERSION"
+          if git rev-parse -q --verify "refs/tags/$tag" > /dev/null; then
+            if [ "$GITHUB_REF_TYPE" != tag ]; then
+              echo "::error::tag $tag already exists"
+              exit 1
+            fi
+            # The pushed tag: the commits since the previous tag.
+            git-cliff --config .github/cliff.toml --current --strip all > notes.md
+          else
+            git-cliff --config .github/cliff.toml --unreleased --tag "$tag" --strip all > notes.md
+          fi
+          {
+            echo
+            echo "---"
+            echo "Install: \`curl -fsSL https://izevg.github.io/hookah/install.sh | sh\` (Linux, macOS) or \`irm https://izevg.github.io/hookah/install.ps1 | iex\` (Windows). Verify downloads against \`SHA256SUMS\`."
+          } >> notes.md
+          cat notes.md
       - name: Create the GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ github.ref_name }}
         run: |
-          args=(--repo "$GITHUB_REPOSITORY" --title "$TAG" --verify-tag --generate-notes)
-          case "$TAG" in
+          tag="v$VERSION"
+          args=(--repo "$GITHUB_REPOSITORY" --title "$tag" --notes-file notes.md)
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            args+=(--verify-tag)
+          else
+            # No tag yet: the release creates it on the commit that was built.
+            args+=(--target "$SHA")
+          fi
+          case "$VERSION" in
             *-*) args+=(--prerelease) ;;
           esac
-          notes="Install: \`curl -fsSL https://izevg.github.io/hookah/install.sh | sh\` (Linux, macOS) or \`irm https://izevg.github.io/hookah/install.ps1 | iex\` (Windows). Verify downloads against \`SHA256SUMS\`."
-          gh release create "$TAG" dist/* "${args[@]}" --notes "$notes"
+          gh release create "$tag" dist/* "${args[@]}"

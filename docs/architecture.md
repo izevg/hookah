@@ -209,3 +209,19 @@ platform-specific parts, each behind a portable function so Unix hosts can unit-
   through `display_path`, which writes `/` separators on Windows too: reports read
   `src/lib.rs:3: message` and `C:/other/a.rs` on every platform.
 - **Home boundary.** The project walk stops at `%USERPROFILE%` where Unix uses `$HOME`.
+
+## Releases
+
+Every squash merge to `main` that passes CI can become a release, with no commit back to `main`.
+
+- `auto-release` waits for `ci` to succeed on a push to `main`, runs `git-cliff` (rules and the
+  first version in `.github/cliff.toml`, wrapper `.github/scripts/next-version.sh`) over the
+  Conventional Commits since the last `v*` tag, and stops when nothing releasable is there.
+- It calls `release.yml`, which builds all targets, creates the `vX.Y.Z` tag on the built commit,
+  and publishes the GitHub Release with notes from `git-cliff`. It then rebuilds this site, whose
+  [Changelog](changelog.md) page is generated the same way. Tags and releases made with
+  `GITHUB_TOKEN` start no other workflow, so each step is called, not triggered.
+- The version lives in the tag. The repository keeps `version = "0.0.0"` under
+  `[workspace.package]`; before building, `.github/scripts/set-version.sh` rewrites it (and
+  `Cargo.lock`) in the CI checkout, so a release binary reports its version through
+  `hookah --version` while local builds report `0.0.0`.

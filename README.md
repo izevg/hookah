@@ -179,6 +179,7 @@ They run once, when the agent says it's done, and a red result blocks the finish
 | [Ecosystems](docs/ecosystems.md) | detection, commands, output parsing, test selection per ecosystem |
 | [Configuration](docs/configuration.md) | `.hookah.toml` and the cache (in progress) |
 | [Mutation testing](docs/mutation.md) | mutation-testing `hookah` itself |
+| [Changelog](https://izevg.github.io/hookah/changelog.html) | every release, generated from Conventional Commits |
 | [Harness setup](docs/setup/hooks/claude-code.md) | one page per harness, linked in Quick start |
 | [Setup for agents](docs/setup/agents.md) | the exact procedure an agent follows to install and configure `hookah` |
 

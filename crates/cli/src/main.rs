@@ -109,7 +109,9 @@ fn baseline(root: &Path, session: &str) -> i32 {
 fn check_changed(root: Option<&Path>, limit: usize) -> i32 {
     let request = StopRequest::new(canonical_dir(&absolute_dir(root)));
     let adapters = wiring::build();
-    let outcome = CheckSession::new(adapters.ports(), limit).run(&request);
+    let outcome = CheckSession::new(adapters.ports(), limit)
+        .with_budgets(wiring::budgets())
+        .run(&request);
     let failed = matches!(outcome.verdict, hookah_domain::verdict::Verdict::Fail(_));
     let shown = display_path(&request.root, &request.display_root);
     let shown = if shown.as_os_str().is_empty() {
@@ -288,7 +290,9 @@ fn run_harness(harness: &dyn Harness, stdin: &str, limit: usize) -> Response {
             let use_case = CheckEdit::new(ports, limit);
             merge_outcomes(requests.iter().map(|r| use_case.run(r)).collect(), limit)
         }
-        Invocation::Stop { request, .. } => CheckSession::new(ports, limit).run(request),
+        Invocation::Stop { request, .. } => CheckSession::new(ports, limit)
+            .with_budgets(wiring::budgets())
+            .run(request),
         Invocation::Start(request) => StartSession::new(ports).run(request),
         Invocation::Ignore => Outcome::pass(),
     };

@@ -46,6 +46,15 @@ pub enum ChangedLines {
 }
 
 impl ChangedLines {
+    /// The number of changed lines, or `None` when the whole file is new and the count is the
+    /// file's own length.
+    pub fn count(&self) -> Option<usize> {
+        match self {
+            Self::All => None,
+            Self::Ranges(r) => Some(r.iter().map(|r| (r.end - r.start) as usize + 1).sum()),
+        }
+    }
+
     /// Whether the 1-based `line` is changed.
     pub fn contains(&self, line: u32) -> bool {
         match self {
@@ -104,6 +113,17 @@ impl ChangeSet {
 mod tests {
     use super::*;
     use crate::project::Ecosystem;
+
+    #[test]
+    fn counts_changed_lines() {
+        let r = |a, b| LineRange::new(a, b).unwrap();
+        assert_eq!(ChangedLines::All.count(), None);
+        assert_eq!(ChangedLines::Ranges(vec![]).count(), Some(0));
+        assert_eq!(
+            ChangedLines::Ranges(vec![r(2, 4), r(9, 9)]).count(),
+            Some(4)
+        );
+    }
 
     #[test]
     fn range_validation_and_contains() {

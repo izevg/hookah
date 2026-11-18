@@ -12,7 +12,7 @@
 //! | lint         | `ruff`        | `ruff check --output-format json --force-exclude --no-fix {files}` | 30 s |
 //! | typecheck    | `mypy`        | `mypy [-O json] --show-column-numbers --show-error-codes --no-error-summary --no-color-output {files}` (see below) | 120 s |
 //! | architecture | `lint-imports`| `lint-imports` (project-wide; `PYTHONPATH=src` in the src layout) | 60 s  |
-//! | test         | `pytest`      | `pytest [--testmon] -rfE --tb=short -q --color=no --rootdir=. {tests}`       | 300 s   |
+//! | test         | `pytest`      | `pytest [--testmon --ignore-glob=<heavy>...] [-m "not (<heavy markers>)"] -rfE --tb=short -q --color=no --rootdir=. {tests}` | 300 s |
 //! | mutation     | `mutmut`      | `mutmut run {globs}` (mutmut 3 only)                            | 480 s   |
 //!
 //! `-O json` is used only when the installed mypy is known to be 1.11 or newer (read from the
@@ -23,6 +23,9 @@
 //! configured (`[tool.mypy]`, `mypy.ini`, `.mypy.ini`, `setup.cfg [mypy]`, `tox.ini [mypy]`) or a
 //! declared dependency. import-linter needs its own configuration. With `pytest-testmon`
 //! installed, pytest runs with `--testmon` and no file arguments, so testmon picks the tests.
+//! Light tests only: `-m` deselects the heavy markers (`integration`, `e2e`, `slow`) the project
+//! registers (see [`markers`]), and under testmon `--ignore-glob` skips heavy paths (see
+//! [`select::heavy_ignores`]).
 //!
 //! Tools the project configures or implies but the environment lacks become [`MissingTool`]s:
 //! mutmut when pytest is available, and ruff, mypy, or import-linter when configured. The hint
@@ -30,13 +33,14 @@
 
 pub mod config;
 pub mod env;
+pub mod markers;
 
 use std::path::Path;
 use std::time::Duration;
 
 use hookah_domain::toolchain::{Arg, CheckKind, CommandSpec, MissingTool, Tool, Toolchain};
 
-use crate::ecosystems::python::layout;
+use crate::ecosystems::python::{layout, select};
 use config::{Config, MypyConfig};
 use env::{Env, Invocation, Manager, ToolRef};
 
@@ -286,15 +290,26 @@ pub fn toolchain(setup: &Setup, root: &Path) -> Toolchain {
         let mut args = Vec::new();
         let mut tail = Vec::new();
         if setup.testmon() {
-            args.push("--testmon");
+            args.push("--testmon".to_string());
+            // testmon picks the tests itself, so heavy ones are ignored by path.
+            args.extend(select::heavy_ignores(root));
         } else {
             tail = targets();
         }
-        args.extend(["-rfE", "--tb=short", "-q", "--color=no", "--rootdir=."]);
+        if let Some(expression) = config.heavy_marker_expression() {
+            args.extend(["-m".to_string(), expression]);
+        }
+        args.extend(["-rfE", "--tb=short", "-q", "--color=no", "--rootdir=."].map(String::from));
         tools.push(tool(
             PYTEST,
             CheckKind::Test,
-            spec(inv, &args, tail, root, PYTEST_TIMEOUT),
+            spec(
+                inv,
+                &args.iter().map(String::as_str).collect::<Vec<_>>(),
+                tail,
+                root,
+                PYTEST_TIMEOUT,
+            ),
         ));
     }
     let too_old = env
@@ -625,18 +640,32 @@ mod tests {
 
     #[test]
     fn testmon_replaces_file_arguments() {
-        let (_s, tc) = project("tc-testmon", &["pytest"], &["pytest_testmon-2.3.0"], &[]);
-        assert_eq!(
-            argv(&tc, "pytest", &["tests/test_a.py"]).1,
-            [
-                "--testmon",
-                "-rfE",
-                "--tb=short",
-                "-q",
-                "--color=no",
-                "--rootdir=."
-            ]
+        let (s, tc) = project("tc-testmon", &["pytest"], &["pytest_testmon-2.3.0"], &[]);
+        let expected: Vec<String> = ["--testmon".to_string()]
+            .into_iter()
+            .chain(select::heavy_ignores(s.root()))
+            .chain(["-rfE", "--tb=short", "-q", "--color=no", "--rootdir=."].map(String::from))
+            .collect();
+        assert_eq!(argv(&tc, "pytest", &["tests/test_a.py"]).1, expected);
+    }
+
+    #[test]
+    fn only_registered_heavy_markers_are_deselected() {
+        let markers = "[tool.pytest.ini_options]\nmarkers = [\"slow: s\", \"e2e: e\", \"unit\"]\n";
+        let (_s, tc) = project(
+            "tc-markers",
+            &["pytest"],
+            &[],
+            &[("pyproject.toml", markers)],
         );
+        let args = argv(&tc, "pytest", &["tests/test_a.py"]).1;
+        assert!(args.windows(2).any(|w| w == ["-m", "not (e2e or slow)"]));
+        assert_eq!(args.last().map(String::as_str), Some("tests/test_a.py"));
+
+        // Nothing registered: no `-m`, which strict markers would reject for unknown names.
+        let (_s, tc) = project("tc-nomarkers", &["pytest"], &[], &[]);
+        let args = argv(&tc, "pytest", &["tests/test_a.py"]).1;
+        assert!(!args.iter().any(|a| a == "-m"));
     }
 
     #[test]

@@ -214,3 +214,19 @@ fn changed_files_without_head_lists_tracked_and_untracked() {
     got.sort();
     assert_eq!(got, vec![dir.join("a"), dir.join("b")]);
 }
+
+#[test]
+fn line_count_counts_the_lines_of_a_file() {
+    let dir = repo("line-count");
+    let vcs = GitChanges::new();
+    let count = |name: &str, text: &str| {
+        let file = dir.join(name);
+        fs::write(&file, text).unwrap();
+        vcs.line_count(&file).unwrap()
+    };
+    assert_eq!(count("empty.txt", ""), 0);
+    assert_eq!(count("ten.txt", TEN), 10);
+    assert_eq!(count("open.txt", "a\nb"), 2);
+    assert_eq!(count("blank.txt", "\n"), 1);
+    assert!(vcs.line_count(&dir.join("missing.txt")).is_err());
+}

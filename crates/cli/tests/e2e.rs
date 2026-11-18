@@ -283,6 +283,39 @@ fn claude_stop_hook_blocks_on_a_failing_test() {
 }
 
 #[test]
+fn a_zero_test_budget_from_the_environment_runs_no_tests_at_stop() {
+    let f = Fixture::new("stopbudget", CLEAN_LIB);
+    f.write("src/lib.rs", FAILING_TEST_LIB);
+    let env = [("HOOKAH_TEST_BUDGET", "0")];
+    let out = f.hookah_with(&["hook", "claude"], &f.stop_payload(false), &env);
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "{}{}",
+        stdout(&out),
+        stderr(&out)
+    );
+    let out = f.hookah_with(&["check", "--changed"], "", &env);
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "{}{}",
+        stdout(&out),
+        stderr(&out)
+    );
+    // A value that is not a number keeps the default budget, so the failing test is found.
+    let env = [("HOOKAH_TEST_BUDGET", "lots")];
+    let out = f.hookah_with(&["check", "--changed"], "", &env);
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "{}{}",
+        stdout(&out),
+        stderr(&out)
+    );
+}
+
+#[test]
 fn claude_stop_hook_never_blocks_twice() {
     let f = Fixture::new("stopactive", CLEAN_LIB);
     f.write("src/lib.rs", FAILING_TEST_LIB);

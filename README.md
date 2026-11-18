@@ -159,12 +159,21 @@ harness.
    old warnings don't send the agent off fixing unrelated code. Output is compact
    (`file:line: message`) and capped, with a "+N more" line when it is cut.
 
+**Light by default.** `hookah` helps, it does not gatekeep. Only light tests run: integration,
+end-to-end, and browser tests, full suites, and benches never do. And only small changes get the
+expensive checks: related tests run only up to 25 targets, and mutation testing only for a change
+of at most 3 files and 150 lines. Above a budget the check is skipped with a one-line notice
+(`mutation testing skipped: change too large ...`) and never blocks the agent. Change the limits
+with `HOOKAH_TEST_BUDGET`, `HOOKAH_MUTATION_MAX_FILES`, and `HOOKAH_MUTATION_MAX_LINES` (`0`
+switches a check off). See [Light by default](docs/architecture.md#light-by-default-hookah-helps-it-doesnt-gatekeep)
+and [configuration](docs/configuration.md#budgets).
+
 Two phases keep each hook fast:
 
 | Phase   | Agent event                      | Runs                                | Budget     |
 |---------|----------------------------------|-------------------------------------|------------|
 | `edit`  | after a file write/edit          | format + lint of the changed file   | ~1-3 s     |
-| `stop`  | when the agent declares it's done | tests related to all files changed in the session | bounded by timeout |
+| `stop`  | when the agent declares it's done | light tests related to all files changed in the session; mutation testing of small changes | bounded by timeout and budgets |
 
 If the agent edits five files during a refactor, the tests don't run on each half-finished step.
 They run once, when the agent says it's done, and a red result blocks the finish.

@@ -33,8 +33,8 @@ extensions `ts tsx js jsx mjs cjs mts cts` are checked.
 | typecheck    | tsc        | `typescript` and a `tsconfig.json`     | `tsc --noEmit --pretty false -p tsconfig.json --incremental --tsBuildInfoFile <cache>/tsc.tsbuildinfo`          | 120 s   |
 | typecheck    | tsc        | same, with project `references`        | `tsc -b --pretty false tsconfig.json`                                                                          | 120 s   |
 | architecture | depcruise  | `dependency-cruiser` and a `.dependency-cruiser.{js,cjs,mjs,json}` | `depcruise --config <abs config> --output-type json <files>`                       | 60 s    |
-| test         | vitest     | `vitest` present (preferred)           | `vitest related --run --reporter=json --outputFile=<cache>/vitest-report.json --passWithNoTests <files>`       | 300 s   |
-| test         | jest       | `jest` present                         | `jest --ci --json --no-watchman --passWithNoTests --findRelatedTests <files>`                                  | 300 s   |
+| test         | vitest     | `vitest` present (preferred)           | `vitest related --run --reporter=json --outputFile=<cache>/vitest-report.json --passWithNoTests --exclude=<heavy glob>... <files>` | 300 s |
+| test         | jest       | `jest` present                         | `jest --ci --json --no-watchman --passWithNoTests --testPathIgnorePatterns=<heavy regex>... --findRelatedTests <files>` | 300 s |
 | mutation     | stryker    | `@stryker-mutator/core` present        | `stryker run --incremental --reporters json --mutate <comma-joined files>`                                     | 480 s   |
 
 `<cache>` is `<hookah cache>/<hash of project root>/` (see `configuration.md`; macOS fallback
@@ -104,11 +104,30 @@ or exact version the package's own `version` satisfies.
 `node_modules`) become the targets, absolute. The runner's `related` mode finds the tests
 that import them. No runner, or no such file, selects nothing.
 
+**Light tests only.** Integration and end-to-end tests are never run (see "Light by default" in
+`architecture.md`). A test is heavy when a directory below the project root is `e2e`,
+`integration`, `integrations`, `playwright`, or `cypress`; when a dot segment of the file name is
+`e2e`, `int`, or `integration` (`checkout.e2e.ts`, `db.int.test.ts`); or when the stem has the
+word `integration`, `e2e`, `playwright`, or `cypress` between `-` and `_` (`api-e2e.test.ts`,
+`playwright.config.ts`). Two things follow:
+
+- A changed heavy file is not handed to the runner, and does not select mutation targets.
+- The runner is told to skip heavy tests it finds through the import graph: Vitest gets one
+  `--exclude=<glob>` per pattern, Jest one `--testPathIgnorePatterns=<regex>` per pattern. Both
+  were verified against Vitest 5.1.0 and Jest 30.5.2. Vitest adds the excludes to the project's
+  own. Jest replaces the project's `testPathIgnorePatterns` when the flag is given, so hookah
+  repeats `/node_modules/`; a project that ignores more (such as `/dist/`) loses that ignore for
+  hookah's run. Its patterns are anchored at `<rootDir>`, so a project that lives below a
+  directory called `e2e` is not excluded whole. Both are approximations of the word rule, and
+  Jest's are case-sensitive.
+- The number of targets is the number of changed files, not of tests, because only the runner
+  knows the tests; the test budget applies to it.
+
 **Mutation.** Changed tests map to sources by name, keeping files that exist: `foo.test.ts` and
 `foo.spec.ts` to `foo.ts` next to them; `__tests__/foo.ts` to `../foo.ts`; `test/foo.spec.ts` or
 `tests/foo.spec.ts` to `src/foo.ts`, then `lib/foo.ts`, then `foo.ts` at the sibling level, keeping
 the sub-path below the test directory. Extensions tried: `ts tsx js jsx mts cts mjs cjs`. Changed
-sources count directly; `.d.ts` files, files with glob characters or commas in the name, and
+sources count directly; heavy tests map to nothing; `.d.ts` files, files with glob characters or commas in the name, and
 anything past the first 10 files are dropped. The result is one comma-joined target for Stryker's
 `--mutate` list.
 
@@ -186,7 +205,7 @@ files (edit hook) or all changed files of the project (stop hook).
 | lint         | `ruff`        | `ruff check --output-format json --force-exclude --no-fix {files}`                   | 30 s    |
 | typecheck    | `mypy`        | `mypy [-O json] --show-column-numbers --show-error-codes --no-error-summary --no-color-output [{packages} {files outside them}]` | 120 s |
 | architecture | `lint-imports`| `lint-imports` (project-wide; `PYTHONPATH=src` is set in the src layout)   | 60 s    |
-| test         | `pytest`      | `pytest [--testmon] -rfE --tb=short -q --color=no --rootdir=. {tests}`               | 300 s   |
+| test         | `pytest`      | `pytest [--testmon --ignore-glob=<heavy>...] [-m "not (<heavy markers>)"] -rfE --tb=short -q --color=no --rootdir=. {tests}` | 300 s |
 | mutation     | `mutmut`      | `mutmut run {globs}` (mutmut 3 only)                                                 | 480 s   |
 
 - **ruff** is preferred for format and lint when available. `--no-fix` keeps a project's
@@ -242,9 +261,21 @@ it but the environment lacks it. The hint matches the package manager, judged by
   `pkg/foo.py` selects every `test_foo.py` and `foo_test.py` in the project (`__init__.py` maps
   to `test_<package>.py`); a changed `conftest.py` or test helper selects the test files in its own
   directory. With no match nothing runs, and the whole suite never does.
+- **Light tests only.** A test is heavy when a directory below the project root is `integration`,
+  `integrations`, `e2e`, `playwright`, or `cypress`, or when the file stem has the word
+  `integration`, `e2e`, `playwright`, or `cypress` between `_` and `-` (`test_cart_integration.py`).
+  Heavy files are dropped from every selection and select no mutants. Under testmon, which picks
+  the tests itself, pytest gets `--ignore-glob=<root>*/<dir>/*` and file patterns, anchored at the
+  escaped project root so a project below a directory called `e2e` is not ignored whole (verified
+  on pytest 9.2). Markers: when the project registers `integration`, `e2e`, or `slow` under
+  `markers` in the one config pytest reads (`pytest.ini`, else `pyproject.toml` with
+  `[tool.pytest.ini_options]`, else `tox.ini` `[pytest]`, else `setup.cfg` `[tool:pytest]`),
+  pytest gets `-m "not (integration or e2e or slow)"` naming only the registered ones. A marker the
+  project does not register never appears in the expression, so `--strict-markers` cannot object.
 - **Mutants.** The sources are the changed sources plus the sources of the changed tests
   (`test_foo.py` and `foo_test.py` map to `foo.py` anywhere in the project; among several
-  same-named files, those whose directories overlap most with the test's win). Each source becomes
+  same-named files, those whose directories overlap most with the test's win; heavy tests map to
+  nothing). Each source becomes
   one glob `<module>.x[_ǁ]*`, where the module is mutmut's name for the file (`src/shop/cart.py`
   is `shop.cart`). Files that do not exist are dropped, and nothing selected means no run.
 
@@ -289,6 +320,18 @@ no toolchain, and a missing `cargo` degrades the run instead of failing it.
   warnings follow the usual changed-lines filter.
 - Test selection: any changed `.rs` file or the `Cargo.toml` selects the package plus workspace
   members that depend on it by path; otherwise no tests run.
+- Light tests only: `#[ignore]` tests are skipped by libtest as usual, benches are never run
+  (`cargo test` skips `benches/`), and heavy integration targets are left out. A `tests/` target
+  is heavy when its file or directory name is `integration`, `e2e`, or has that word between `_`
+  and `-` (`tests/integration_db.rs`, `tests/checkout_e2e.rs`, `tests/e2e/main.rs`, and also a
+  `tests/integration/` directory). Cargo cannot skip a target, only pick targets, so when the
+  package has a heavy one the selection becomes explicit: `--package=<pkg>` ... `--lib` `--bins`
+  `--test=<light target>`... (`--lib` and `--bins` only when the package has them; nothing light
+  at all selects nothing). The price: doctests do not run in that mode (cargo cannot combine
+  `--doc` with other target flags), and only the package's own `tests/` directory is inspected,
+  not those of the dependents, which get `--lib`, `--bins`, and the same test names. Without a
+  heavy target the selection stays the plain `--package` list. A Rust target is a package or one
+  test binary, and the test budget counts them.
 
 ### Rust mutation testing
 
@@ -309,6 +352,9 @@ no toolchain, and a missing `cargo` degrades the run instead of failing it.
   changed `src/**/*.rs` sources are always included; benches and examples select nothing.
   Targets are `--file=<workspace-relative path>` entries, one argv entry each. Files that do not
   exist are dropped.
+- Heavy tests select nothing: a changed `tests/integration_*.rs` or `tests/e2e/...` file is a test
+  edit but maps to no source.
+- Small changes only: see the mutation budget in `mutation.md`.
 - Incremental and cached: the output directory is `<workspace>/target/hookah-mutants`, so it is
   ignored by version control and reused between runs. `--iterate` skips mutants an earlier run
   caught or found unviable and re-tests the missed ones. `--in-diff` is not used: mutation runs

@@ -7,6 +7,28 @@
 Optional project file that overrides auto-detection: tool commands per check kind, disabled
 checks, time budgets, report limits, and ignore globs.
 
+## Budgets
+
+`hookah` is light by default (see "Light by default" in `architecture.md`): it runs light tests
+only, and skips tests and mutation testing when the change is too big. Until `.hookah.toml` can
+set them, three environment variables in the environment of the hook change the budgets. Each
+takes a whole number; anything else is ignored and the default stays.
+
+| Variable | Default | Meaning |
+|----------|---------|---------|
+| `HOOKAH_TEST_BUDGET` | `25` | The most related test targets that run at stop. More are not run, and the agent gets the notice `N related tests selected; above the light budget of M, run them yourself`. `0` runs no tests at all. |
+| `HOOKAH_MUTATION_MAX_FILES` | `3` | The most changed code files (tests and sources) of a project mutation testing accepts. `0` switches mutation testing off. |
+| `HOOKAH_MUTATION_MAX_LINES` | `150` | The most changed lines in them (versus `HEAD`) mutation testing accepts; a new file counts as long as the file. `0` switches mutation testing off. |
+
+Over a mutation budget the run is skipped with `mutation testing skipped: change too large (X
+files / Y lines, budget F / L)`. A budget never fails a check: the notice is non-blocking, and it
+shows for the user as a warning. Only the stop phase has budgets; the edit phase runs no tests and
+no mutation testing. Example, for a fast CI machine:
+
+```sh
+HOOKAH_TEST_BUDGET=100 HOOKAH_MUTATION_MAX_LINES=400 hookah check --changed
+```
+
 ## Cache
 
 Where `hookah` keeps baselines and session state, and how to clear it.

@@ -42,3 +42,13 @@ mise exec -- cargo mutants --workspace -j 5 --in-diff target/pr.diff
 ```
 
 Combine `--in-diff` with `--iterate` to also skip mutants a previous run already settled.
+
+## What `hookah` does on a project
+
+This page is about mutation-testing `hookah` itself. When `hookah` runs mutation testing on your
+project, it does so only for small changes, so it helps and does not block: at stop, a mutation
+run needs a changed test, at most 3 changed code files, and at most 150 changed lines in them. A
+larger change is skipped with the notice `mutation testing skipped: change too large (X files / Y
+lines, budget 3 / 150)`. Set `HOOKAH_MUTATION_MAX_FILES` and `HOOKAH_MUTATION_MAX_LINES` to change
+the limits (`0` switches mutation off). A run that times out is a degraded, non-blocking result.
+See "Light by default" in [architecture.md](architecture.md).

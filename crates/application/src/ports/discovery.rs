@@ -89,6 +89,10 @@ pub trait ChangeSource {
     /// Changed lines of `file` (absolute) in the project at `project_root`.
     fn changed_lines(&self, project_root: &Path, file: &Path) -> Result<ChangedLines, PortError>;
 
+    /// The number of lines of `file` (absolute): what [`ChangedLines::All`] means for a new or
+    /// untracked file.
+    fn line_count(&self, file: &Path) -> Result<usize, PortError>;
+
     /// Absolute paths of all files changed versus `HEAD`, plus untracked files, under `root`.
     fn changed_files(&self, root: &Path) -> Result<Vec<PathBuf>, PortError>;
 }

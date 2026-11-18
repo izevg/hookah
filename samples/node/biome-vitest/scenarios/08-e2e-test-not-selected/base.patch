@@ -1,0 +1,14 @@
+diff --git a/e2e/checkout.e2e.test.ts b/e2e/checkout.e2e.test.ts
+new file mode 100644
+index 0000000..caa3d5f
+--- /dev/null
++++ b/e2e/checkout.e2e.test.ts
+@@ -0,0 +1,8 @@
++import { expect, test } from "vitest";
++import { applyDiscount } from "../src/domain/discount";
++
++// Needs the live payment sandbox, which a laptop does not have: this fails there.
++test("checkout charges the discounted price at the sandbox", async () => {
++  const charged = await fetch("http://localhost:9/charge").then((r) => r.json());
++  expect(charged.cents).toBe(applyDiscount(1000, 25));
++});

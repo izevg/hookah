@@ -106,6 +106,7 @@ is installed on the machine.
 | | `04-old-error-hidden` | start, edit | `base.patch` leaves an E0308 error in the untouched `app`; after `start`, an unrelated edit in `core` is silent (exit 0) |
 | | `05-old-error-without-start` | edit | the same project and edit without `start`: no baseline, so the old `app` error is reported (the changed-lines filter) |
 | | `06-new-error-with-baseline` | start, edit | the same old error, and an API break in `core`: only the new E0599 in `app` is reported |
+| | `07-mutation-skipped-large-change` | stop | a 170-line table of golden test cases: too large for mutation testing (budget 3 files / 150 lines), so it is skipped with a non-blocking notice; skipped without `cargo-mutants` |
 | `python/uv-src-layout` | `01-clean-edit` | edit | a docstring edit stays silent (exit 0) |
 | | `02-lint-error` | edit | ruff `F401` on a changed line |
 | | `03-type-error` | edit | a wrong return type: `[typecheck]` finding from mypy |
@@ -128,6 +129,7 @@ is installed on the machine.
 | | `05-format-only` | edit | Biome rewrites the file; the agent is told to re-read it |
 | | `06-broken-test-stop` | stop | a broken assertion fails the stop and names the Vitest test |
 | | `07-weakened-test-stop` | stop | a weakened test: Stryker's surviving mutants fail the stop |
+| | `08-e2e-test-not-selected` | stop | a source change imported by a failing e2e test and by light tests: only the light tests run, so the stop is silent |
 | `node/eslint-prettier-jest` | `01-eslint-error` | edit | an ESLint (flat config) error is reported |
 | | `02-prettier-rewrite` | edit | Prettier rewrites the file; the agent is told to re-read it |
 | | `03-failing-test-stop` | stop | a failing Jest test fails the stop; the missing Stryker notice carries the `npm i -D` hint |

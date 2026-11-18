@@ -13,6 +13,67 @@ harnesses (`claude`, `codex`, `cursor`, `kimi`, `qoder`), and `plugins/` holds t
 extensions (`hermes`, `openclaw`, `opencode`, `orca`, `pi`). `lib.rs` re-exports every harness at
 the crate root, so `hookah_harness::claude` and `hookah_harness::plugins::pi` both resolve.
 
+## Light by default: hookah helps, it doesn't gatekeep
+
+`hookah` exists to help development, not to block it. An agent that has to wait minutes for a
+full suite, or that is sent back by a check no human would run after every small edit, learns
+nothing and loses time. So the default is light: cheap checks on what changed, and a polite
+"too big, run it yourself" when a check would not be cheap.
+
+**What runs, per phase.**
+
+| Phase | Runs | On what |
+| ----- | ---- | ------- |
+| Edit  | Format, Lint, Typecheck, Architecture | the edited file; about 1-3 s |
+| Stop  | Lint, Typecheck, Architecture | all files changed in the session |
+|       | Test | the **light** tests related to the changes, only up to the test budget |
+|       | Mutation | only when a test changed **and** the change is small (mutation budget) |
+
+**What is never run.**
+
+- Integration, end-to-end, browser, and other heavy tests. Each ecosystem adapter classifies the
+  tests it selects with one domain rule (`TestWeight`: directories `e2e/`, `integration/`,
+  `playwright/`, `cypress/`; files `*.e2e.*`, `*.int.*`, `*_integration.*`) and leaves the heavy
+  ones out. Tests marked `#[ignore]` stay skipped, and Python's `integration`, `e2e`, and `slow`
+  markers are deselected when the project registers them. Per-ecosystem details are in
+  [ecosystems.md](ecosystems.md).
+- The full test suite. With no related test, no test runs. With more related test targets than
+  the budget, none run either.
+- Benches.
+- Mutation testing of a large change.
+- Anything that is not already part of the project's own configuration, and anything that needs
+  an install.
+
+**Budgets.** Going over a budget is never a failure. The check is skipped and the agent gets a
+one-line, non-blocking notice, so it knows what did not run and can decide whether to run it.
+
+| Budget | Default | Over it | Environment variable |
+| ------ | ------- | ------- | -------------------- |
+| Test targets | 25 | `N related tests selected; above the light budget of 25, run them yourself`, no test runs | `HOOKAH_TEST_BUDGET` |
+| Mutation: changed files | 3 | `mutation testing skipped: change too large (X files / Y lines, budget 3 / 150)` | `HOOKAH_MUTATION_MAX_FILES` |
+| Mutation: changed lines | 150 | the same notice | `HOOKAH_MUTATION_MAX_LINES` |
+
+`0` switches the check off for good and silently: `HOOKAH_TEST_BUDGET=0` runs no tests at stop,
+and `0` for either mutation variable runs no mutation testing. A value that is not a whole number
+is ignored. [configuration.md](configuration.md) has the details; `.hookah.toml` will take over
+the same settings.
+
+- A test target is whatever the ecosystem hands to its runner: a test file for Python, a
+  `--package` or `--test` entry for Rust, a changed source file for Node, where the runner finds
+  the tests behind it.
+- Mutation counts the changed code files of the project (changed tests and changed sources) and
+  the lines `git diff HEAD` reports as changed in them; a new file counts as long as the file. The
+  limit applies to the change, not to what the tool will end up mutating, because the change
+  is what the agent is in control of.
+- A mutation run that times out is a degraded, non-blocking result, never a failure: only
+  surviving mutants fail.
+
+**Why these numbers.** 25 test targets is what a quick refactor touches; past that the change is
+a migration or a rename sweep, and a runner would take minutes. 3 files and 150 lines are about
+one function and its tests plus a neighbour: mutation testing cost grows with the code mutated, so
+a focused change gets a real answer and a sweeping one is left to the developer. The numbers are
+defaults, not policy: raise them in CI or on a fast machine, lower them on a slow one.
+
 ## Request flow
 
 Check kinds: `Format`, `Lint`, `Typecheck` (tsc, mypy), `Architecture` (dependency-cruiser,
@@ -39,8 +100,9 @@ shell `sed`. Format never runs at stop.
 - **Stop phase:** the harness parses the payload into a `StopRequest` (the project root and the
   display root). `CheckSession` asks the `ChangeSource` for every file changed in the session and
   groups them by project. Per project it runs the static checks over all changed files
-  (project-relative targets), asks the detector to select the related tests and runs them, then
-  decides on mutation testing. A failing verdict blocks the stop once; with `stop_hook_active`
+  (project-relative targets), asks the detector to select the related light tests and runs them
+  if they fit the test budget, then decides on mutation testing, which the mutation budget may
+  skip (see "Light by default"). The `Budgets` value comes from the composition root. A failing verdict blocks the stop once; with `stop_hook_active`
   the harness only warns.
 
 ### File roles and mutation testing

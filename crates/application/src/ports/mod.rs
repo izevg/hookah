@@ -76,6 +76,8 @@ pub(crate) mod fakes {
         hashes: Cell<u64>,
         pub lines: ChangedLines,
         pub lines_fail: bool,
+        /// What `line_count` reports for every file.
+        pub file_lines: usize,
         pub files: Vec<PathBuf>,
         pub files_fail: bool,
         /// Baseline states by `root|session`.
@@ -110,6 +112,7 @@ pub(crate) mod fakes {
                 hashes: Cell::new(0),
                 lines: ChangedLines::All,
                 lines_fail: false,
+                file_lines: 10,
                 files: vec![],
                 files_fail: false,
                 baseline_states: RefCell::new(HashMap::new()),
@@ -252,6 +255,13 @@ pub(crate) mod fakes {
                 return Err(PortError::new("no vcs"));
             }
             Ok(self.lines.clone())
+        }
+
+        fn line_count(&self, _: &Path) -> Result<usize, PortError> {
+            if self.lines_fail {
+                return Err(PortError::new("no vcs"));
+            }
+            Ok(self.file_lines)
         }
 
         fn changed_files(&self, _: &Path) -> Result<Vec<PathBuf>, PortError> {

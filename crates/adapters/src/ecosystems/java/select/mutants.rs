@@ -22,9 +22,6 @@ use hookah_domain::toolchain::MutationSelection;
 
 use super::{Class, TEST_SUFFIXES, TestOption, light, related_tests};
 
-/// The most source classes one run mutates; PIT is slow, so the selection stays narrow.
-const MAX_SOURCES: usize = 10;
-
 /// The sources a test file most likely covers, project-relative: the class name without its test
 /// suffix or prefix, in the same package of `src/main`.
 fn sources_of_test(project: &Project, rel: &Path) -> Vec<PathBuf> {
@@ -73,7 +70,7 @@ pub fn select(
         .filter(|p| project.root.join(p).is_file())
         .collect();
     sources.extend(tests.iter().flat_map(|t| sources_of_test(project, t)));
-    let sources: Vec<PathBuf> = sources.into_iter().take(MAX_SOURCES).collect();
+    let sources: Vec<PathBuf> = sources.into_iter().collect();
 
     let test_classes: BTreeSet<String> = sources
         .iter()
@@ -224,23 +221,5 @@ mod tests {
         assert!(of("src/test/java/a/b/Test.java").is_empty());
         assert!(of("src/test/java/a/b/Nothing.java").is_empty());
         assert!(of("README.md").is_empty());
-    }
-
-    #[test]
-    fn the_source_list_is_capped() {
-        let (t, p) = project();
-        let mut changed = Vec::new();
-        for i in 0..(MAX_SOURCES + 3) {
-            changed.push(t.write(&format!("src/main/java/many/S{i:02}.java"), "class S {}"));
-            t.write(
-                &format!("src/test/java/many/S{i:02}Test.java"),
-                "class T {}",
-            );
-        }
-        let MutationSelection::Targets(targets) = select(&p, TestOption::Gradle, &[], &changed)
-        else {
-            panic!("expected targets");
-        };
-        assert_eq!(targets[0].matches(',').count() + 1, MAX_SOURCES);
     }
 }

@@ -22,6 +22,7 @@ pub mod mutants;
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
+use hookah_domain::light::TestWeight;
 use hookah_domain::project::Project;
 use hookah_domain::session::FileRole;
 use hookah_domain::toolchain::TestSelection;
@@ -29,8 +30,6 @@ use hookah_domain::toolchain::TestSelection;
 use super::build::BuildKind;
 use super::detect::HEAVY_TAGS;
 
-/// The most test classes one run selects.
-const MAX_TESTS: usize = 30;
 /// Source sets whose files are tests.
 const TEST_SETS: [&str; 3] = ["test", "it", "integrationTest"];
 /// Class name suffixes that make a test a test.
@@ -129,6 +128,7 @@ pub(super) fn light(project: &Project, rel: &Path) -> bool {
         return false;
     };
     class.set == "test"
+        && !TestWeight::of_path(rel).is_heavy()
         && !heavy_name(&class.name)
         && std::fs::read_to_string(project.root.join(rel)).is_ok_and(|t| !heavy_source(&t))
 }
@@ -162,7 +162,7 @@ pub(super) fn related_tests(project: &Project, rel: &Path) -> Vec<PathBuf> {
 /// The way a build tool takes test class names.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TestOption {
-    /// Surefire: one `-Dtest=a.A,b.B`.
+    /// Surefire: the class names; the command joins them into `-Dtest=a.A,b.B`.
     Surefire,
     /// Gradle: `--tests=a.A` for each class.
     Gradle,
@@ -179,7 +179,7 @@ impl TestOption {
 
     fn targets(self, classes: &[String]) -> Vec<String> {
         match self {
-            Self::Surefire => vec![format!("-Dtest={}", classes.join(","))],
+            Self::Surefire => classes.to_vec(),
             Self::Gradle => classes.iter().map(|c| format!("--tests={c}")).collect(),
         }
     }
@@ -195,7 +195,7 @@ pub fn tests(project: &Project, option: TestOption, changed: &[PathBuf]) -> Test
         .filter_map(|p| Class::of(&p))
         .map(|c| c.qualified())
         .collect();
-    let classes: Vec<String> = classes.into_iter().take(MAX_TESTS).collect();
+    let classes: Vec<String> = classes.into_iter().collect();
     if classes.is_empty() {
         return TestSelection::None;
     }
@@ -374,9 +374,11 @@ mod tests {
         ];
         assert_eq!(
             tests(&p, TestOption::Surefire, &changed),
-            TestSelection::Targets(vec![
-                "-Dtest=RootTest,a.b.FooTest,a.b.FooTests,a.b.TestFoo".into()
-            ])
+            TestSelection::Targets(
+                ["RootTest", "a.b.FooTest", "a.b.FooTests", "a.b.TestFoo"]
+                    .map(String::from)
+                    .to_vec()
+            )
         );
         assert_eq!(
             tests(&p, TestOption::Gradle, &changed),
@@ -403,19 +405,5 @@ mod tests {
             TestSelection::None
         );
         assert_eq!(tests(&p, TestOption::Gradle, &[]), TestSelection::None);
-    }
-
-    #[test]
-    fn the_selection_is_capped() {
-        let (t, p) = project();
-        let mut changed = Vec::new();
-        for i in 0..(MAX_TESTS + 5) {
-            let rel = format!("src/test/java/many/T{i:02}Test.java");
-            changed.push(t.write(&rel, "class T {}"));
-        }
-        let TestSelection::Targets(targets) = tests(&p, TestOption::Gradle, &changed) else {
-            panic!("expected targets");
-        };
-        assert_eq!(targets.len(), MAX_TESTS);
     }
 }

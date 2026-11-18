@@ -488,9 +488,13 @@ with its own location, so the formatter adds nothing for it.
 
 **Light tests.** Tests run at stop only, and only light unit tests that relate to the change. A
 changed test selects itself. A changed `src/main/java/a/b/Foo.java` selects the files of
-`src/test/java/a/b/` named `FooTest`, `FooTests`, `TestFoo`, and `FooTestCase` that exist; at most
-30 classes. Nothing related selects nothing: the whole suite never runs. These never run, however
-they are named or tagged:
+`src/test/java/a/b/` named `FooTest`, `FooTests`, `TestFoo`, and `FooTestCase` that exist.
+Nothing related selects nothing: the whole suite never runs. The number of classes and the size
+of a mutation run are limited by the shared budgets, not by Java rules (see the light-by-default
+section of architecture.md: 25 test targets, and 3 files or 150 changed lines for mutation by default; Maven
+gets one target per class, joined into one `-Dtest=` option). Heaviness starts from the shared
+name rules (`TestWeight`: `integration`, `e2e`, and similar directories and file-name words) and
+adds the Java ones. These never run, however they are named or tagged:
 
 - classes named `*IT`, `*ITCase`, `*IntegrationTest(s)`, `*E2E`, `*E2ETest`;
 - everything under `src/it/` and `src/integrationTest/` (only `src/test/` is selected from);
@@ -516,7 +520,7 @@ non-blocking notice names the coordinates: `org.pitest:pitest-maven`, plus
 `org.pitest:pitest-junit5-plugin` for JUnit 5, or the `info.solidsoft.pitest` plugin for Gradle.
 It runs at stop, after green tests, and only when a light test changed (the shared mutation
 rules). The sources to mutate are the changed sources plus those the changed tests cover by name
-(`FooTest` covers `Foo`), at most 10; the tests are the light tests related to them. For Maven
+(`FooTest` covers `Foo`); the tests are the light tests related to them. For Maven
 these become `-DtargetClasses=a.Foo,a.Foo$*,...` and `-DtargetTests=a.FooTest,...` (the `$*` keeps
 nested classes in), so only the changed code and its own tests run. History is kept at
 `<module>/target/pit-history.bin` (`withHistory`), which makes the next run incremental: unchanged

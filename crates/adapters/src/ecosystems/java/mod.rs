@@ -151,7 +151,7 @@ mod tests {
         assert_eq!(eco.classify(&p, &foo, &ChangedLines::All), FileRole::Source);
         assert_eq!(
             eco.select_tests(&p, std::slice::from_ref(&foo)).unwrap(),
-            TestSelection::Targets(vec!["-Dtest=a.FooTest".into()])
+            TestSelection::Targets(vec!["a.FooTest".into()])
         );
         assert_eq!(
             eco.select_mutants(&p, &[test], &[foo]),

@@ -130,7 +130,10 @@ pub fn tools(build: &Build) -> Vec<Tool> {
     if f.junit5 {
         tail.push(lit(&format!("-DexcludedGroups={}", HEAVY_TAGS.join(","))));
     }
-    tail.push(Arg::Targets);
+    tail.push(Arg::TargetsJoined {
+        prefix: "-Dtest=".into(),
+        separator: ",".into(),
+    });
     tools.push(tool(
         SUREFIRE,
         CheckKind::Test,
@@ -215,7 +218,7 @@ mod tests {
         assert_eq!(tools[0].command.cwd, Path::new("/r"));
         assert_eq!(argv(&tools[0], &[]), ["-B", "-q", "-o", "test-compile"]);
         assert_eq!(
-            argv(&tools[1], &["-Dtest=a.B"]),
+            argv(&tools[1], &["a.B"]),
             [
                 "-B",
                 "-o",

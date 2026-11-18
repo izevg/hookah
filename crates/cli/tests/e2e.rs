@@ -94,6 +94,8 @@ impl Fixture {
             .current_dir(&self.root)
             .env("HOOKAH_CACHE_DIR", self.cache())
             .env("HOOKAH_BASELINE_FOREGROUND", "1")
+            // Never the developer's own user config; a test that wants one overrides this.
+            .env("HOOKAH_CONFIG", self.cache().join("no-user-config.toml"))
             .envs(env.iter().copied())
             .env("GIT_CONFIG_GLOBAL", "/dev/null")
             .env("GIT_CONFIG_NOSYSTEM", "1")
@@ -693,4 +695,91 @@ fn status_and_check_changed_resolve_an_aliased_root() {
         stderr(&out)
     );
     let _ = fs::remove_file(&alias);
+}
+
+/// The tool environment of a project comes from its config, not from the hook command.
+const ENV_SENSITIVE_LIB: &str = "pub fn answer() -> i32 {\n    42\n}\n\npub const FLAG: [u8; 1] = [0; if option_env!(\"HOOKAH_E2E_VAR\").is_some() { 2 } else { 1 }];\n";
+
+#[test]
+fn a_local_config_file_sets_the_environment_of_the_tools() {
+    let f = Fixture::new("envlocal", ENV_SENSITIVE_LIB);
+    let out = f.hookah(&["check", "src/lib.rs"], "");
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "{}{}",
+        stdout(&out),
+        stderr(&out)
+    );
+
+    f.write(".hookah.local.toml", "[env]\nHOOKAH_E2E_VAR = \"1\"\n");
+    f.write("src/lib.rs", &format!("{ENV_SENSITIVE_LIB}// edit\n"));
+    let out = f.hookah(&["check", "src/lib.rs"], "");
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "{}{}",
+        stdout(&out),
+        stderr(&out)
+    );
+}
+
+#[test]
+fn the_user_config_reaches_the_tools_of_a_matching_project() {
+    let f = Fixture::new("envuser", ENV_SENSITIVE_LIB);
+    let root = f.root.to_string_lossy().replace('\\', "/");
+    let user = f.cache().with_extension("user.toml");
+    fs::write(
+        &user,
+        format!("[[project]]\npath = \"{root}\"\n[project.env]\nHOOKAH_E2E_VAR = \"1\"\n"),
+    )
+    .unwrap();
+    f.write("src/lib.rs", &format!("{ENV_SENSITIVE_LIB}// edit\n"));
+    let user = user.to_string_lossy().into_owned();
+    let out = f.hookah_with(&["check", "src/lib.rs"], "", &[("HOOKAH_CONFIG", &user)]);
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "{}{}",
+        stdout(&out),
+        stderr(&out)
+    );
+}
+
+#[test]
+fn a_malformed_config_is_a_warning_and_the_check_still_runs() {
+    let f = Fixture::new("envbad", CLEAN_LIB);
+    f.write(".hookah.toml", "[env\n");
+    let out = f.hookah(&["check", "src/lib.rs"], "");
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "{}{}",
+        stdout(&out),
+        stderr(&out)
+    );
+    assert!(
+        stderr(&out).contains("warning: config:"),
+        "{}",
+        stderr(&out)
+    );
+}
+
+#[test]
+fn config_prints_the_effective_environment_and_where_it_came_from() {
+    let f = Fixture::new("envshow", CLEAN_LIB);
+    f.write(".hookah.toml", "[env]\nA = \"{root}/a\"\nB = \"shared\"\n");
+    f.write(".hookah.local.toml", "[env]\nB = \"mine\"\n");
+    let out = f.hookah(&["config"], "");
+    assert_eq!(out.status.code(), Some(0));
+    let text = stdout(&out);
+    assert!(text.contains("  B=mine  ("), "{text}");
+    assert!(text.contains(".hookah.local.toml)"), "{text}");
+    assert!(text.contains("  A="), "{text}");
+    assert!(text.contains("/a  ("), "{text}");
+    assert!(text.contains("user config: "), "{text}");
+    assert!(text.contains("(not found)"), "{text}");
+
+    let none = Fixture::new("envnone", CLEAN_LIB);
+    assert!(stdout(&none.hookah(&["config", "src/lib.rs"], "")).contains("env: none"));
 }

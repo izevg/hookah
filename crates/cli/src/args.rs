@@ -106,6 +106,13 @@ pub enum Command {
         #[arg(long)]
         root: PathBuf,
     },
+    /// Print the config files in effect for a path and the tool environment they set, with the
+    /// file each variable comes from. Use it to check config instead of editing a hook command.
+    Config {
+        /// File or directory to inspect; defaults to the current directory.
+        #[arg(default_value = ".")]
+        path: PathBuf,
+    },
     /// Print the project and toolchain found for a path.
     Detect {
         /// File or directory to inspect.

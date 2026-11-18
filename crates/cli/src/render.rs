@@ -6,6 +6,7 @@
 use std::io::IsTerminal;
 use std::path::Path;
 
+use hookah_adapters::config::env::ProjectEnv;
 use hookah_adapters::ecosystems::cache::Origin;
 use hookah_application::{Outcome, ProjectStatus};
 use hookah_domain::path::slashed;
@@ -105,6 +106,42 @@ pub fn detection(style: Style, project: Option<(&Project, &Toolchain, Origin)>) 
             slashed(Path::new(&tool.command.program)),
             args.join(" ")
         ));
+    }
+    out
+}
+
+/// Renders `hookah config`: the roots, the files read, the effective variables with their
+/// sources, and any warnings.
+pub fn config(found: &ProjectEnv) -> String {
+    let mut out = format!(
+        "root: {}\ngit root: {}\nuser config: {}\n",
+        slashed(&found.root),
+        slashed(&found.git_root),
+        found.user_config.as_deref().map_or_else(
+            || "unresolved (no home directory)".to_string(),
+            |p| {
+                let state = if found.files.contains(&p.to_path_buf()) {
+                    "read"
+                } else {
+                    "not found"
+                };
+                format!("{} ({state})", slashed(p))
+            }
+        )
+    );
+    for file in &found.files {
+        out.push_str(&format!("file: {}\n", slashed(file)));
+    }
+    if found.entries.is_empty() {
+        out.push_str("env: none\n");
+    } else {
+        out.push_str("env:\n");
+        for e in &found.entries {
+            out.push_str(&format!("  {}={}  ({})\n", e.key, e.value, e.source));
+        }
+    }
+    for w in &found.warnings {
+        out.push_str(&format!("warning: {w}\n"));
     }
     out
 }

@@ -16,6 +16,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use clap::Parser;
+use hookah_adapters::config::env::{Host, resolve as resolve_env};
 use hookah_application::{
     CheckEdit, CheckSession, ComputeBaseline, EditRequest, Outcome, ReadStatus, StartSession,
     StopRequest,
@@ -61,6 +62,7 @@ fn main() -> ExitCode {
         } => exit(check_changed(root.as_deref(), limit)),
         Command::Check { paths, .. } => exit(check(&paths, limit)),
         Command::Status { root, json } => exit(status(root.as_deref(), json)),
+        Command::Config { path } => exit(config(&path)),
         Command::Detect { path } => exit(detect(&path)),
         Command::Baseline { session, root } => exit(baseline(&root, &session)),
         Command::Hook { harness } => exit(guarded_hook(harness, limit)),
@@ -210,6 +212,19 @@ fn install_orca_plugin(dir: &Path) -> i32 {
             1
         }
     }
+}
+
+/// `hookah config`: the config files and tool environment in effect for `path`.
+fn config(path: &Path) -> i32 {
+    let target = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
+    let dir = if target.is_dir() {
+        target
+    } else {
+        target.parent().map(Path::to_path_buf).unwrap_or(target)
+    };
+    let found = resolve_env(&dir, &Host::from_process());
+    print_out(&render::config(&found));
+    0
 }
 
 /// `hookah detect`: print what would run for `path`.

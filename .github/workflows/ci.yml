@@ -142,3 +142,21 @@ jobs:
         run: |
           mkdir -p target
           cargo mutants --workspace -j 3 --iterate --in-diff "$RUNNER_TEMP/pr.diff"
+
+  # Builds the docs site and checks every internal link, so a PR that moves or renames docs cannot
+  # break the published site. git-cliff generates the changelog page and needs the full history.
+  site:
+    name: site
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      # actions/checkout v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+      # jdx/mise-action v5.2.9
+      - uses: jdx/mise-action@236a21c3b91f5db6d4e174b348674a0f0caac06d
+        with:
+          install_args: aqua:rust-lang/mdBook aqua:orhun/git-cliff
+      - name: Build the site and check links
+        run: .github/scripts/build-site.sh

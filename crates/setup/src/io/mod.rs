@@ -3,6 +3,7 @@
 
 pub mod detect;
 pub mod env;
+pub mod uninstall;
 
 use std::fs;
 use std::io::ErrorKind;

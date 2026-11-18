@@ -7,6 +7,8 @@
 //! line, and refuses (so the file stays untouched) when `plugins` or `enabled` is written in a
 //! form it cannot edit safely, such as a flow list `enabled: [a, b]`.
 
+use super::Unmerged;
+
 const PLUGIN: &str = "hookah";
 
 /// `existing` with `hookah` enabled as a Hermes plugin.
@@ -54,6 +56,77 @@ pub fn merge(existing: Option<&str>) -> Result<String, String> {
         }
     }
     Ok(format!("{}{eol}", lines.join(eol)))
+}
+
+/// The inverse of [`merge`]: `existing` without `hookah` in `plugins.enabled`. The `enabled` key
+/// goes too when the list ends up empty and nothing else sits under it, and the `plugins` key
+/// when nothing else sits under that. A list written inline is refused when it names hookah.
+pub fn unmerge(existing: &str) -> Result<Unmerged, String> {
+    let eol = if existing.contains("\r\n") {
+        "\r\n"
+    } else {
+        "\n"
+    };
+    let mut lines: Vec<String> = existing.lines().map(str::to_owned).collect();
+    let Some(plugins) = lines.iter().position(|l| key_of(l, 0) == Some("plugins")) else {
+        return Ok(Unmerged::Unchanged);
+    };
+    if !value_of(&lines[plugins]).is_empty() {
+        return Ok(Unmerged::Unchanged);
+    }
+    let end = block_end(&lines, plugins);
+    let indent = (plugins + 1..end)
+        .find_map(|i| key_indent(&lines[i]))
+        .unwrap_or(2);
+    // The `plugins` line itself has indent 0, and the block is indented, so it never matches.
+    let Some(enabled) = (plugins..end).find(|&i| key_of(&lines[i], indent) == Some("enabled"))
+    else {
+        return Ok(Unmerged::Unchanged);
+    };
+    if !value_of(&lines[enabled]).is_empty() {
+        let inline = value_of(&lines[enabled]);
+        return if inline.contains(PLUGIN) {
+            Err(format!(
+                "plugins.enabled is written inline (`{inline}`); remove `hookah` from it by hand"
+            ))
+        } else {
+            Ok(Unmerged::Unchanged)
+        };
+    }
+    let items = scan_items(&lines, enabled, end);
+    let ours: Vec<usize> = items
+        .iter()
+        .filter(|(_, item)| item == PLUGIN)
+        .map(|(at, _)| *at)
+        .collect();
+    if ours.is_empty() {
+        return Ok(Unmerged::Unchanged);
+    }
+    let kept = items.len() - ours.len();
+    for at in ours.iter().rev() {
+        lines.remove(*at);
+    }
+    let end = end - ours.len();
+    // Only a key line with nothing under it (no list items, no comments) is dropped with it.
+    let bare = |lines: &[String], key: usize, end: usize, pad: usize| {
+        lines[key + 1..end]
+            .iter()
+            .find(|l| !l.trim().is_empty())
+            .is_none_or(|l| key_indent(l).is_some_and(|i| i <= pad))
+    };
+    if kept == 0 && bare(&lines, enabled, end, indent) {
+        lines.remove(enabled);
+        if bare(&lines, plugins, end - 1, 0) {
+            lines.remove(plugins);
+        }
+    }
+    let empty = lines.iter().all(|l| l.trim().is_empty());
+    let text = if empty {
+        String::new()
+    } else {
+        format!("{}{eol}", lines.join(eol))
+    };
+    Ok(Unmerged::Removed { text, empty })
 }
 
 /// True if `existing` already enables `hookah`.
@@ -113,9 +186,15 @@ fn list_items(
     if !inline.is_empty() {
         return Err(manual("a plugins list is written inline (`[...]`)"));
     }
+    let found = scan_items(lines, key, end);
+    let last = found.last().map(|(at, _)| *at);
+    Ok((found.into_iter().map(|(_, item)| item).collect(), last))
+}
+
+/// The scalar items of the block list under the key at `key`, with the line of each.
+fn scan_items(lines: &[String], key: usize, end: usize) -> Vec<(usize, String)> {
     let key_pad = dash_indent(&lines[key]);
     let mut items = Vec::new();
-    let mut last = None;
     for (i, line) in lines.iter().enumerate().take(end).skip(key + 1) {
         let rest = line.trim_start_matches(' ');
         if rest.is_empty() || rest.starts_with('#') {
@@ -128,10 +207,9 @@ fn list_items(
             break;
         }
         let item = item.split(" #").next().unwrap_or("").trim();
-        items.push(item.trim_matches(['"', '\'']).to_owned());
-        last = Some(i);
+        items.push((i, item.trim_matches(['"', '\'']).to_owned()));
     }
-    Ok((items, last))
+    items
 }
 
 #[cfg(test)]
@@ -297,6 +375,110 @@ mod tests {
         assert_eq!(
             merged(text),
             "plugins:\n\n  # note\n  enabled:\n    - a\n\n    - b\n    - hookah\nmodel: y\n"
+        );
+    }
+
+    fn removed(text: &str) -> (String, bool) {
+        match unmerge(text).unwrap() {
+            Unmerged::Removed { text, empty } => (text, empty),
+            Unmerged::Unchanged => panic!("nothing removed from {text:?}"),
+        }
+    }
+
+    #[test]
+    fn unmerge_is_the_inverse_of_merge_for_every_shape_merge_edits() {
+        for original in [
+            "model: x\n",
+            "# my config\nmodel: x\nterminal:\n  cwd: .\n",
+            "plugins:\n  enabled:\n    - kanban   # keep\n    - \"mem\"\n  disabled:\n    - x\nmodel: y\n",
+            "plugins:\n  enabled:\n  - a\n  - b\nmodel: y\n",
+            "plugins:\n    hook_callback_timeout: 60\nmodel: y\n",
+            "plugins:\n      # deep: note\n\n  enabled:\n    - a\n",
+            "a: 1\n\n",
+            "plugins:\n  enabled:\n    - a\r\n"
+                .replace("\r\n", "\n")
+                .as_str(),
+        ] {
+            let (text, empty) = removed(&merged(original));
+            assert_eq!((text.as_str(), empty), (original, false), "{original:?}");
+        }
+    }
+
+    #[test]
+    fn unmerge_of_a_file_setup_created_is_empty() {
+        assert_eq!(removed(&merge(None).unwrap()), (String::new(), true));
+        // An empty `enabled` key or `plugins` block that setup filled comes out semantically empty.
+        assert_eq!(
+            removed("plugins:\n  enabled:\n    - hookah\nmodel: y\n"),
+            ("model: y\n".to_owned(), false)
+        );
+    }
+
+    #[test]
+    fn unmerge_keeps_the_keys_that_still_hold_something() {
+        // Other items stay, and so does a comment under the key.
+        assert_eq!(
+            removed("plugins:\n  enabled:\n    - hookah\n    - a\n").0,
+            "plugins:\n  enabled:\n    - a\n"
+        );
+        assert_eq!(
+            removed("plugins:\n  enabled:\n    # why\n    - hookah\n").0,
+            "plugins:\n  enabled:\n    # why\n"
+        );
+        assert_eq!(
+            removed("plugins:\n  enabled:\n    - hookah\n  disabled:\n    - x\n").0,
+            "plugins:\n  disabled:\n    - x\n"
+        );
+        assert_eq!(
+            removed("plugins:\n  enabled:\n    - 'hookah'\n    - \"hookah\"\nmodel: y\n").0,
+            "model: y\n"
+        );
+        // The blank line that followed the block stays.
+        assert_eq!(
+            removed("plugins:\n  enabled:\n    - hookah\n\nmodel: y\n").0,
+            "\nmodel: y\n"
+        );
+    }
+
+    #[test]
+    fn unmerge_finds_the_enabled_key_at_any_block_indent() {
+        assert_eq!(
+            removed("plugins:\n    enabled:\n      - hookah\n    x: 1\n").0,
+            "plugins:\n    x: 1\n"
+        );
+        assert_eq!(
+            removed("plugins:\n # c\n    enabled:\n      - hookah\n").0,
+            "plugins:\n # c\n"
+        );
+    }
+
+    #[test]
+    fn unmerge_keeps_windows_line_endings() {
+        let (text, empty) = removed("model: x\r\nplugins:\r\n  enabled:\r\n    - hookah\r\n");
+        assert_eq!((text.as_str(), empty), ("model: x\r\n", false));
+    }
+
+    #[test]
+    fn unmerge_reports_nothing_to_remove() {
+        for text in [
+            "model: x\n",
+            "plugins: {}\n",
+            "plugins:\n  other: 1\n",
+            "plugins:\n  enabled:\n    - a\n",
+            "plugins:\n  enabled: [a]\n",
+            "tools:\n  enabled:\n    - hookah\n",
+            "plugins:\n  disabled:\n    - hookah\n",
+        ] {
+            assert_eq!(unmerge(text).unwrap(), Unmerged::Unchanged, "{text:?}");
+        }
+    }
+
+    #[test]
+    fn unmerge_refuses_an_inline_list_that_names_hookah() {
+        let err = unmerge("plugins:\n  enabled: [a, hookah]\n").unwrap_err();
+        assert!(
+            err.contains("inline") && err.contains("[a, hookah]") && err.contains("by hand"),
+            "{err}"
         );
     }
 }

@@ -15,6 +15,7 @@
 //!
 //! - `hookah setup <harness>` / `hookah setup --detect`: write the hook config of a harness, or
 //!   survey which harnesses are installed and configured.
+//! - `hookah uninstall <harness>|--all`: take out what `setup` wrote, and nothing else.
 
 use std::path::PathBuf;
 
@@ -87,6 +88,13 @@ pub enum Command {
     /// Non-interactive and idempotent: existing settings are kept, hookah's entries are added or
     /// updated in place, and the original file is backed up once to `<file>.hookah.bak`.
     Setup(SetupArgs),
+    /// Remove what `hookah setup` wrote: hookah's hook entries or plugin files for one harness,
+    /// or for every configured harness with `--all`.
+    ///
+    /// The exact inverse of setup. Only hookah's own entries leave a config file, a plugin file
+    /// leaves only while it still has the content hookah wrote, and the `.hookah.bak` backups are
+    /// left alone. Running it again changes nothing.
+    Uninstall(UninstallArgs),
     /// Compute the finding baseline of a project for an agent session. Spawned by `hookah hook`
     /// on a session start; not meant to be run by hand.
     #[command(hide = true)]
@@ -133,6 +141,88 @@ pub struct SetupArgs {
     /// the absolute path of this binary.
     #[arg(long, value_name = "CMD", conflicts_with = "detect")]
     pub command: Option<String>,
+}
+
+/// Arguments of `hookah uninstall`. Shaped like `hookah setup`: the harness is the positional
+/// argument and `--scope` and `--dry-run` mean the same, so the one command undoes the other.
+#[derive(Debug, Args)]
+pub struct UninstallArgs {
+    /// The harness to remove hookah from. `orca` is the Orca plugin folder (see `--dir`).
+    #[arg(
+        required_unless_present_any = ["all", "purge_cache"],
+        conflicts_with = "all"
+    )]
+    pub harness: Option<UninstallKind>,
+
+    /// Remove hookah from every harness that `hookah setup --detect` reports as configured, at
+    /// `--scope` (both scopes when none is given). Does not cover the Orca plugin.
+    #[arg(long, conflicts_with = "dir")]
+    pub all: bool,
+
+    /// Which config to edit: the project's or the user's. Defaults like setup: `project`, or
+    /// `user` for the harnesses that have no project config.
+    #[arg(long, value_enum)]
+    pub scope: Option<ScopeKind>,
+
+    /// With `orca`: the folder `hookah plugin orca --out` wrote. Defaults to
+    /// `~/.hookah-orca-plugin`.
+    #[arg(long, value_name = "DIR")]
+    pub dir: Option<PathBuf>,
+
+    /// Show what would be removed, and change nothing.
+    #[arg(long)]
+    pub dry_run: bool,
+
+    /// Also delete hookah's cache directory (baselines, status, tool caches).
+    #[arg(long)]
+    pub purge_cache: bool,
+
+    /// Delete a plugin file even when its content is not what hookah writes.
+    #[arg(long)]
+    pub force: bool,
+}
+
+/// What `hookah uninstall` takes a harness name for: the setup harnesses, and Orca.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum UninstallKind {
+    /// Claude Code.
+    Claude,
+    /// Codex CLI.
+    Codex,
+    /// Qoder CLI.
+    Qoder,
+    /// Kimi Code.
+    Kimi,
+    /// Cursor.
+    Cursor,
+    /// opencode.
+    Opencode,
+    /// Hermes Agent.
+    Hermes,
+    /// Pi coding agent.
+    Pi,
+    /// OpenClaw.
+    Openclaw,
+    /// The Orca plugin folder written by `hookah plugin orca --out`.
+    Orca,
+}
+
+impl UninstallKind {
+    /// The setup harness this names, `None` for Orca.
+    pub fn harness(self) -> Option<HarnessKind> {
+        Some(match self {
+            Self::Claude => HarnessKind::Claude,
+            Self::Codex => HarnessKind::Codex,
+            Self::Qoder => HarnessKind::Qoder,
+            Self::Kimi => HarnessKind::Kimi,
+            Self::Cursor => HarnessKind::Cursor,
+            Self::Opencode => HarnessKind::Opencode,
+            Self::Hermes => HarnessKind::Hermes,
+            Self::Pi => HarnessKind::Pi,
+            Self::Openclaw => HarnessKind::Openclaw,
+            Self::Orca => return None,
+        })
+    }
 }
 
 /// Where a harness config lives.
@@ -377,6 +467,64 @@ mod tests {
                 assert_eq!(out, Some(PathBuf::from("o")));
             }
             other => panic!("expected plugin, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parses_uninstall_forms() {
+        let cli = Cli::try_parse_from([
+            "hookah",
+            "uninstall",
+            "kimi",
+            "--scope",
+            "user",
+            "--dry-run",
+            "--purge-cache",
+            "--force",
+        ])
+        .unwrap();
+        match cli.command {
+            Command::Uninstall(a) => {
+                assert_eq!(a.harness, Some(UninstallKind::Kimi));
+                assert_eq!(a.scope, Some(ScopeKind::User));
+                assert!(a.dry_run && a.purge_cache && a.force && !a.all);
+            }
+            other => panic!("expected uninstall, got {other:?}"),
+        }
+        let cli = Cli::try_parse_from(["hookah", "uninstall", "--all"]).unwrap();
+        assert!(matches!(cli.command, Command::Uninstall(a) if a.all && a.harness.is_none()));
+        let cli = Cli::try_parse_from(["hookah", "uninstall", "--purge-cache"]).unwrap();
+        assert!(matches!(cli.command, Command::Uninstall(a) if a.purge_cache));
+        let cli = Cli::try_parse_from(["hookah", "uninstall", "orca", "--dir", "d"]).unwrap();
+        match cli.command {
+            Command::Uninstall(a) => {
+                assert_eq!(a.harness, Some(UninstallKind::Orca));
+                assert_eq!(a.dir, Some(PathBuf::from("d")));
+            }
+            other => panic!("expected uninstall, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn rejects_inconsistent_uninstall_flags() {
+        for bad in [
+            &["hookah", "uninstall"][..],
+            &["hookah", "uninstall", "claude", "--all"],
+            &["hookah", "uninstall", "--all", "--dir", "d"],
+            &["hookah", "uninstall", "nope"],
+        ] {
+            assert!(Cli::try_parse_from(bad).is_err(), "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn every_uninstall_kind_but_orca_names_a_setup_harness() {
+        for kind in UninstallKind::value_variants() {
+            let name = kind.to_possible_value().unwrap().get_name().to_owned();
+            match kind.harness() {
+                Some(h) => assert_eq!(h.to_possible_value().unwrap().get_name(), name),
+                None => assert_eq!(name, "orca"),
+            }
         }
     }
 }

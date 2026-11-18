@@ -24,6 +24,7 @@ pub mod target;
 pub use error::SetupError;
 pub use io::detect::{Detection, detect};
 pub use io::env::{Env, Scope};
+pub use io::uninstall::{Removal, Step, plan_removal, remove};
 pub use io::{Companion, Plan, Written, commit, plan, snippet};
-pub use plugin::{Installed, write_plugin};
+pub use plugin::{Installed, plan_orca_removal, plan_plugin_removal, write_plugin};
 pub use target::{Target, quote_program, shell_program};

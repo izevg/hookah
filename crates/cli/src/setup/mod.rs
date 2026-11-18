@@ -2,6 +2,9 @@
 //! scope and the command, calls it, and prints.
 
 mod render;
+mod uninstall;
+
+pub use uninstall::run as uninstall;
 
 use std::io::Write;
 
@@ -62,7 +65,7 @@ fn execute(args: &SetupArgs, env: &Env, exe: &str) -> Result<String, String> {
     Ok(out)
 }
 
-fn target(kind: HarnessKind) -> Target {
+pub(super) fn target(kind: HarnessKind) -> Target {
     match kind {
         HarnessKind::Claude => Target::Claude,
         HarnessKind::Codex => Target::Codex,

@@ -66,6 +66,7 @@ fn main() -> ExitCode {
         Command::Hook { harness } => exit(guarded_hook(harness, limit)),
         Command::Plugin { harness, out } => exit(plugin(harness, out.as_deref())),
         Command::Setup(args) => exit(setup::run(&args)),
+        Command::Uninstall(args) => exit(setup::uninstall(&args)),
     }
 }
 

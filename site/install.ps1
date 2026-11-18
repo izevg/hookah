@@ -8,9 +8,61 @@
 #   HOOKAH_NO_MODIFY_PATH   set to 1 to leave the user PATH alone
 #   HOOKAH_DOWNLOAD_BASE    where release assets live (default: GitHub release downloads)
 #   HOOKAH_API_URL          the releases API base (the last two exist for the installer tests)
+#   HOOKAH_UNINSTALL        set to 1 to uninstall instead (the way to do it through `irm | iex`,
+#                           which cannot pass parameters); a saved copy also takes -Uninstall
+#   HOOKAH_KEEP_CONFIG      set to 1 (or pass -KeepConfig) with uninstall to leave the harness
+#                           configs alone
 #
 # It downloads the zip and SHA256SUMS, verifies the checksum, installs hookah.exe, and adds the
 # install directory to your user PATH. No administrator rights needed.
+#
+# Uninstall: first `hookah uninstall --all` (the harness configs; it needs the binary, and hooks
+# left pointing at a deleted binary fail on every agent edit), then hookah.exe is deleted, the
+# install directory too if that left it empty, and then, only when the directory is gone, its
+# entry in the user PATH (a directory that still holds other programs keeps its entry).
+#
+#   $env:HOOKAH_UNINSTALL = '1'; irm https://izevg.github.io/hookah/install.ps1 | iex
+param([switch]$Uninstall, [switch]$KeepConfig)
+
+function Uninstall-Hookah {
+    $ErrorActionPreference = 'Stop'
+    $installDir = if ($env:HOOKAH_INSTALL_DIR) { $env:HOOKAH_INSTALL_DIR } else { Join-Path $env:LOCALAPPDATA 'hookah\bin' }
+    $exe = Join-Path $installDir 'hookah.exe'
+
+    if (Test-Path -LiteralPath $exe) {
+        if ($KeepConfig -or $env:HOOKAH_KEEP_CONFIG -eq '1') {
+            Write-Host 'hookah-install: keeping the harness configs; hookah entries in them will fail until removed'
+        } else {
+            Write-Host "hookah-install: removing hookah from your harness configs: $exe uninstall --all"
+            & $exe uninstall --all
+            if ($LASTEXITCODE -ne 0) {
+                Write-Host 'hookah-install: warning: hookah uninstall --all did not finish; see its output above and https://izevg.github.io/hookah/setup/uninstall.html'
+            }
+        }
+        Remove-Item -LiteralPath $exe -Force
+        Write-Host "hookah-install: removed $exe"
+    } else {
+        Write-Host "hookah-install: nothing to uninstall: $exe does not exist"
+        Write-Host 'hookah-install: hookah entries may remain in harness configs; see https://izevg.github.io/hookah/setup/uninstall.html'
+    }
+    Write-Host 'hookah-install: projects you set up with --scope project, other than the current directory, still hold their entries; see https://izevg.github.io/hookah/setup/uninstall.html'
+
+    if ((Test-Path -LiteralPath $installDir) -and -not (Get-ChildItem -LiteralPath $installDir -Force)) {
+        Remove-Item -LiteralPath $installDir -Force
+    }
+    if ($env:HOOKAH_NO_MODIFY_PATH -ne '1' -and -not (Test-Path -LiteralPath $installDir)) {
+        $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
+        if ($userPath) {
+            $wanted = $installDir.TrimEnd('\')
+            $entries = @($userPath -split ';' | Where-Object { $_ })
+            $kept = @($entries | Where-Object { $_.TrimEnd('\') -ine $wanted })
+            if ($kept.Count -ne $entries.Count) {
+                [Environment]::SetEnvironmentVariable('Path', ($kept -join ';'), 'User')
+                Write-Host "hookah-install: removed $installDir from your user PATH. Restart your terminal to pick it up."
+            }
+        }
+    }
+}
 
 function Install-Hookah {
     $ErrorActionPreference = 'Stop'
@@ -125,4 +177,4 @@ function Install-Hookah {
     Write-Host '  hookah setup <harness>     # claude, codex, cursor, qoder, kimi, opencode, hermes, pi, or openclaw'
 }
 
-Install-Hookah
+if ($Uninstall -or $env:HOOKAH_UNINSTALL -eq '1') { Uninstall-Hookah } else { Install-Hookah }

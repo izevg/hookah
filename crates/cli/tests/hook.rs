@@ -237,7 +237,10 @@ fn plugin_opencode_prints_the_embedded_source() {
     let out = run(&["plugin", "opencode"], "");
     assert_eq!(out.status.code(), Some(0));
     let source = String::from_utf8_lossy(&out.stdout);
-    assert_eq!(source, include_str!("../../harness/src/opencode/plugin.ts"));
+    assert_eq!(
+        source,
+        include_str!("../../harness/src/plugins/opencode/plugin.ts")
+    );
     assert!(run(&["plugin", "nonsense"], "").status.code() != Some(0));
 }
 

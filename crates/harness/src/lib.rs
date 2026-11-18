@@ -4,20 +4,17 @@
 //! outcome into the response that harness understands (exit code, stdout, stderr, JSON). No
 //! business logic lives here.
 //!
-//! - Command hooks: [`claude`], [`codex`], [`kimi`], [`qoder`], [`cursor`].
-//! - Plugins: [`opencode`] (a TypeScript plugin that calls the `hookah` binary), [`orca`].
-//! - Extensions: [`plugins::pi`] (Pi: a TypeScript extension that calls the `hookah` binary).
-//! - Plugins: [`plugins::openclaw`] (OpenClaw: a JavaScript plugin that calls the `hookah` binary).
+//! - Command hooks ([`hooks`]): [`claude`], [`codex`], [`kimi`], [`qoder`], [`cursor`].
+//! - Code plugins and extensions ([`plugins`]): [`opencode`] (a TypeScript plugin), [`orca`],
+//!   [`pi`] (a TypeScript extension), [`openclaw`] (a JavaScript plugin), [`hermes`] (a Python
+//!   plugin). Each one calls the `hookah` binary.
 
-pub mod claude;
-pub mod codex;
-pub mod cursor;
-pub mod kimi;
-pub mod opencode;
-pub mod orca;
+pub mod hooks;
 pub mod plugins;
 pub mod protocol;
-pub mod qoder;
+
+pub use hooks::{claude, codex, cursor, kimi, qoder};
+pub use plugins::{hermes, openclaw, opencode, orca, pi};
 
 #[cfg(test)]
 mod testing;

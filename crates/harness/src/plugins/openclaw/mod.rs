@@ -4,12 +4,12 @@
 //! JavaScript plugin ([`PLUGIN_SOURCE`], with its [`MANIFEST`]) that runs inside OpenClaw, calls
 //! `hookah hook openclaw`, and exchanges one versioned JSON document each way. The wire contract
 //! is the same as opencode's, so this adapter reuses its payload and response (see
-//! [`crate::opencode::payload`] and [`crate::opencode::response`]). See
+//! [`crate::plugins::opencode::payload`] and [`crate::plugins::opencode::response`]). See
 //! `docs/setup/assistants/openclaw.md`.
 
 use hookah_application::Outcome;
 
-use crate::opencode::{payload, response};
+use crate::plugins::opencode::{payload, response};
 use crate::protocol::{Harness, Invocation, PayloadError, Response};
 
 /// The plugin entry point, printed by `hookah plugin openclaw`.

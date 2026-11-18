@@ -168,7 +168,7 @@ it to `hookah` as `already_continuing`:
    plugin only warns, and clears the flag. If it passes, the flag is cleared silently.
 3. The turn after that starts with a clean flag.
 
-The decision lives in `hookah` (`crates/harness/src/opencode/response.rs`, shared with opencode);
+The decision lives in `hookah` (`crates/harness/src/plugins/opencode/response.rs`, shared with opencode);
 the plugin only keeps the flag. A session with no file edit since its last check is not checked,
 so plain chat turns cost nothing. OpenClaw also bounds revisions itself (one extra pass for the
 plugin's idempotency key).

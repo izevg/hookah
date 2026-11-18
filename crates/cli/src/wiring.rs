@@ -3,6 +3,7 @@
 //! The only place that builds concrete adapters and connects them to the application ports.
 //! All construction lives in [`build`], so swapping an adapter touches one line.
 
+use hookah_adapters::config::env::{Host, ProjectEnvRunner};
 use hookah_adapters::ecosystems::Ecosystems;
 use hookah_adapters::fs::{FileHasher, FsLocator};
 use hookah_adapters::process::{BackgroundSpawner, ProcessRunner};
@@ -16,7 +17,7 @@ use hookah_domain::light::Budgets;
 pub struct Adapters {
     locator: FsLocator,
     detector: Ecosystems,
-    runner: ProcessRunner,
+    runner: ProjectEnvRunner<ProcessRunner>,
     changes: GitChanges,
     hasher: FileHasher,
     baselines: FileBaselineStore,
@@ -50,7 +51,7 @@ pub fn build() -> Adapters {
     Adapters {
         locator: FsLocator::new(),
         detector: Ecosystems::from_env(),
-        runner: ProcessRunner,
+        runner: ProjectEnvRunner::new(ProcessRunner, Host::from_process()),
         changes: GitChanges::new(),
         hasher: FileHasher,
         baselines: FileBaselineStore::new(),

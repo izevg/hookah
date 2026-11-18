@@ -70,9 +70,12 @@ fn claude_project_setup_writes_hooks_pointing_at_this_binary() {
     let out = sb.ok(&["setup", "claude"]);
     let file = sb.project(".claude/settings.json");
     let written = text(&file);
+    // The command as written into JSON: forward slashes on Windows, quoted when it has spaces.
+    let program = hookah_setup::shell_program(HOOKAH);
+    let json_program = program.replace('\\', "\\\\").replace('"', "\\\"");
     assert!(
-        written.contains(&format!("{} hook claude", HOOKAH.replace('\\', "\\\\"))),
-        "{written}"
+        written.contains(&format!("{json_program} hook claude")),
+        "expected `{json_program} hook claude` in:\n{written}"
     );
     for event in ["SessionStart", "PostToolUse", "Stop", "SubagentStop"] {
         assert!(written.contains(event), "{event}");
@@ -126,7 +129,7 @@ fn existing_settings_survive_and_the_original_is_backed_up_once() {
     assert_eq!(text(&backup), original);
     let updated = text(&file);
     assert!(updated.contains("mise exec -- hookah hook claude"));
-    assert!(!updated.contains(HOOKAH));
+    assert!(!updated.contains(&hookah_setup::shell_program(HOOKAH)));
     assert_eq!(updated.matches("hook claude").count(), 4);
 }
 

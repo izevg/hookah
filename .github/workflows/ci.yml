@@ -2,7 +2,8 @@ name: ci
 
 # The same gates as AGENTS.md "Quality gates", on every push to main and every pull request.
 # Tools come from .mise.toml through mise, so that file stays the single source of truth; each job
-# installs only the tools it needs (`install_args`), because cargo-mutants compiles from source.
+# installs only the tools it needs (`install_args`), because cargo-mutants compiles from source
+# (the samples jobs need it too: scenarios 06 to 08 depend on whether it is installed).
 
 on:
   push:
@@ -63,7 +64,9 @@ jobs:
         run: cargo test --workspace --no-fail-fast
 
   # The sample runner (samples/run.sh) is a bash script that applies patches and replays hook
-  # events against Rust, Node, and Python projects. It runs on Linux and macOS only.
+  # events against Rust, Node, and Python projects. On Windows it runs under Git Bash (the runner
+  # translates paths with cygpath and sends native `C:\...` paths in the payloads) and replays
+  # the Rust samples only.
   samples:
     name: samples (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
@@ -71,19 +74,37 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
+      # The patches and expected outputs are compared byte for byte: no CRLF conversion.
+      - name: Keep line endings as they are
+        run: git config --global core.autocrlf false
       # actions/checkout v7.0.1
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       # jdx/mise-action v5.2.9
       - uses: jdx/mise-action@236a21c3b91f5db6d4e174b348674a0f0caac06d
         with:
-          install_args: rust node pnpm python uv
+          install_args: ${{ matrix.os == 'windows-latest' && 'rust cargo:cargo-mutants' || 'rust node pnpm python uv cargo:cargo-mutants' }}
       # Swatinem/rust-cache v2.9.3
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0
+      - name: Show the tools the runner uses
+        if: matrix.os == 'windows-latest'
+        run: |
+          uname -a
+          bash --version | head -n 1
+          git --version
+          cargo --version
+          jq --version
+          cygpath -w "$PWD"
       - name: Run the samples
-        # run.sh looks for mise at ~/.local/bin/mise by default.
-        run: MISE="$(command -v mise)" samples/run.sh
+        # run.sh looks for mise at ~/.local/bin/mise by default; on Windows the tools are already
+        # on PATH, so it runs them directly.
+        run: |
+          if [ "$RUNNER_OS" = Windows ]; then
+            samples/run.sh rust/
+          else
+            MISE="$(command -v mise)" samples/run.sh
+          fi
 
   # Only on pull requests: mutate what the branch changed. Any missed mutant fails the job.
   mutation:
@@ -116,4 +137,8 @@ jobs:
         run: git diff "origin/${{ github.base_ref }}...HEAD" > "$RUNNER_TEMP/pr.diff"
       - name: Mutate the changed code
         # A standard runner has 4 cores. Settings come from .cargo/mutants.toml.
-        run: cargo mutants --workspace -j 3 --iterate --in-diff "$RUNNER_TEMP/pr.diff"
+        # cargo-mutants does not create the parent of its output directory (`output` in
+        # .cargo/mutants.toml), and a fresh runner has no `target/` when the cache is empty.
+        run: |
+          mkdir -p target
+          cargo mutants --workspace -j 3 --iterate --in-diff "$RUNNER_TEMP/pr.diff"

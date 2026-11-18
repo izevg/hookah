@@ -5,7 +5,7 @@ mod render;
 
 use std::io::Write;
 
-use hookah_setup::{Env, Scope, SetupError, Target, commit, detect, plan, quote_program, snippet};
+use hookah_setup::{Env, Scope, SetupError, Target, commit, detect, plan, shell_program, snippet};
 
 use crate::args::{HarnessKind, ScopeKind, SetupArgs};
 
@@ -31,7 +31,7 @@ fn execute(args: &SetupArgs, env: &Env, exe: &str) -> Result<String, String> {
         return Ok(render::detection(&detect(env)));
     };
     let target = target(kind);
-    let program = args.command.clone().unwrap_or_else(|| quote_program(exe));
+    let program = args.command.clone().unwrap_or_else(|| shell_program(exe));
     if args.print {
         return snippet(target, &program);
     }

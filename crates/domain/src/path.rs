@@ -66,6 +66,16 @@ pub fn display_path(path: &Path, display_root: &Path) -> PathBuf {
     }
 }
 
+/// `path` as text, with `/` separators on Windows like every path of a report. For paths that are
+/// not shown relative to a root, such as the project root in `hookah detect`.
+pub fn slashed(path: &Path) -> String {
+    if cfg!(windows) {
+        forward_slashes(path).to_string_lossy().into_owned()
+    } else {
+        path.to_string_lossy().into_owned()
+    }
+}
+
 /// `path` with every `\` separator turned into `/`. Only Windows calls this: on Unix a
 /// backslash is a legal file name character.
 fn forward_slashes(path: &Path) -> PathBuf {
@@ -75,6 +85,17 @@ fn forward_slashes(path: &Path) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn slashed_changes_separators_on_windows_only() {
+        let text = slashed(Path::new(r"C:\r\a b"));
+        if cfg!(windows) {
+            assert_eq!(text, "C:/r/a b");
+        } else {
+            assert_eq!(text, r"C:\r\a b");
+        }
+        assert_eq!(slashed(Path::new("/r/a")), "/r/a");
+    }
 
     fn shown(path: &str, root: &str) -> String {
         display_path(Path::new(path), Path::new(root))

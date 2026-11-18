@@ -45,6 +45,15 @@ Comments and formatting of an existing `config.toml` are kept. Setup writes `con
 
 Then restart Codex and run `/hooks` in it to review and trust the new hooks.
 
+### Windows
+
+`hookah setup codex` writes the path of `hookah.exe` with forward slashes and quotes it when it
+contains a space, for example `"C:/Program Files/hookah/hookah.exe" hook codex`. Codex starts hook
+commands as `%COMSPEC% /C "<command>"` (`cmd.exe`; read from the Codex source, `command_runner.rs`
+in `codex-rs/hooks`), which runs a drive-qualified path written with `/` and keeps the quotes
+around a path with spaces. The hooks page also lists `commandWindows`, an optional Windows-only
+override of `command`; setup does not need it.
+
 ### Manual setup
 
 Put `hookah` at `$HOME/.local/bin/hookah`. Add this to `.codex/config.toml` in the project (or

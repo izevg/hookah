@@ -24,11 +24,17 @@ with an agent's default behavior, these rules win.
 
 After the first release, `main` is protected and changes land through pull requests.
 
-- Work on a feature branch and open a PR into `main`. **Squash merge only.** The squash commit
-  title is the PR title, and the `pr-title` check requires it to be a Conventional Commit:
-  `type(scope)!: description`, type one of `feat fix perf docs chore ci test refactor style build`.
-- Every squash merge to `main` that passes CI is versioned automatically
-  (`.github/workflows/auto-release.yml`). git-cliff reads the Conventional Commits since the last
+- Work on a feature branch and open a PR into the current integration branch,
+  `release/X.Y.Z`. **Squash merge only.** The squash commit title is the PR title, and the
+  `pr-title` check requires it to be a Conventional Commit: `type(scope)!: description`, type one
+  of `feat fix perf docs chore ci test refactor style build`.
+- When the release is ready, open a PR from `release/X.Y.Z` into `main` and merge it with
+  **rebase**, not squash and not a merge commit. That keeps every squashed conventional commit on
+  `main`, the history stays linear, and auto-release computes the version from all of them at
+  once.
+- A hotfix may still go straight to `main` as a feature PR, squash merged.
+- Every push to `main` that passes CI (a squash-merged hotfix, or a rebase-merged release branch)
+  is versioned automatically (`.github/workflows/auto-release.yml`). git-cliff reads the Conventional Commits since the last
   `vX.Y.Z` tag: `feat` bumps the minor, `fix` and `perf` the patch, and a `!` or a
   `BREAKING CHANGE:` footer the major, except below 1.0.0, where it bumps the minor. `docs`,
   `chore`, `ci`, `test`, `refactor`, `style`, and `build` alone release nothing. The first release
@@ -138,7 +144,7 @@ cargo test --workspace
 ```
 
 - CI (`.github/workflows/ci.yml`) runs the same gates on Linux, macOS, and Windows, plus the
-  sample runner (Linux and macOS), the rule-of-four check (`.github/scripts/rule-of-four.sh`), and
+  sample runner (Linux, macOS, and the Rust samples on Windows under Git Bash), the rule-of-four check (`.github/scripts/rule-of-four.sh`), and
   `cargo mutants --in-diff` on pull requests. A commit that fails them locally fails there too.
 - Domain and application code are unit-tested without I/O, using in-memory fakes of the ports.
 - Adapters get integration tests against fixture projects (each fixture follows the rule of

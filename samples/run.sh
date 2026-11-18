@@ -21,6 +21,23 @@ for arg in "$@"; do
   esac
 done
 
+# Git Bash (MSYS) on Windows: paths in the shell are POSIX style (`/c/Users/x`), but hookah and the
+# toolchains are native programs, and payloads must carry native paths (`C:\Users\x`) like the
+# ones Claude Code on Windows sends. `cygpath` translates; `-l` expands 8.3 short names such as
+# `RUNNER~1`, which hookah never prints because it canonicalizes paths.
+windows=0
+case "$(uname -s)" in MINGW* | MSYS* | CYGWIN*) windows=1 ;; esac
+
+# The native spelling of a POSIX path, backslashes doubled so it can sit inside a JSON string.
+native_json() { # <path>
+  local p=$1
+  if [ "$windows" = 1 ]; then
+    p=$(cygpath -w -l "$1")
+    p=${p//\\/\\\\}
+  fi
+  printf '%s' "$p"
+}
+
 # Runs a command with the repository's pinned toolchains on PATH, in the caller's directory.
 with_tools() {
   if [ -x "$mise" ]; then
@@ -35,8 +52,9 @@ if [ -z "${HOOKAH_BIN:-}" ]; then
   echo "building hookah (set HOOKAH_BIN to skip)" >&2
   with_tools cargo build --release --quiet --manifest-path "$repo/Cargo.toml" || exit 1
   HOOKAH_BIN=$repo/target/release/hookah
+  [ "$windows" = 0 ] || HOOKAH_BIN=$HOOKAH_BIN.exe
 fi
-case "$HOOKAH_BIN" in /*) ;; *) HOOKAH_BIN=$PWD/$HOOKAH_BIN ;; esac
+case "$HOOKAH_BIN" in /* | [A-Za-z]:*) ;; *) HOOKAH_BIN=$PWD/$HOOKAH_BIN ;; esac
 
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
@@ -49,18 +67,30 @@ export GIT_CONFIG_SYSTEM=/dev/null
 # Python reuses a cached .pyc when the source has the same mtime (to the second) and size, which
 # a scenario reset produces. Scenario runs never write bytecode, and resets delete it.
 export PYTHONDONTWRITEBYTECODE=1
-git_() { git -c user.name=samples -c user.email=samples@example.invalid "$@"; }
+# No line-ending conversion: the patches and expected outputs are LF, also on Windows.
+git_() { git -c user.name=samples -c user.email=samples@example.invalid -c core.autocrlf=false "$@"; }
 
 pass=0
 fail=0
 skip=0
 failed=""
 
-# Replaces the project copy path (with and without the macOS /private prefix) by <root>.
+# Replaces the project copy path (with and without the macOS /private prefix, and in every
+# spelling Windows has) by <root>, and drops carriage returns.
 normalize() { # <copy>
   local text real
   real=$work_real/${1##*/}
   text=$(cat)
+  text=${text//$'\r'/}
+  if [ "$windows" = 1 ]; then
+    local win mixed escaped
+    win=$(cygpath -w -l "$1")
+    mixed=$(cygpath -m -l "$1")
+    escaped=${win//\\/\\\\}
+    text=${text//"$escaped"/<root>}
+    text=${text//"$win"/<root>}
+    text=${text//"$mixed"/<root>}
+  fi
   text=${text//"$real"/<root>}
   text=${text//"$1"/<root>}
   printf '%s\n' "$text"
@@ -69,18 +99,25 @@ normalize() { # <copy>
 # Prints the normalized result of one hook call: exit code, stdout, stderr.
 # <session> is the session id of the payload; empty means the payload carries none.
 run_hook() { # <copy> <event-line> <out-file> <session>
-  local copy=$1 event=$2 session=$4 payload code sid=""
+  local copy=$1 event=$2 session=$4 payload code sid="" cwd file rel
+  cwd=$(native_json "$copy")
   [ -z "$session" ] || sid=$(printf '"session_id":"%s",' "$session")
   case "$event" in
     start)
-      payload=$(printf '{%s"hook_event_name":"SessionStart","source":"startup","cwd":"%s"}' "$sid" "$copy")
+      payload=$(printf '{%s"hook_event_name":"SessionStart","source":"startup","cwd":"%s"}' "$sid" "$cwd")
       ;;
     "edit "*)
-      payload=$(printf '{%s"hook_event_name":"PostToolUse","tool_name":"Edit","cwd":"%s","tool_input":{"file_path":"%s/%s"}}' \
-        "$sid" "$copy" "$copy" "${event#edit }")
+      rel=${event#edit }
+      file=$cwd/$rel
+      if [ "$windows" = 1 ]; then
+        # A native path uses one separator all the way, as the harness sends it.
+        file=$cwd\\\\${rel//\//\\\\}
+      fi
+      payload=$(printf '{%s"hook_event_name":"PostToolUse","tool_name":"Edit","cwd":"%s","tool_input":{"file_path":"%s"}}' \
+        "$sid" "$cwd" "$file")
       ;;
     stop)
-      payload=$(printf '{%s"hook_event_name":"Stop","stop_hook_active":false,"cwd":"%s"}' "$sid" "$copy")
+      payload=$(printf '{%s"hook_event_name":"Stop","stop_hook_active":false,"cwd":"%s"}' "$sid" "$cwd")
       ;;
     *)
       echo "bad event: $event" >&2

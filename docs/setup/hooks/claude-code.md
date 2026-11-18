@@ -39,6 +39,17 @@ that does not parse is refused and left untouched. `--dry-run` shows the result 
 
 Then restart Claude Code, or run `/hooks` in it to review and approve the new hooks.
 
+### Windows
+
+`hookah setup claude` writes the path of `hookah.exe` with forward slashes and quotes it when it
+contains a space, for example `C:/Users/me/AppData/Local/hookah/bin/hookah.exe hook claude`. Claude
+Code runs the `command` string through Git Bash on Windows (PowerShell only when Git Bash is not
+installed), and Git Bash treats a backslash as an escape character, so a native `C:\...` path would
+lose its separators. Windows accepts the forward slash form everywhere. Without Git Bash, a command
+that starts with a quoted path is printed by PowerShell instead of run: install Git for Windows, or
+write the command by hand with a leading `&` and `"shell": "powershell"`.
+(Source: the "Command hook fields" section of <https://code.claude.com/docs/en/hooks>.)
+
 ### Manual setup
 
 Put `hookah` on `PATH`, then add this to `.claude/settings.json` in the project (or

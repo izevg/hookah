@@ -3,7 +3,11 @@
 //! [`Ecosystems`] is the registry: it sends each [`ToolchainDetector`] call to the module of the
 //! project's ecosystem. Each module implements toolchain detection, tool-output parsing into
 //! findings, and related-test selection. Rust, Node, and Python are implemented.
+//!
+//! Rust toolchain detection goes through the detection [`cache`]: the result is kept between hook
+//! calls until one of the inputs that the Rust module declares changes.
 
+pub mod cache;
 pub mod node;
 pub mod python;
 pub mod rust;
@@ -17,32 +21,68 @@ use hookah_domain::project::{Ecosystem, Project};
 use hookah_domain::session::{ChangedLines, FileRole};
 use hookah_domain::toolchain::{MutationSelection, TestSelection, Tool, Toolchain};
 
+use cache::{CacheConfig, Origin, detect_cached};
 use node::NodeEcosystem;
 use python::PythonEcosystem;
 use rust::RustEcosystem;
 
 /// Registry of all ecosystem detectors.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct Ecosystems {
     node: NodeEcosystem,
     python: PythonEcosystem,
     rust: RustEcosystem,
+    cache: CacheConfig,
 }
 
 impl Ecosystems {
-    /// Creates the registry.
-    pub fn new() -> Self {
-        Self::default()
+    /// Creates the registry for the running process; the cache follows the environment (`HOOKAH_NO_CACHE`).
+    pub fn from_env() -> Self {
+        Self::with_cache(CacheConfig::from_env())
     }
-}
 
-impl ToolchainDetector for Ecosystems {
-    fn detect(&self, project: &Project) -> Result<Toolchain, PortError> {
+    /// Creates the registry with an explicit cache configuration.
+    pub fn with_cache(cache: CacheConfig) -> Self {
+        Self {
+            node: NodeEcosystem::new(),
+            python: PythonEcosystem::new(),
+            rust: RustEcosystem::with_cache(cache.clone()),
+            cache,
+        }
+    }
+
+    /// Like [`ToolchainDetector::detect`], and says whether the result came from the cache. Only
+    /// Rust detection is cached (it runs `cargo`, about 40 ms); Node and Python detection costs
+    /// about as much as starting the process, so caching it would add risk for no gain. To cache
+    /// another ecosystem, give it a `detection_inputs` and `derived_inputs` like Rust's and add an
+    /// arm here.
+    pub fn detect_traced(&self, project: &Project) -> Result<(Toolchain, Origin), PortError> {
+        if project.ecosystem != Ecosystem::Rust || !self.cache.enabled() {
+            return Ok((self.detect_uncached(project)?, Origin::Off));
+        }
+        detect_cached(
+            &self.cache,
+            project,
+            &self.rust.detection_inputs(project),
+            || {
+                let toolchain = self.detect_uncached(project)?;
+                Ok((toolchain, self.rust.derived_inputs(project)))
+            },
+        )
+    }
+
+    fn detect_uncached(&self, project: &Project) -> Result<Toolchain, PortError> {
         match project.ecosystem {
             Ecosystem::Rust => self.rust.detect(project),
             Ecosystem::Node => self.node.detect(project),
             Ecosystem::Python => self.python.detect(project),
         }
+    }
+}
+
+impl ToolchainDetector for Ecosystems {
+    fn detect(&self, project: &Project) -> Result<Toolchain, PortError> {
+        self.detect_traced(project).map(|(toolchain, _)| toolchain)
     }
 
     fn classify(&self, project: &Project, file: &Path, changed: &ChangedLines) -> FileRole {
@@ -114,7 +154,7 @@ mod tests {
 
     #[test]
     fn python_projects_go_to_the_python_adapter() {
-        let reg = Ecosystems::new();
+        let reg = Ecosystems::from_env();
         let p = project(Ecosystem::Python);
         let changed = ChangedLines::All;
         assert_eq!(
@@ -125,5 +165,24 @@ mod tests {
             reg.classify(&p, Path::new("/r/pkg/a.py"), &changed),
             FileRole::Source
         );
+    }
+
+    #[test]
+    fn node_and_python_detection_is_never_cached() {
+        use crate::ecosystems::node::detect::package::scratch::Scratch;
+
+        let dir = std::env::temp_dir().join(format!("hookah-reg-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let reg = Ecosystems::with_cache(CacheConfig::from_lookup(|_| None).in_dir(dir.clone()));
+        let s = Scratch::new();
+        s.write("package.json", "{}");
+        let p = Project {
+            root: s.path(""),
+            ecosystem: Ecosystem::Node,
+            manifests: vec![],
+        };
+        assert_eq!(reg.detect_traced(&p).unwrap().1, Origin::Off);
+        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 0);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -2,8 +2,10 @@
 //!
 //! [`RustEcosystem`] implements [`ToolchainDetector`] for Cargo projects: `rustfmt` for format,
 //! `clippy` for lint, and `cargo test` for tests, and `cargo-mutants` (when installed) for mutation testing, all scoped to the package that owns the
-//! project's `Cargo.toml`. `cargo metadata` results are cached per project root for the lifetime
-//! of the adapter, so one hook call runs it once.
+//! project's `Cargo.toml`. `cargo metadata` results are cached per project root: in memory for the
+//! lifetime of the adapter, so one hook call runs it once, and on disk between hook calls while
+//! the manifests, the lockfile, and the toolchain pins are unchanged (see
+//! [`cache`](crate::ecosystems::cache)).
 
 pub mod detect;
 pub mod mutants;
@@ -21,21 +23,41 @@ use hookah_domain::project::Project;
 use hookah_domain::session::{ChangedLines, FileRole};
 use hookah_domain::toolchain::{MutationSelection, TestSelection, Tool, Toolchain};
 
+use crate::ecosystems::cache::{CacheConfig, Input, cached};
 use crate::process::ProcessRunner;
 use detect::PackageInfo;
 use parse::Paths;
 
 /// Detector for Cargo projects.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct RustEcosystem {
     runner: ProcessRunner,
     cache: Mutex<HashMap<PathBuf, Option<PackageInfo>>>,
+    config: CacheConfig,
 }
 
 impl RustEcosystem {
-    /// Creates the detector.
-    pub fn new() -> Self {
-        Self::default()
+    /// Creates the detector with the on-disk `cargo metadata` cache configured by `config`.
+    pub fn with_cache(config: CacheConfig) -> Self {
+        Self {
+            runner: ProcessRunner,
+            cache: Mutex::new(HashMap::new()),
+            config,
+        }
+    }
+
+    /// The inputs of [`ToolchainDetector::detect`] for `project`, see
+    /// [`detect::detection_inputs`].
+    pub fn detection_inputs(&self, project: &Project) -> Vec<Input> {
+        detect::detection_inputs(&project.root, &self.config.path_dirs())
+    }
+
+    /// The inputs that only `cargo metadata` can name, known once detection ran.
+    pub fn derived_inputs(&self, project: &Project) -> Vec<Input> {
+        match self.info(&project.root) {
+            Ok(Some(info)) => detect::derived_inputs(&info),
+            _ => vec![],
+        }
     }
 
     fn info(&self, root: &Path) -> Result<Option<PackageInfo>, PortError> {
@@ -46,7 +68,20 @@ impl RustEcosystem {
         if let Some(hit) = cache.get(root) {
             return Ok(hit.clone());
         }
-        let info = detect::package_info(&self.runner, root)?;
+        let (info, _) = cached(
+            &self.config,
+            root,
+            "metadata.json",
+            &detect::manifest_inputs(root),
+            || {
+                let info = detect::package_info(&self.runner, root)?;
+                let derived = info
+                    .as_ref()
+                    .map(detect::derived_inputs)
+                    .unwrap_or_default();
+                Ok((info, derived))
+            },
+        )?;
         cache.insert(root.to_path_buf(), info.clone());
         Ok(info)
     }

@@ -71,6 +71,47 @@ The `cli` crate is the composition root: `wiring.rs` builds the real adapters
 (`FsLocator`, `Ecosystems`, `ProcessRunner`, `GitChanges`, `FileHasher`) and hands them to the
 use cases as `Ports`.
 
+## Detection cache
+
+Every hook call is a fresh process, so Rust toolchain detection (`cargo metadata`,
+`cargo mutants --version`, about 40 ms) would repeat on every edit. The `ecosystems::cache` module
+of the `adapters` crate keeps its results between calls. It is a decorator inside the
+`Ecosystems` registry: `ToolchainDetector::detect` goes through it, and `hookah detect` prints
+whether the result was a `hit`, a `miss`, or `off`.
+
+**Only Rust is cached.** Node and Python detection reads a few small files and takes about 3 ms,
+as much as starting the process, so caching it would add stale-cache risk for no gain. Node and
+Python detect directly on every call (`hookah detect` says `cache: off` for them). The module is
+generic: to cache another ecosystem, give it `detection_inputs` and `derived_inputs` functions
+like Rust's and add an arm in `Ecosystems::detect_traced`.
+
+- **Key**: project root plus ecosystem, one file per ecosystem in the project cache directory
+  (`detect-rust.json`). The entry stores its root and is a miss when the root differs, so two
+  copies of a project never share a result.
+- **Value**: the detected `Toolchain` (tools with their command specs, and the missing tools),
+  as JSON through a mirror type in `cache/codec.rs`; the domain stays free of serialization.
+  `metadata.json` holds the `cargo metadata` result, the most expensive step. It is used by every
+  use case that needs the package, not only by detection.
+- **Validity**: a fingerprint over the *detection inputs*, hookah's version, and the values of
+  `PATH`, `RUSTUP_TOOLCHAIN`, and `CARGO_HOME`. An input is observed by existence, modification
+  time, and size, never by content; a directory input covers the names of its subdirectories.
+  The fingerprint is taken before detection runs and stored only if the inputs did not move
+  while it ran.
+- **Inputs** (in `rust/detect.rs`) are chosen conservatively: when unsure whether something
+  matters, it is listed, because a false hit that hides a newly installed tool is worse than a
+  miss. In the package directory and every ancestor: `Cargo.toml`, `Cargo.lock`,
+  `rust-toolchain*`, `.mise.toml`, `mise.toml`, `.tool-versions`, `.cargo/config*`. Also `cargo`
+  and `cargo-mutants` in each `PATH` directory, and the `tests` directory. Derived from
+  `cargo metadata` and stored in the entry: the manifest of every workspace member and the
+  directories holding them, so a new member is noticed.
+- **Failure handling**: the cache never gets in the way. A missing, corrupt, or other-schema
+  file is a miss and is rewritten. Writes go to a temporary file and are renamed into place;
+  a failed write, an unwritable directory, or an unresolvable cache location is ignored and
+  the result is computed as without a cache. Errors of detection are never cached.
+- **Known limits**: a change that keeps both the size and the modification time of a file is
+  not seen, and Rust's "crate has tests" hint reads `#[test]` in `src/`, which is not watched.
+- **Escape hatch**: `HOOKAH_NO_CACHE=1` switches the cache off, see `configuration.md`.
+
 ## Baseline
 
 Post-MVP. Until then the changed-lines filter stands in for a baseline. Fingerprints will be

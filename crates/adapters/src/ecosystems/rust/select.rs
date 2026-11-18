@@ -51,6 +51,7 @@ mod tests {
             edition: "2024".into(),
             workspace_root: "/ws".into(),
             dependents: vec!["app".into()],
+            members: vec![],
         }
     }
 

@@ -6,6 +6,7 @@
 use std::io::IsTerminal;
 use std::path::Path;
 
+use hookah_adapters::ecosystems::cache::Origin;
 use hookah_application::Outcome;
 use hookah_domain::project::Project;
 use hookah_domain::toolchain::Toolchain;
@@ -68,12 +69,15 @@ pub fn outcome(style: Style, path: &Path, outcome: &Outcome) -> String {
 }
 
 /// Renders the located project and its toolchain.
-pub fn detection(style: Style, project: Option<(&Project, &Toolchain)>) -> String {
-    let Some((project, toolchain)) = project else {
+///
+/// The `cache:` line says whether the toolchain came from the detection cache (`hit`), was
+/// computed and stored (`miss`), or was computed with the cache switched off (`off`).
+pub fn detection(style: Style, project: Option<(&Project, &Toolchain, Origin)>) -> String {
+    let Some((project, toolchain, origin)) = project else {
         return "no project found\n".into();
     };
     let mut out = format!(
-        "project: {}\necosystem: {}\n",
+        "project: {}\necosystem: {}\ncache: {origin}\n",
         project.root.display(),
         project.ecosystem.name()
     );
@@ -124,6 +128,29 @@ mod tests {
     fn color_wraps_in_ansi() {
         let s = Style { color: true };
         assert_eq!(s.paint("32", "ok"), "\x1b[32mok\x1b[0m");
+    }
+
+    #[test]
+    fn detection_names_the_origin_of_the_toolchain() {
+        use hookah_domain::project::Ecosystem;
+
+        let project = Project {
+            root: "/r".into(),
+            ecosystem: Ecosystem::Rust,
+            manifests: vec![],
+        };
+        let toolchain = Toolchain::default();
+        for (origin, line) in [
+            (Origin::Hit, "cache: hit\n"),
+            (Origin::Miss, "cache: miss\n"),
+            (Origin::Off, "cache: off\n"),
+        ] {
+            let text = detection(Style::plain(), Some((&project, &toolchain, origin)));
+            assert!(
+                text.starts_with(&format!("project: /r\necosystem: rust\n{line}")),
+                "{text}"
+            );
+        }
     }
 
     #[test]

@@ -74,9 +74,20 @@ impl Fixture {
 
     /// Runs `hookah` in the crate root.
     fn hookah(&self, args: &[&str], stdin: &str) -> Output {
+        self.hookah_with(args, stdin, &[])
+    }
+
+    /// Runs `hookah` in the crate root with extra environment variables. The detection cache
+    /// lives under the target directory, not in the user's cache.
+    fn hookah_with(&self, args: &[&str], stdin: &str, env: &[(&str, &str)]) -> Output {
         let mut child = Command::new(env!("CARGO_BIN_EXE_hookah"))
             .args(args)
             .current_dir(&self.root)
+            .env(
+                "XDG_CACHE_HOME",
+                Path::new(env!("CARGO_TARGET_TMPDIR")).join("xdg-cache"),
+            )
+            .envs(env.iter().copied())
             .env("GIT_CONFIG_GLOBAL", "/dev/null")
             .env("GIT_CONFIG_NOSYSTEM", "1")
             .stdin(Stdio::piped())
@@ -272,4 +283,32 @@ fn detect_prints_the_crate_and_its_tools() {
     for tool in ["rustfmt", "clippy", "cargo-test"] {
         assert!(text.contains(tool), "{text}");
     }
+}
+
+#[test]
+fn detect_says_whether_the_toolchain_came_from_the_cache() {
+    let f = Fixture::new("detect-cache", CLEAN_LIB);
+    let cache_line = |out: &Output| {
+        stdout(out)
+            .lines()
+            .find(|l| l.starts_with("cache: "))
+            .map(str::to_owned)
+            .unwrap_or_default()
+    };
+    let detect = |env: &[(&str, &str)]| f.hookah_with(&["detect", "src/lib.rs"], "", env);
+    assert_eq!(cache_line(&detect(&[])), "cache: miss");
+    let warm = detect(&[]);
+    assert_eq!(cache_line(&warm), "cache: hit");
+    assert!(stdout(&warm).contains("clippy"));
+    assert_eq!(
+        cache_line(&detect(&[("HOOKAH_NO_CACHE", "1")])),
+        "cache: off"
+    );
+    // Editing the manifest invalidates the entry.
+    f.write(
+        "Cargo.toml",
+        "[package]\nname = \"fixture\"\nversion = \"0.2.0\"\nedition = \"2024\"\n\n[workspace]\n",
+    );
+    assert_eq!(cache_line(&detect(&[])), "cache: miss");
+    assert_eq!(cache_line(&detect(&[])), "cache: hit");
 }

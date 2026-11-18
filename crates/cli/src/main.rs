@@ -103,9 +103,12 @@ fn detect(path: &Path) -> i32 {
         print_out(&render::detection(style, None));
         return 0;
     };
-    match ports.detector.detect(&project) {
-        Ok(toolchain) => {
-            print_out(&render::detection(style, Some((&project, &toolchain))));
+    match adapters.detector().detect_traced(&project) {
+        Ok((toolchain, origin)) => {
+            print_out(&render::detection(
+                style,
+                Some((&project, &toolchain, origin)),
+            ));
             0
         }
         Err(e) => {

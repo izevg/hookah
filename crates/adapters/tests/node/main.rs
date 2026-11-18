@@ -17,6 +17,7 @@ use std::os::unix::fs::{PermissionsExt, symlink};
 use std::path::{Path, PathBuf};
 
 use hookah_adapters::ecosystems::Ecosystems;
+use hookah_adapters::ecosystems::cache::CacheConfig;
 use hookah_adapters::process::ProcessRunner;
 use hookah_adapters::store::cache_dir::project_cache_dir;
 use hookah_application::ports::{CheckRunner, ToolchainDetector};
@@ -79,7 +80,7 @@ fn check(
     name: &str,
     targets: &[&str],
 ) -> Result<Vec<Finding>, hookah_application::error::PortError> {
-    let eco = Ecosystems::new();
+    let eco = Ecosystems::with_cache(CacheConfig::disabled());
     let toolchain = eco.detect(project).unwrap();
     let tool = toolchain
         .tools()
@@ -143,7 +144,7 @@ fn hermetic_lint_typecheck_and_test_through_fake_bins() {
     assert_eq!(at(&types[0]), "src/a.ts:6:14");
     assert_eq!(types[0].severity, Severity::Error);
 
-    let eco = Ecosystems::new();
+    let eco = Ecosystems::with_cache(CacheConfig::disabled());
     let changed = [s.0.join("src/a.ts")];
     let TestSelection::Targets(targets) = eco.select_tests(&project, &changed).unwrap() else {
         panic!("expected targets");
@@ -170,7 +171,7 @@ fn crashing_and_missing_tools_never_pass_silently() {
     s.write("package.json", r#"{"devDependencies":{"typescript":"5"}}"#);
     s.write("tsconfig.json", "{}\n");
     assert!(
-        Ecosystems::new()
+        Ecosystems::with_cache(CacheConfig::disabled())
             .detect(&s.project())
             .unwrap()
             .tools()
@@ -186,7 +187,7 @@ fn roles_mutation_targets_and_missing_stryker() {
     s.write("src/foo.ts", "export const x = 1;\n");
     let test = s.write("src/foo.test.ts", "");
     let project = s.project();
-    let eco = Ecosystems::new();
+    let eco = Ecosystems::with_cache(CacheConfig::disabled());
 
     assert_eq!(
         eco.classify(&project, &test, &ChangedLines::All),

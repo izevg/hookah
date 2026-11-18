@@ -19,6 +19,11 @@ pub struct Adapters {
 }
 
 impl Adapters {
+    /// The ecosystem registry itself, for `hookah detect` to ask where a result came from.
+    pub fn detector(&self) -> &Ecosystems {
+        &self.detector
+    }
+
     /// The ports the use cases take.
     pub fn ports(&self) -> Ports<'_> {
         Ports {
@@ -35,7 +40,7 @@ impl Adapters {
 pub fn build() -> Adapters {
     Adapters {
         locator: FsLocator::new(),
-        detector: Ecosystems::new(),
+        detector: Ecosystems::from_env(),
         runner: ProcessRunner,
         changes: GitChanges::new(),
         hasher: FileHasher,

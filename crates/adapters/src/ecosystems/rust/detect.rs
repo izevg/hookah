@@ -25,9 +25,11 @@ use std::time::Duration;
 use hookah_application::error::PortError;
 use hookah_application::ports::CheckRunner;
 use hookah_domain::toolchain::{Arg, CheckKind, CommandSpec, Tool, Toolchain};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use super::parse::tail;
+use crate::ecosystems::cache::Input;
+use crate::ecosystems::cache::fingerprint::{executables_in, files_in};
 
 /// Name of the formatter tool.
 pub const RUSTFMT: &str = "rustfmt";
@@ -42,7 +44,7 @@ const LINT_TIMEOUT: Duration = Duration::from_secs(120);
 const TEST_TIMEOUT: Duration = Duration::from_secs(300);
 
 /// What `cargo metadata` says about the package at a project root.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PackageInfo {
     /// Package name.
     pub name: String,
@@ -52,6 +54,8 @@ pub struct PackageInfo {
     pub workspace_root: PathBuf,
     /// Names of workspace members that depend on this package by path.
     pub dependents: Vec<String>,
+    /// Manifests of all workspace members, the package itself included.
+    pub members: Vec<PathBuf>,
 }
 
 #[derive(Deserialize)]
@@ -136,7 +140,64 @@ pub fn parse_metadata(json: &str, manifest: &Path) -> Result<Option<PackageInfo>
         edition: pkg.edition.clone(),
         workspace_root: canonical(&meta.workspace_root),
         dependents,
+        members: meta
+            .packages
+            .iter()
+            .map(|p| canonical(&p.manifest_path))
+            .collect(),
     }))
+}
+
+/// Files, looked up in the project directory and every ancestor, that decide what `cargo` and the
+/// toolchain behind it do: manifests and the lockfile, toolchain pins, and `cargo` configuration.
+const CONFIG_FILES: &[&str] = &[
+    "Cargo.toml",
+    "Cargo.lock",
+    "rust-toolchain",
+    "rust-toolchain.toml",
+    ".mise.toml",
+    "mise.toml",
+    ".tool-versions",
+    ".cargo/config.toml",
+    ".cargo/config",
+];
+
+/// Executables whose presence on `PATH` changes the result: `cargo` itself and `cargo-mutants`.
+const PATH_TOOLS: &[&str] = &["cargo", "cargo-mutants"];
+
+/// The inputs of `cargo metadata` for the package at `root`: the configuration files of the
+/// project and its ancestors. The other workspace members are *derived* (see [`derived_inputs`]).
+pub fn manifest_inputs(root: &Path) -> Vec<Input> {
+    let dirs: Vec<PathBuf> = root.ancestors().map(Path::to_path_buf).collect();
+    files_in(&dirs, CONFIG_FILES)
+}
+
+/// The inputs of toolchain detection for the package at `root`: those of `cargo metadata`, the
+/// `cargo` and `cargo-mutants` executables in the `PATH` directories `path_dirs`, and the `tests`
+/// directory, which decides whether a missing `cargo-mutants` is worth reporting.
+pub fn detection_inputs(root: &Path, path_dirs: &[PathBuf]) -> Vec<Input> {
+    let mut inputs = manifest_inputs(root);
+    inputs.extend(executables_in(path_dirs, PATH_TOOLS));
+    inputs.push(Input::Exists(root.join("tests")));
+    inputs
+}
+
+/// The inputs only `cargo metadata` can name: the manifest of every workspace member, and the
+/// directories that hold the members, so that a new member (as in `crates/*`) is noticed.
+pub fn derived_inputs(info: &PackageInfo) -> Vec<Input> {
+    let mut inputs: Vec<Input> = info.members.iter().cloned().map(Input::File).collect();
+    for member_dir in info.members.iter().filter_map(|m| m.parent()) {
+        if member_dir == info.workspace_root {
+            continue;
+        }
+        if let Some(parent) = member_dir.parent() {
+            let dirs = Input::Dirs(parent.to_path_buf());
+            if !inputs.contains(&dirs) {
+                inputs.push(dirs);
+            }
+        }
+    }
+    inputs
 }
 
 /// Builds the toolchain of the package at `root`.
@@ -255,6 +316,7 @@ mod tests {
             edition: "2024".into(),
             workspace_root: "/ws".into(),
             dependents: vec![],
+            members: vec![],
         };
         let tc = toolchain(&info, Path::new("/ws/crates/core"));
         let argv = |i: usize| tc.tools()[i].command.expand_args(&["X".into()]);
@@ -304,5 +366,100 @@ mod tests {
         assert_eq!(tc.tools()[1].command.timeout, Duration::from_secs(120));
         assert_eq!(tc.tools()[2].command.timeout, Duration::from_secs(300));
         assert_eq!(tc.tools()[2].command.cwd, Path::new("/ws/crates/core"));
+    }
+
+    #[test]
+    fn metadata_inputs_cover_the_configuration_of_every_ancestor() {
+        let inputs = manifest_inputs(Path::new("/ws/crates/app"));
+        for dir in ["/ws/crates/app", "/ws/crates", "/ws", "/"] {
+            for name in CONFIG_FILES {
+                assert!(
+                    inputs.contains(&Input::File(Path::new(dir).join(name))),
+                    "{dir} {name}"
+                );
+            }
+        }
+        for name in [
+            "Cargo.lock",
+            "rust-toolchain.toml",
+            ".mise.toml",
+            ".cargo/config.toml",
+        ] {
+            assert!(CONFIG_FILES.contains(&name), "{name}");
+        }
+    }
+
+    #[test]
+    fn detection_inputs_add_the_path_executables_and_the_tests_directory() {
+        let path = [PathBuf::from("/usr/bin"), PathBuf::from("/opt/bin")];
+        let inputs = detection_inputs(Path::new("/ws/app"), &path);
+        let base = manifest_inputs(Path::new("/ws/app"));
+        assert!(inputs.starts_with(&base));
+        for dir in ["/usr/bin", "/opt/bin"] {
+            for name in ["cargo", "cargo-mutants"] {
+                assert!(inputs.contains(&Input::File(Path::new(dir).join(name))));
+            }
+        }
+        assert_eq!(
+            inputs.last(),
+            Some(&Input::Exists(Path::new("/ws/app").join("tests")))
+        );
+        assert!(!base.contains(&Input::Exists(Path::new("/ws/app").join("tests"))));
+    }
+
+    #[test]
+    fn derived_inputs_are_the_members_and_their_parent_directories() {
+        let info = PackageInfo {
+            name: "a".into(),
+            edition: "2024".into(),
+            workspace_root: "/ws".into(),
+            dependents: vec![],
+            members: vec![
+                "/ws/Cargo.toml".into(),
+                "/ws/crates/a/Cargo.toml".into(),
+                "/ws/crates/b/Cargo.toml".into(),
+                "/ws/tools/c/Cargo.toml".into(),
+            ],
+        };
+        let want: Vec<Input> = [
+            Input::File("/ws/Cargo.toml".into()),
+            Input::File("/ws/crates/a/Cargo.toml".into()),
+            Input::File("/ws/crates/b/Cargo.toml".into()),
+            Input::File("/ws/tools/c/Cargo.toml".into()),
+            Input::Dirs("/ws/crates".into()),
+            Input::Dirs("/ws/tools".into()),
+        ]
+        .into();
+        assert_eq!(derived_inputs(&info), want);
+        // The workspace root itself has no sibling directories worth watching.
+        assert!(!derived_inputs(&info).contains(&Input::Dirs("/".into())));
+    }
+
+    #[test]
+    fn package_info_records_every_workspace_member() {
+        let core = parse_metadata(META, Path::new("/ws/crates/core/Cargo.toml"))
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            core.members,
+            [
+                PathBuf::from("/ws/crates/app/Cargo.toml"),
+                PathBuf::from("/ws/crates/core/Cargo.toml")
+            ]
+        );
+    }
+
+    #[test]
+    fn package_info_survives_a_json_round_trip() {
+        let core = parse_metadata(META, Path::new("/ws/crates/core/Cargo.toml"))
+            .unwrap()
+            .unwrap();
+        let json = serde_json::to_string(&Some(&core)).unwrap();
+        let back: Option<PackageInfo> = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, Some(core));
+        assert_eq!(
+            serde_json::from_str::<Option<PackageInfo>>("null").unwrap(),
+            None
+        );
     }
 }

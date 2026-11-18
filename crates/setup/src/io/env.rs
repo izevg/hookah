@@ -27,7 +27,7 @@ impl Scope {
     /// The scope used when none is given: the project's, except where only a user config exists.
     pub fn default_for(target: Target) -> Self {
         match target {
-            Target::Kimi | Target::Hermes => Self::User,
+            Target::Kimi | Target::Hermes | Target::Openclaw => Self::User,
             _ => Self::Project,
         }
     }
@@ -45,6 +45,9 @@ pub struct Env {
     pub xdg_config: Option<PathBuf>,
     /// `PI_CODING_AGENT_DIR` (Pi's config directory), when set and not empty.
     pub pi_agent_dir: Option<PathBuf>,
+    /// OpenClaw's state directory when the environment moves it: `OPENCLAW_STATE_DIR`, else
+    /// `OPENCLAW_HOME/.openclaw`. `None` means `~/.openclaw`.
+    pub openclaw_state: Option<PathBuf>,
     /// The directories of `PATH`.
     pub path: Vec<PathBuf>,
     /// Hermes's home directory when the environment names it: `HERMES_HOME`, else on Windows
@@ -64,6 +67,8 @@ impl Env {
         "HERMES_HOME",
         "LOCALAPPDATA",
         "PI_CODING_AGENT_DIR",
+        "OPENCLAW_STATE_DIR",
+        "OPENCLAW_HOME",
     ];
 
     /// Reads the real process environment.
@@ -82,6 +87,9 @@ impl Env {
                 .map(PathBuf::from),
             xdg_config: var("XDG_CONFIG_HOME").map(PathBuf::from),
             pi_agent_dir: var("PI_CODING_AGENT_DIR").map(PathBuf::from),
+            openclaw_state: var("OPENCLAW_STATE_DIR")
+                .map(PathBuf::from)
+                .or_else(|| var("OPENCLAW_HOME").map(|h| PathBuf::from(h).join(".openclaw"))),
             path: var("PATH")
                 .map(|p| std::env::split_paths(&p).collect())
                 .unwrap_or_default(),
@@ -109,6 +117,14 @@ impl Env {
         }
     }
 
+    /// OpenClaw's state directory: [`Env::openclaw_state`], else `~/.openclaw`.
+    fn openclaw_dir(&self) -> Result<PathBuf, SetupError> {
+        match &self.openclaw_state {
+            Some(dir) => Ok(dir.clone()),
+            None => Ok(self.home()?.join(".openclaw")),
+        }
+    }
+
     /// Pi's user config directory: `$PI_CODING_AGENT_DIR`, else `~/.pi/agent`.
     fn pi_dir(&self) -> Result<PathBuf, SetupError> {
         match &self.pi_agent_dir {
@@ -123,6 +139,7 @@ impl Env {
             Target::Opencode => self.opencode_dir().ok(),
             Target::Hermes => self.hermes_dir().ok(),
             Target::Pi => self.pi_dir().ok(),
+            Target::Openclaw => self.openclaw_dir().ok(),
             _ => self.home().ok().map(|h| h.join(dir_name(target))),
         }
     }
@@ -140,6 +157,12 @@ impl Env {
                 scope: "project",
                 hint: "Hermes loads plugins from its home directory only; use --scope user (~/.hermes)",
             }),
+            (Target::Openclaw, Scope::Project) => Err(SetupError::UnsupportedScope {
+                target: "openclaw",
+                scope: "project",
+                hint: "OpenClaw loads project plugins only from its agent workspace; use --scope user (~/.openclaw)",
+            }),
+            (Target::Openclaw, Scope::User) => Ok(self.openclaw_dir()?.join(OPENCLAW_PLUGIN_PATH)),
             (Target::Hermes, Scope::User) => Ok(self.hermes_dir()?.join("config.yaml")),
             (Target::Opencode, Scope::Project) => Ok(self.cwd.join(".opencode").join(PLUGIN_PATH)),
             (Target::Opencode, Scope::User) => Ok(self.opencode_dir()?.join(PLUGIN_PATH)),
@@ -167,6 +190,8 @@ fn hermes_home_from(
 
 const PLUGIN_PATH: &str = "plugins/hookah.ts";
 const PI_EXTENSION_PATH: &str = "extensions/hookah.ts";
+/// OpenClaw loads plugin directories from `extensions/`; its manifest sits next to this file.
+const OPENCLAW_PLUGIN_PATH: &str = "extensions/hookah/index.js";
 
 fn dir_name(target: Target) -> &'static str {
     match target {
@@ -178,6 +203,7 @@ fn dir_name(target: Target) -> &'static str {
         Target::Opencode => ".opencode",
         Target::Hermes => ".hermes",
         Target::Pi => ".pi",
+        Target::Openclaw => ".openclaw",
     }
 }
 
@@ -189,6 +215,7 @@ fn file_name(target: Target) -> &'static str {
         Target::Opencode => "plugins/hookah.ts",
         Target::Hermes => "config.yaml",
         Target::Pi => PI_EXTENSION_PATH,
+        Target::Openclaw => OPENCLAW_PLUGIN_PATH,
     }
 }
 
@@ -203,6 +230,7 @@ mod tests {
             home: Some("/h".into()),
             xdg_config: None,
             pi_agent_dir: None,
+            openclaw_state: None,
             path: vec![],
             hermes_home: None,
         }
@@ -267,6 +295,32 @@ mod tests {
             Path::new("/x/opencode/plugins/hookah.ts")
         );
         assert_eq!(e.user_dir(Target::Opencode), Some("/x/opencode".into()));
+    }
+
+    #[test]
+    fn openclaw_is_user_level_and_follows_its_state_directory() {
+        assert_eq!(
+            path(Target::Openclaw, Scope::User),
+            Path::new("/h/.openclaw/extensions/hookah/index.js")
+        );
+        assert_eq!(
+            env().user_dir(Target::Openclaw),
+            Some("/h/.openclaw".into())
+        );
+        let err = env()
+            .config_path(Target::Openclaw, Scope::Project)
+            .unwrap_err();
+        assert!(err.to_string().contains("--scope user"));
+        assert_eq!(Scope::default_for(Target::Openclaw), Scope::User);
+        let mut e = env();
+        e.openclaw_state = Some("/s".into());
+        assert_eq!(
+            e.config_path(Target::Openclaw, Scope::User).unwrap(),
+            Path::new("/s/extensions/hookah/index.js")
+        );
+        assert_eq!(e.user_dir(Target::Openclaw), Some("/s".into()));
+        e.home = None;
+        assert!(e.config_path(Target::Openclaw, Scope::User).is_ok());
     }
 
     #[test]

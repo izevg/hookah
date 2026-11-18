@@ -111,7 +111,7 @@ cli ──► harness ──► application ──► domain
   `Clock`.
 - **adapters**: implement the ports. Each ecosystem detector (`node`, `python`, `rust`) is its
   own module behind `ToolchainDetector`.
-- **harness**: Claude Code, Codex CLI, Cursor, opencode, Kimi Code, Qoder, and Orca. Each one translates
+- **harness**: Claude Code, Codex CLI, Cursor, opencode, OpenClaw, Kimi Code, Qoder, and Orca. Each one translates
   that harness's hook protocol into a use-case call and a harness-specific response (exit codes,
   stdout/stderr, JSON). No business logic here.
 - **cli**: argument parsing, config loading, wiring. No business logic here either.

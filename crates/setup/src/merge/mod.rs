@@ -15,6 +15,9 @@ pub(crate) mod yaml;
 
 use hookah_harness::opencode::PLUGIN_SOURCE;
 use hookah_harness::plugins::hermes::{PLUGIN_MANIFEST, PLUGIN_SOURCE as HERMES_PLUGIN_SOURCE};
+use hookah_harness::plugins::openclaw::{
+    MANIFEST as OPENCLAW_MANIFEST, PLUGIN_SOURCE as OPENCLAW_PLUGIN_SOURCE,
+};
 use hookah_harness::plugins::pi::PLUGIN_SOURCE as PI_PLUGIN_SOURCE;
 
 use crate::target::Target;
@@ -34,18 +37,20 @@ pub fn merge(target: Target, existing: Option<&str>, program: &str) -> Result<St
         Target::Opencode => Ok(PLUGIN_SOURCE.to_owned()),
         Target::Hermes => yaml::merge(existing),
         Target::Pi => Ok(PI_PLUGIN_SOURCE.to_owned()),
+        Target::Openclaw => Ok(OPENCLAW_PLUGIN_SOURCE.to_owned()),
     }
 }
 
 /// The files `target` needs besides its config file: `(path relative to the harness's user
-/// directory, content)`. Only Hermes has any: its plugin is a directory with a manifest, and
-/// the config file merely enables it.
+/// directory, content)`. Hermes has its plugin directory (the config file merely enables it),
+/// and OpenClaw its plugin manifest next to the entry point.
 pub fn companions(target: Target) -> &'static [(&'static str, &'static str)] {
     match target {
         Target::Hermes => &[
             ("plugins/hookah/plugin.yaml", PLUGIN_MANIFEST),
             ("plugins/hookah/__init__.py", HERMES_PLUGIN_SOURCE),
         ],
+        Target::Openclaw => &[("extensions/hookah/openclaw.plugin.json", OPENCLAW_MANIFEST)],
         _ => &[],
     }
 }

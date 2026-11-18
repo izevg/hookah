@@ -263,3 +263,39 @@ fn check_passes_when_nothing_is_wrong() {
 fn bad_check_arguments_exit_nonzero() {
     assert_ne!(run(&["check"], "").status.code(), Some(0));
 }
+
+#[test]
+fn openclaw_speaks_the_plugin_contract_and_fails_open() {
+    let out = run(&["hook", "openclaw"], "not json at all");
+    assert_eq!(out.status.code(), Some(0));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("hookah: warning"));
+    let stale = r#"{"v":9,"event":"edit","cwd":"/nonexistent","files":["a.ts"]}"#;
+    let out = run(&["hook", "openclaw"], stale);
+    assert_eq!(out.status.code(), Some(0));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("hookah plugin openclaw"));
+    let quiet = r#"{"v":1,"block":false}"#;
+    let edit = format!(
+        r#"{{"v":1,"event":"edit","cwd":"{NOWHERE}","files":["{NOWHERE}/a.ts"],
+        "session_id":"s","already_continuing":false}}"#
+    );
+    let out = run(&["hook", "openclaw"], &edit);
+    assert_eq!(out.status.code(), Some(0));
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), quiet);
+    let start = format!(r#"{{"v":1,"event":"start","cwd":"{NOWHERE}","session_id":"s"}}"#);
+    let out = run(&["hook", "openclaw"], &start);
+    assert_eq!(out.status.code(), Some(0));
+    assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), quiet);
+}
+
+#[test]
+fn plugin_openclaw_prints_the_embedded_source_and_refuses_out() {
+    let out = run(&["plugin", "openclaw"], "");
+    assert_eq!(out.status.code(), Some(0));
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        include_str!("../../harness/src/plugins/openclaw/plugin.js")
+    );
+    let out = run(&["plugin", "openclaw", "--out", "somewhere"], "");
+    assert_eq!(out.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("hookah setup openclaw"));
+}

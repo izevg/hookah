@@ -163,6 +163,8 @@ pub enum HarnessKind {
     Hermes,
     /// Pi coding agent, through the bundled extension (`hookah plugin pi`).
     Pi,
+    /// OpenClaw, through the bundled plugin (`hookah plugin openclaw`).
+    Openclaw,
 }
 
 /// Harnesses that ship a plugin.
@@ -176,6 +178,9 @@ pub enum PluginKind {
     Hermes,
     /// The Pi TypeScript extension.
     Pi,
+    /// The OpenClaw JavaScript plugin (its entry point; `hookah setup openclaw` also writes
+    /// the manifest).
+    Openclaw,
 }
 
 #[cfg(test)]
@@ -240,6 +245,21 @@ mod tests {
             Command::Plugin {
                 harness: PluginKind::Opencode,
                 out: None
+            }
+        ));
+        let cli = Cli::try_parse_from(["hookah", "plugin", "openclaw"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Command::Plugin {
+                harness: PluginKind::Openclaw,
+                out: None
+            }
+        ));
+        let cli = Cli::try_parse_from(["hookah", "hook", "openclaw"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Command::Hook {
+                harness: HarnessKind::Openclaw
             }
         ));
         let cli = Cli::try_parse_from(["hookah", "hook", "opencode"]).unwrap();

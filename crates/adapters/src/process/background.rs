@@ -14,12 +14,15 @@
 //!
 //! With `wait`, the call blocks until the child exits; tests and the sample runner use it to get a
 //! baseline synchronously.
+//!
+//! The same detached start serves the update check, `<exe> update --background`. That one never
+//! waits: it may download a release, and a session start must not.
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use hookah_application::error::PortError;
-use hookah_application::ports::BaselineSpawner;
+use hookah_application::ports::{BaselineSpawner, UpdateError, UpdateSpawner};
 
 /// Starts baseline jobs as child processes of the `hookah` binary.
 #[derive(Debug, Clone)]
@@ -38,12 +41,19 @@ impl BackgroundSpawner {
     }
 
     fn command(&self, root: &Path, session: &str) -> Command {
-        let mut command = Command::new(&self.exe);
+        let mut command = self.detached();
         command
             .arg("baseline")
             .arg(format!("--session={session}"))
             .arg("--root")
-            .arg(root)
+            .arg(root);
+        command
+    }
+
+    /// The program with null streams, in its own process group on Unix.
+    fn detached(&self) -> Command {
+        let mut command = Command::new(&self.exe);
+        command
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null());
@@ -90,6 +100,16 @@ impl BaselineSpawner for BackgroundSpawner {
                 .map_err(|e| PortError::new(format!("cannot wait for the baseline job: {e}")))?;
         }
         Ok(())
+    }
+}
+
+impl UpdateSpawner for BackgroundSpawner {
+    fn spawn_check(&self) -> Result<(), UpdateError> {
+        let mut command = self.detached();
+        command.arg("update").arg("--background");
+        start(&mut command)
+            .map(drop)
+            .map_err(|e| UpdateError::failed(format!("cannot run {}: {e}", self.exe.display())))
     }
 }
 
@@ -182,6 +202,49 @@ mod tests {
         let (pid, pgid) = (fields.next().unwrap(), fields.next().unwrap());
         assert_eq!(pid, pgid);
         assert_eq!(fields.next(), Some("notty"));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_missing_program_fails_the_update_check_spawn() {
+        let spawner = BackgroundSpawner::new("/nonexistent/hookah", false);
+        let err = spawner.spawn_check().unwrap_err();
+        assert!(err.message().contains("/nonexistent/hookah"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_update_check_runs_detached_and_never_waits() {
+        let (dir, exe) = script(
+            "update",
+            "sleep 1; echo \"$@\" > \"$(dirname \"$0\")/args\"; ps -o pid=,pgid= -p $$ >> \"$(dirname \"$0\")/args\"",
+        );
+        // `wait` is for baselines: the update check ignores it.
+        let started = Instant::now();
+        for _ in 0..200 {
+            match BackgroundSpawner::new(&exe, true).spawn_check() {
+                Err(e) if e.message().contains("Text file busy") => {
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                other => {
+                    other.unwrap();
+                    break;
+                }
+            }
+        }
+        assert!(started.elapsed() < Duration::from_millis(800));
+        let args = dir.join("args");
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !args.exists() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        std::thread::sleep(Duration::from_millis(200));
+        let text = fs::read_to_string(&args).unwrap();
+        let mut lines = text.lines();
+        assert_eq!(lines.next(), Some("update --background"));
+        let ids = lines.next().unwrap();
+        let mut fields = ids.split_whitespace();
+        assert_eq!(fields.next(), fields.next(), "its own process group");
         let _ = fs::remove_dir_all(&dir);
     }
 }

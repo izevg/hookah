@@ -32,6 +32,7 @@ EXTERNAL = re.compile(r"^(?:[a-z][a-z0-9+.-]*:|//|#)", re.I)
 DESCRIPTIONS = {
     "README.md": "what hookah is, install commands, and a quick start",
     "setup/agents.md": "the exact procedure an agent follows to install and configure hookah",
+    "setup/update.md": "how hookah updates itself from the official releases, hookah update, opting out, and the security model",
     "setup/uninstall.md": "hookah uninstall, the manual removal per harness, and how to verify that nothing is left",
     "configuration.md": "per-project tool environment, budgets, and the cache",
     "ecosystems.md": "detection, commands, output parsing, and test selection for Rust, Node, Python, and Java",

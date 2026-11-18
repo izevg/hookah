@@ -132,6 +132,8 @@ Name things with the domain's own words, the same way in code, docs, and CLI out
   re-reads it before its next edit.
 - **No surprises.** Run only the tools the project itself configures (or `.hookah.toml` names).
   Never install anything, change the network, or write outside the project and `hookah`'s cache.
+  The one exception is the self-update of `hookah`'s own binary from the official releases
+  (`hookah update`, `docs/setup/update.md`), which downloads and replaces only that binary.
 
 ## Quality gates
 

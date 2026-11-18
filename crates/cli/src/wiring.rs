@@ -9,9 +9,16 @@ use hookah_adapters::fs::{FileHasher, FsLocator};
 use hookah_adapters::process::{BackgroundSpawner, ProcessRunner};
 use hookah_adapters::store::baseline::FileBaselineStore;
 use hookah_adapters::store::status::FileStatusStore;
+use hookah_adapters::update::SystemClock;
+use hookah_adapters::update::github::GithubReleases;
+use hookah_adapters::update::install::SelfInstaller;
+use hookah_adapters::update::settings;
+use hookah_adapters::update::store::FileUpdateStore;
 use hookah_adapters::vcs::GitChanges;
-use hookah_application::Ports;
+use hookah_application::ports::UpdatePorts;
+use hookah_application::{Ports, UpdateEnv};
 use hookah_domain::light::Budgets;
+use hookah_domain::update::{Target, Version};
 
 /// The concrete adapters, owned. Borrow them as [`Ports`] with [`Adapters::ports`].
 pub struct Adapters {
@@ -61,6 +68,84 @@ pub fn build() -> Adapters {
             foreground_baseline(),
         ),
     }
+}
+
+/// The self-update adapters, owned, with the facts about this binary and the user's wishes.
+pub struct UpdateAdapters {
+    releases: GithubReleases,
+    installer: SelfInstaller,
+    store: FileUpdateStore,
+    clock: SystemClock,
+    spawner: BackgroundSpawner,
+    /// The running version, its target, and the policy.
+    pub env: UpdateEnv,
+}
+
+impl UpdateAdapters {
+    /// The ports the update use cases take.
+    pub fn ports(&self) -> UpdatePorts<'_> {
+        UpdatePorts {
+            releases: &self.releases,
+            installer: &self.installer,
+            store: &self.store,
+            clock: &self.clock,
+            spawner: &self.spawner,
+        }
+    }
+
+    /// The installer, for housekeeping that is not a use case.
+    pub fn installer(&self) -> &SelfInstaller {
+        &self.installer
+    }
+}
+
+/// Builds the self-update adapters. The only place that decides where updates come from.
+pub fn updates() -> UpdateAdapters {
+    UpdateAdapters {
+        releases: GithubReleases::official(),
+        installer: SelfInstaller::current(),
+        store: FileUpdateStore::new(),
+        clock: SystemClock,
+        // Never waits: an update check may download a release.
+        spawner: BackgroundSpawner::new(
+            std::env::current_exe().unwrap_or_else(|_| "hookah".into()),
+            false,
+        ),
+        env: UpdateEnv {
+            current: running_version(),
+            target: running_target(),
+            policy: settings::policy(&Host::from_process()),
+        },
+    }
+}
+
+/// Debug builds only: pretend to be this version (tests of the updater).
+#[cfg(debug_assertions)]
+const TEST_VERSION_VAR: &str = "HOOKAH_UPDATE_TEST_VERSION";
+/// Debug builds only: pretend to be built for this target triple.
+#[cfg(debug_assertions)]
+const TEST_TARGET_VAR: &str = "HOOKAH_UPDATE_TEST_TARGET";
+
+/// The version this binary was built as: `0.0.0` for a build that is not a release. A debug
+/// build may be told otherwise for tests; a release build never listens.
+fn running_version() -> Version {
+    #[cfg(debug_assertions)]
+    if let Some(v) = std::env::var(TEST_VERSION_VAR)
+        .ok()
+        .and_then(|v| Version::parse(&v).ok())
+    {
+        return v;
+    }
+    Version::parse(env!("CARGO_PKG_VERSION")).unwrap_or(Version::DEV)
+}
+
+/// The release target of this binary, from the triple `build.rs` embedded.
+fn running_target() -> Option<Target> {
+    #[cfg(debug_assertions)]
+    if let Ok(triple) = std::env::var(TEST_TARGET_VAR) {
+        return Target::from_triple(&triple);
+    }
+    Target::from_triple(env!("HOOKAH_TARGET"))
 }
 
 /// Environment switch that makes the baseline job run to completion before the hook returns.
@@ -131,6 +216,24 @@ mod tests {
     fn unusable_values_keep_the_default() {
         for bad in ["", "many", "-1", "2.5"] {
             assert_eq!(from(&[(TEST_BUDGET, bad)]), Budgets::default(), "{bad:?}");
+        }
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn the_running_target_is_one_of_the_release_targets_or_none() {
+        // The target of this very build: release triples are known, others have no update.
+        let known = Target::from_triple(env!("HOOKAH_TARGET")).is_some();
+        if std::env::var_os(TEST_TARGET_VAR).is_none() {
+            assert_eq!(running_target().is_some(), known);
+        }
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn a_test_build_is_a_dev_build_unless_told_otherwise() {
+        if std::env::var_os(TEST_VERSION_VAR).is_none() {
+            assert!(running_version().is_dev());
         }
     }
 

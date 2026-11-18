@@ -200,7 +200,7 @@ pub fn rewritten_files(outcome: &Outcome) -> Vec<String> {
         .iter()
         .filter_map(|n| match n {
             Notice::FileRewritten(p) => Some(p.display().to_string()),
-            Notice::Degraded(_) | Notice::MissingTool(_) => None,
+            Notice::Degraded(_) | Notice::MissingTool(_) | Notice::Update(_) => None,
         })
         .collect()
 }
@@ -251,12 +251,13 @@ fn missing_line(t: &MissingTool) -> String {
     )
 }
 
-/// Warnings meant for the user only: degradation notices, missing tools, and a degraded verdict.
+/// Warnings meant for the user only: degradation and update notices, missing tools, and a degraded
+/// verdict.
 pub fn degraded_warnings(outcome: &Outcome) -> Vec<String> {
     let mut warnings: Vec<String> = outcome
         .notices
         .iter()
-        .filter(|n| matches!(n, Notice::Degraded(_)))
+        .filter(|n| matches!(n, Notice::Degraded(_) | Notice::Update(_)))
         .map(ToString::to_string)
         .collect();
     let missing = missing_tools(outcome);
@@ -469,5 +470,21 @@ mod tests {
             start.canonical(),
             Invocation::Start(StartRequest::new(abs("/w"), "s"))
         );
+    }
+
+    #[test]
+    fn a_session_start_warns_the_user_about_an_update_on_stderr() {
+        let mut outcome = Outcome::pass();
+        outcome
+            .notices
+            .push(Notice::Update("hookah 2.0.0 is available".into()));
+        assert_eq!(
+            degraded_warnings(&outcome),
+            ["hookah: hookah 2.0.0 is available"]
+        );
+        let response = start_response(&outcome);
+        assert_eq!(response.exit_code, 0);
+        assert!(response.stdout.is_empty());
+        assert_eq!(response.stderr, "hookah: hookah 2.0.0 is available\n");
     }
 }

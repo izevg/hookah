@@ -76,6 +76,7 @@ Rules you can rely on:
 - Running it twice is safe: the second run finds nothing and exits with code 0, as does a run where
   hookah was never installed.
 - It never touches your project's `.hookah.toml`, and it never installs anything or uses the network.
+  (hookah's self-update is the one thing that does; see [Updates](update.md).)
 
 The output is plain text, one fact per line: `removed hookah's entries from <file>`, `deleted <file>`,
 `kept <file>: <reason>`, then a `next:` line (restart the harness).
@@ -169,11 +170,16 @@ hand. Delete the backups when you are done.
 | Binary (`cargo install`) | `~/.cargo/bin/hookah` | `~/.cargo/bin/hookah` | `%USERPROFILE%\.cargo\bin\hookah.exe` |
 | `PATH` entry | none: `install.sh` prints a line to add yourself, in a shell profile you edited | same | the install directory, in the **user** `PATH`, added by `install.ps1` |
 | Cache | `$XDG_CACHE_HOME/hookah`, else `~/.cache/hookah` | `~/Library/Caches/hookah` | `%LOCALAPPDATA%\hookah\cache` |
+| Update state | `<cache>/update/` (`state.json` and a lock file) | same | same |
 
 Notes:
 
 - `HOOKAH_CACHE_DIR` (an absolute path) overrides the cache location on every OS. `--dir` or
   `HOOKAH_INSTALL_DIR` moves the binary.
+- The self-update ([Updates](update.md)) keeps its state and lock in `update/` inside the cache. On
+  Windows it may also leave `hookah.exe.old` next to the binary; the installer's uninstall does not
+  mind it, delete it if it stays. `--purge-cache` removes the `update` directory too, in a
+  `HOOKAH_CACHE_DIR` as well.
 - The cache holds one directory per project (named with 16 hexadecimal digits): finding baselines, the
   latest check status, and tool caches. It is safe to delete at any time; hookah rebuilds it.
 - `install.sh` never edits a shell profile, so on Linux and macOS there is no `PATH` entry of

@@ -14,5 +14,6 @@ pub use error::PortError;
 pub use ports::Ports;
 pub use usecases::{
     CheckEdit, CheckSession, ComputeBaseline, EditRequest, Outcome, ProjectStatus, ReadStatus,
-    StartRequest, StartSession, StopRequest,
+    RunUpdate, ScheduleUpdate, StartRequest, StartSession, StopRequest, UpdateEnv, UpdateMode,
+    UpdateReport,
 };

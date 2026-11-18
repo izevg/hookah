@@ -7,9 +7,9 @@
 //!
 //! An error is a plain reason string; the caller adds the path.
 
-mod codex;
+mod cursor;
 mod json;
-mod kimi;
+mod toml;
 
 use hookah_harness::opencode::PLUGIN_SOURCE;
 
@@ -24,8 +24,9 @@ pub fn merge(target: Target, existing: Option<&str>, program: &str) -> Result<St
     let existing = existing.filter(|text| !text.trim().is_empty());
     match target {
         Target::Claude | Target::Qoder => json::merge(target, existing, &command),
-        Target::Codex => codex::merge(target, existing, &command),
-        Target::Kimi => kimi::merge(target, existing, &command),
+        Target::Codex => toml::codex::merge(target, existing, &command),
+        Target::Kimi => toml::kimi::merge(target, existing, &command),
+        Target::Cursor => cursor::merge(target, existing, &command),
         Target::Opencode => Ok(PLUGIN_SOURCE.to_owned()),
     }
 }

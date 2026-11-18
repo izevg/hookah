@@ -2,7 +2,7 @@
 //!
 //! Command hooks configured as `[[hooks]]` in `config.toml` (beta upstream): `PostToolUse`
 //! runs the edit phase. Kimi's `Stop` event can block but has no loop guard in its payload, so
-//! the stop phase is not supported. See `docs/setup/hooks/kimi.md`.
+//! the stop phase is not supported. See `docs/setup/hooks/cli/kimi.md`.
 
 pub mod payload;
 pub mod response;

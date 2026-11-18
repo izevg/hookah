@@ -90,7 +90,7 @@ fn claude_project_setup_writes_hooks_pointing_at_this_binary() {
 #[test]
 fn a_second_run_is_byte_identical_and_says_so() {
     let sb = Sandbox::new("idempotent");
-    for harness in ["claude", "codex", "qoder", "opencode"] {
+    for harness in ["claude", "codex", "qoder", "cursor", "opencode"] {
         sb.ok(&["setup", harness]);
     }
     sb.ok(&["setup", "kimi"]);
@@ -98,11 +98,12 @@ fn a_second_run_is_byte_identical_and_says_so() {
         sb.project(".claude/settings.json"),
         sb.project(".codex/config.toml"),
         sb.project(".qoder/settings.json"),
+        sb.project(".cursor/hooks.json"),
         sb.project(".opencode/plugins/hookah.ts"),
         sb.home(".kimi-code/config.toml"),
     ];
     let before: Vec<_> = files.iter().map(|f| fs::read(f).unwrap()).collect();
-    for harness in ["claude", "codex", "qoder", "opencode", "kimi"] {
+    for harness in ["claude", "codex", "qoder", "cursor", "opencode", "kimi"] {
         let out = sb.ok(&["setup", harness]);
         assert!(out.contains("already up to date, nothing written"), "{out}");
     }
@@ -168,13 +169,14 @@ fn codex_toml_keeps_comments() {
 #[test]
 fn user_scope_writes_under_home_for_every_harness() {
     let sb = Sandbox::new("user");
-    for harness in ["claude", "codex", "qoder", "kimi", "opencode"] {
+    for harness in ["claude", "codex", "qoder", "kimi", "cursor", "opencode"] {
         sb.ok(&["setup", harness, "--scope", "user"]);
     }
     assert!(text(&sb.home(".claude/settings.json")).contains("hook claude"));
     assert!(text(&sb.home(".codex/config.toml")).contains("hook codex"));
     assert!(text(&sb.home(".qoder/settings.json")).contains("hook qoder"));
     assert!(text(&sb.home(".kimi-code/config.toml")).contains("hook kimi"));
+    assert!(text(&sb.home(".cursor/hooks.json")).contains("hook cursor"));
     assert!(sb.home(".config/opencode/plugins/hookah.ts").is_file());
     assert!(!sb.project(".claude").exists());
 }
@@ -279,4 +281,48 @@ fn flags_that_do_not_fit_together_are_rejected() {
         let out = sb.hookah(args);
         assert_eq!(out.status.code(), Some(2), "{args:?}");
     }
+}
+
+#[test]
+fn cursor_setup_merges_into_an_existing_hooks_json() {
+    let sb = Sandbox::new("cursor");
+    let file = sb.project(".cursor/hooks.json");
+    fs::create_dir_all(file.parent().unwrap()).unwrap();
+    let original = "{\"version\": 1, \"hooks\": {\"stop\": [{\"command\": \"./audit.sh\"}]}}\n";
+    fs::write(&file, original).unwrap();
+    let out = sb.ok(&["setup", "cursor"]);
+    assert!(out.starts_with("hookah setup: cursor, project scope\nupdated .cursor/hooks.json\n"));
+    assert!(
+        out.contains("hooks: sessionStart, afterFileEdit, stop run "),
+        "{out}"
+    );
+    assert!(out.contains("next: Restart Cursor"), "{out}");
+    let merged = text(&file);
+    assert!(merged.contains("./audit.sh") && merged.contains("afterFileEdit"));
+    assert!(merged.contains("hook cursor"));
+    assert_eq!(text(&sb.project(".cursor/hooks.json.hookah.bak")), original);
+    let dry = sb.ok(&["setup", "cursor", "--dry-run"]);
+    assert!(dry.contains(".cursor/hooks.json is already up to date and would stay:"));
+}
+
+#[test]
+fn detect_recognizes_cursor_by_binary_and_by_config_directory() {
+    let sb = Sandbox::new("detectcursor");
+    let line = |out: &str| {
+        out.lines()
+            .find(|l| l.starts_with("cursor:"))
+            .unwrap()
+            .to_owned()
+    };
+    assert!(line(&sb.ok(&["setup", "--detect"])).contains("not found"));
+    fs::write(sb.root.join("bin/cursor-agent"), "").unwrap();
+    assert!(line(&sb.ok(&["setup", "--detect"])).contains("installed (binary"));
+    fs::remove_file(sb.root.join("bin/cursor-agent")).unwrap();
+    fs::create_dir_all(sb.home(".cursor")).unwrap();
+    let out = sb.ok(&["setup", "--detect"]);
+    assert!(line(&out).contains("config directory found"), "{out}");
+    sb.ok(&["setup", "cursor", "--scope", "user"]);
+    assert!(
+        line(&sb.ok(&["setup", "--detect"])).ends_with("project: not configured; user: configured")
+    );
 }

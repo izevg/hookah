@@ -7,7 +7,7 @@ object on stdin. Hooks live in `hooks.json` or inline under `[hooks]` in `config
 
 - `SessionStart` records the problems the project already has, in the background, so later
   reports show only what the agent introduced (the baseline; see
-  [architecture](../../architecture.md#baseline)). The hook returns at once and prints nothing.
+  [architecture](../../../architecture.md#baseline)). The hook returns at once and prints nothing.
 - `PostToolUse` with matcher `^apply_patch$` runs the edit phase. One patch can touch several
   files; `hookah` reads the `*** Add File:`, `*** Update File:`, and `*** Move to:` headers from
   the patch text (`tool_input.command`), checks each file, and merges the results into one

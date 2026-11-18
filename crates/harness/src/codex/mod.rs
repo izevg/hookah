@@ -2,7 +2,7 @@
 //!
 //! Command hooks configured in `config.toml` `[hooks]` or `hooks.json`: `PostToolUse` for
 //! `apply_patch` runs the edit phase and `Stop` runs the stop phase. See
-//! `docs/setup/hooks/codex.md`.
+//! `docs/setup/hooks/cli/codex.md`.
 
 pub mod payload;
 pub mod response;

@@ -11,6 +11,8 @@ pub enum Target {
     Qoder,
     /// Kimi Code: `config.toml`, user-level only.
     Kimi,
+    /// Cursor (the IDE agent and `cursor-agent`): `hooks.json`.
+    Cursor,
     /// opencode: a plugin file.
     Opencode,
 }
@@ -55,13 +57,20 @@ const KIMI: &[HookSpec] = &[
     hook("PostToolUse", Some("Write|Edit"), 30),
 ];
 
+const CURSOR: &[HookSpec] = &[
+    hook("sessionStart", None, 30),
+    hook("afterFileEdit", None, 30),
+    hook("stop", None, 120),
+];
+
 impl Target {
     /// Every harness, in the order `hookah setup --detect` lists them.
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 6] = [
         Self::Claude,
         Self::Codex,
         Self::Qoder,
         Self::Kimi,
+        Self::Cursor,
         Self::Opencode,
     ];
 
@@ -72,6 +81,7 @@ impl Target {
             Self::Codex => "codex",
             Self::Qoder => "qoder",
             Self::Kimi => "kimi",
+            Self::Cursor => "cursor",
             Self::Opencode => "opencode",
         }
     }
@@ -83,6 +93,7 @@ impl Target {
             Self::Codex => CODEX,
             Self::Qoder => QODER,
             Self::Kimi => KIMI,
+            Self::Cursor => CURSOR,
             Self::Opencode => &[],
         }
     }
@@ -94,6 +105,7 @@ impl Target {
             Self::Codex => &["codex"],
             Self::Qoder => &["qodercli", "qoder"],
             Self::Kimi => &["kimi", "kimi-code"],
+            Self::Cursor => &["cursor-agent", "cursor"],
             Self::Opencode => &["opencode"],
         }
     }
@@ -109,6 +121,9 @@ impl Target {
             }
             Self::Qoder => "Restart Qoder so it loads the new hooks.",
             Self::Kimi => "Restart Kimi Code so it loads the new hooks.",
+            Self::Cursor => {
+                "Restart Cursor (or the cursor-agent session), then check the Hooks tab in Cursor Settings."
+            }
             Self::Opencode => {
                 "Restart opencode. The plugin runs `hookah` from PATH, or from HOOKAH_BIN if set."
             }
@@ -244,11 +259,15 @@ mod tests {
     #[test]
     fn names_and_hooks_line_up_with_the_setup_docs() {
         let names: Vec<_> = Target::ALL.iter().map(|t| t.name()).collect();
-        assert_eq!(names, ["claude", "codex", "qoder", "kimi", "opencode"]);
+        assert_eq!(
+            names,
+            ["claude", "codex", "qoder", "kimi", "cursor", "opencode"]
+        );
         assert_eq!(Target::Claude.hooks().len(), 4);
         assert_eq!(Target::Codex.hooks().len(), 3);
         assert_eq!(Target::Qoder.hooks().len(), 3);
         assert_eq!(Target::Kimi.hooks().len(), 2);
+        assert_eq!(Target::Cursor.hooks().len(), 3);
         assert!(Target::Opencode.hooks().is_empty());
         for t in Target::ALL {
             assert!(!t.binaries().is_empty());

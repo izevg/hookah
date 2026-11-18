@@ -189,7 +189,7 @@ mod tests {
         assert!(Target::Opencode.hooks().is_empty());
         for t in Target::ALL {
             assert!(!t.binaries().is_empty());
-            assert!(!t.restart_hint().is_empty());
+            assert!(t.restart_hint().contains("Restart"), "{t:?}");
         }
     }
 }

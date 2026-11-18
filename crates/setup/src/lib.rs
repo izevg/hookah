@@ -4,8 +4,9 @@
 //! (JSON settings, TOML config, a plugin file), not a business rule of the domain, so it cannot
 //! live in `domain` (no external crates, no I/O) or in `application` (ports only). It is a
 //! separate crate rather than part of `harness` because `harness` translates hook payloads at
-//! run time, while this crate edits files once, at install time, and needs a JSON and a TOML
-//! editor that the hot hook path must not link. `cli` only wires it.
+//! run time, while this crate edits files once, at install time, with its own JSON and TOML
+//! editors; keeping them apart keeps those dependencies out of the hook-time crates. `cli` only
+//! wires it.
 //!
 //! - [`merge`]: pure `existing text -> new text` functions, one per config format.
 //! - [`io`]: where each config lives, reading, backing up, writing, and detection.

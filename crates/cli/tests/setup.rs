@@ -231,11 +231,14 @@ fn dry_run_and_print_write_nothing() {
 #[test]
 fn command_override_is_used_verbatim() {
     let sb = Sandbox::new("command");
-    sb.ok(&["setup", "kimi", "--command", "mise exec -- hookah"]);
+    let kimi = sb.ok(&["setup", "kimi", "--command", "mise exec -- hookah"]);
+    assert!(!kimi.contains("note:"));
     let written = text(&sb.home(".kimi-code/config.toml"));
     assert!(written.contains("command = \"mise exec -- hookah hook kimi\""));
     let out = sb.ok(&["setup", "opencode", "--command", "x"]);
     assert!(out.contains("note: --command is ignored for opencode"));
+    let plain = sb.ok(&["setup", "opencode", "--scope", "user"]);
+    assert!(!plain.contains("note:"));
 }
 
 #[test]

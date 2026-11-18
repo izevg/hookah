@@ -206,4 +206,15 @@ mod tests {
             Some("/h/.config/opencode".into())
         );
     }
+
+    #[test]
+    fn the_process_environment_is_read() {
+        let env = Env::from_process();
+        assert_eq!(env.cwd, std::env::current_dir().unwrap());
+        assert!(!env.path.is_empty());
+        let has_home = ["HOME", "USERPROFILE"]
+            .iter()
+            .any(|v| std::env::var_os(v).is_some_and(|h| !h.is_empty()));
+        assert_eq!(env.home.is_some(), has_home);
+    }
 }

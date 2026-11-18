@@ -4,6 +4,7 @@
 //! - [`process`]: running external tools with timeouts and capturing output, and starting the
 //!   detached baseline job.
 //! - [`store`]: the per-project cache directory and the session finding baselines in it.
+//! - [`update`]: self-update from the official GitHub releases: download, verify, replace.
 //! - [`vcs`]: changed files and lines as reported by `git`.
 //! - [`config`]: `.hookah.toml` loading and overrides on top of auto-detection.
 //! - [`ecosystems`]: the `Ecosystems` registry plus per-ecosystem toolchain detection, output
@@ -14,4 +15,5 @@ pub mod ecosystems;
 pub mod fs;
 pub mod process;
 pub mod store;
+pub mod update;
 pub mod vcs;

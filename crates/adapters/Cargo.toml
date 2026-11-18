@@ -17,6 +17,19 @@ quick-xml = "0.38"
 # Already in the tree through `setup`; its `serde` feature parses config files.
 toml_edit = { version = "0.23", default-features = false, features = ["parse", "serde"] }
 
+# Self-update (src/update). Each one is the smallest correct choice for its job:
+# - ureq: a blocking HTTP client with no async runtime. Its proxy support reads HTTPS_PROXY,
+#   HTTP_PROXY, and NO_PROXY; `platform-verifier` makes TLS trust the operating system's
+#   certificate store, which is where a corporate TLS-inspecting proxy installs its root.
+# - sha2: the SHA-256 that release archives are verified with, pure Rust.
+# - flate2 + tar read the `.tar.gz` of Linux and macOS; zip reads the `.zip` of Windows, with
+#   deflate only (no encryption, bzip2, zstd, or the zopfli compressor).
+ureq = { version = "3", default-features = false, features = ["rustls", "platform-verifier"] }
+sha2 = "0.11"
+flate2 = "1"
+tar = { version = "0.4", default-features = false }
+zip = { version = "9", default-features = false, features = ["deflate-flate2"] }
+
 [lints]
 workspace = true
 

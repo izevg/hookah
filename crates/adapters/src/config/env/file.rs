@@ -18,6 +18,18 @@ pub struct ConfigFile {
     /// Per-project sections of the user config, in file order.
     #[serde(default)]
     pub project: Vec<ProjectSection>,
+    /// Self-update switches of the user config.
+    #[serde(default)]
+    pub update: UpdateSection,
+}
+
+/// The `[update]` table of the user config.
+#[derive(Debug, Default, PartialEq, Eq, Deserialize)]
+pub struct UpdateSection {
+    /// `false` switches every update check and install off.
+    pub check: Option<bool>,
+    /// `false` keeps the check and only notifies, never installs by itself.
+    pub auto: Option<bool>,
 }
 
 /// A `[[project]]` section: variables for every project whose path matches.
@@ -60,6 +72,19 @@ mod tests {
             parse("future = 1\n[tools]\nx = 2\n").unwrap(),
             ConfigFile::default()
         );
+    }
+
+    #[test]
+    fn reads_the_update_table() {
+        let file = parse("[update]\ncheck = false\nauto = true\nfuture = 1\n").unwrap();
+        assert_eq!(file.update.check, Some(false));
+        assert_eq!(file.update.auto, Some(true));
+        assert_eq!(
+            parse("[update]\n").unwrap().update,
+            UpdateSection::default()
+        );
+        assert_eq!(parse("").unwrap().update.check, None);
+        assert!(parse("[update]\ncheck = \"no\"\n").is_err());
     }
 
     #[test]

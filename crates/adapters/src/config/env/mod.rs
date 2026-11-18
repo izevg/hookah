@@ -17,7 +17,7 @@
 //! the working directory itself. A broken file is skipped with a warning and never blocks.
 
 mod expand;
-mod file;
+pub(crate) mod file;
 mod runner;
 
 use std::collections::BTreeMap;

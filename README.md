@@ -76,6 +76,10 @@ old warnings from code it did not touch.
 > (source: [docs/setup/agents.md](docs/setup/agents.md); the whole site as plain text for agents:
 > [llms.txt](https://izevg.github.io/hookah/llms.txt)).
 >
+> **Updates.** hookah checks the official GitHub releases at a session start (in the background, at
+> most once a day) and installs a newer one itself, after verifying its SHA-256. Opt out with
+> `HOOKAH_NO_UPDATE=1`; `hookah update` does it by hand. See [Updates](docs/setup/update.md).
+>
 > **Changed your mind?** Say **"Put out my hookah"**: the agent runs `hookah uninstall --all` and the
 > installer's uninstall. Or do it yourself, see [Uninstall](#uninstall).
 
@@ -188,7 +192,8 @@ They run once, when the agent says it's done, and a red result blocks the finish
 - **Safe formatting.** When a formatter rewrites the file, the output says so and the agent
   re-reads it before its next edit.
 - **No surprises.** Only the project's own tools run. Nothing is installed, and nothing is
-  written outside the project and `hookah`'s cache.
+  written outside the project and `hookah`'s cache. The one exception is hookah's own
+  [self-update](docs/setup/update.md), from the official releases, which you can switch off.
 
 </details>
 
@@ -208,6 +213,7 @@ They run once, when the agent says it's done, and a red result blocks the finish
 | [Changelog](https://izevg.github.io/hookah/changelog.html) | every release, generated from Conventional Commits |
 | [Harness setup](docs/setup/hooks/cli/claude-code.md) | one page per harness, linked in Quick start |
 | [Setup for agents](docs/setup/agents.md) | the exact procedure an agent follows to install and configure `hookah` |
+| [Updates](docs/setup/update.md) | how hookah updates itself, `hookah update`, opting out, and the security model |
 | [Uninstall](docs/setup/uninstall.md) | `hookah uninstall`, the manual path per harness, and how to verify that nothing is left |
 
 The same pages are published as a searchable site at <https://izevg.github.io/hookah/>.

@@ -12,6 +12,8 @@
 //! - Windows: `%LOCALAPPDATA%\hookah\cache`, with `%USERPROFILE%\AppData\Local` standing in for
 //!   an unset `%LOCALAPPDATA%`.
 //!
+//! The updater keeps its own state in `<hookah cache>/update/` ([`update_cache_dir`]).
+//!
 //! The hash is a 64-bit FNV-1a of the canonical project root, as 16 hex digits. FNV-1a is written
 //! out here instead of using `std`'s hasher because the std algorithm is unspecified and the
 //! directory name must stay stable across toolchain upgrades.
@@ -103,10 +105,30 @@ fn purge_in(base: PathBuf, shared: bool) -> CachePurge {
     }
 }
 
-/// True for the 16 lowercase hex digits of [`root_hash`].
+/// True for the 16 lowercase hex digits of [`root_hash`], or the name of the updater's directory:
+/// the directories hookah itself creates inside a user-chosen cache directory.
 fn is_project_dir_name(name: &std::ffi::OsStr) -> bool {
-    name.to_str()
-        .is_some_and(|n| n.len() == 16 && n.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')))
+    name.to_str().is_some_and(|n| {
+        n == UPDATE_DIR
+            || (n.len() == 16 && n.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')))
+    })
+}
+
+/// The updater's directory inside the hookah cache.
+const UPDATE_DIR: &str = "update";
+
+/// The directory where the updater keeps its state and lock: `<hookah cache>/update`; created
+/// when missing.
+pub fn update_cache_dir() -> Result<PathBuf, PortError> {
+    let base = cache_base(|key| std::env::var_os(key), Platform::current()).ok_or_else(|| {
+        PortError::new("no cache directory: no home or local application data directory is set")
+    })?;
+    update_dir_in(&base)
+}
+
+/// `<base>/update`, created private to the user.
+fn update_dir_in(base: &Path) -> Result<PathBuf, PortError> {
+    private_dir(&base.join(UPDATE_DIR))
 }
 
 /// The cache directory of the project at `project_root`; created when missing.
@@ -142,15 +164,19 @@ fn cache_base(env: impl Fn(&str) -> Option<OsString>, os: Platform) -> Option<Pa
 /// `<base>/<hash of root>`, created private to the user.
 fn project_dir_in(base: &Path, project_root: &Path) -> Result<PathBuf, PortError> {
     let root = dunce::canonicalize(project_root).unwrap_or_else(|_| project_root.to_path_buf());
-    let dir = base.join(root_hash(&root));
+    private_dir(&base.join(root_hash(&root)))
+}
+
+/// Creates `dir` (and its parents), private to the user.
+fn private_dir(dir: &Path) -> Result<PathBuf, PortError> {
     let mut builder = DirBuilder::new();
     builder.recursive(true);
     #[cfg(unix)]
     std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
     builder
-        .create(&dir)
+        .create(dir)
         .map_err(|e| PortError::new(format!("cannot create {}: {e}", dir.display())))?;
-    Ok(dir)
+    Ok(dir.to_path_buf())
 }
 
 /// 64-bit FNV-1a of the root path, as 16 lowercase hex digits.
@@ -307,6 +333,20 @@ mod tests {
     }
 
     #[test]
+    fn the_update_directory_is_named_update_inside_the_base() {
+        let base = std::env::temp_dir().join(format!("hookah-cache-upd-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&base);
+        let dir = update_dir_in(&base).unwrap();
+        assert_eq!(dir, base.join("update"));
+        assert!(dir.is_dir());
+        let _ = fs::remove_dir_all(&base);
+        // The public entry point resolves the same name under the environment's base.
+        if let Ok(public) = update_cache_dir() {
+            assert_eq!(public.file_name().unwrap(), "update");
+        }
+    }
+
+    #[test]
     #[cfg(unix)]
     fn creates_private_directories() {
         use std::os::unix::fs::PermissionsExt;
@@ -369,12 +409,17 @@ mod tests {
         ] {
             fs::create_dir_all(base.join(name)).unwrap();
         }
+        fs::create_dir_all(base.join("update")).unwrap();
         fs::write(base.join("aaaaaaaaaaaaaaaa"), "a file named like a project").unwrap();
         fs::write(base.join("notes.txt"), "mine").unwrap();
         let purge = purge_in(base.clone(), true);
         assert_eq!(
             purge.paths,
-            [base.join("0123456789abcdef"), base.join("fedcba9876543210")]
+            [
+                base.join("0123456789abcdef"),
+                base.join("fedcba9876543210"),
+                base.join("update")
+            ]
         );
         purge.run().unwrap();
         assert!(base.join("notes.txt").is_file());
@@ -383,6 +428,7 @@ mod tests {
         assert!(base.join("aaaaaaaaaaaaaaaa").is_file());
         assert!(!base.join("0123456789abcdef").exists());
         assert!(!base.join("fedcba9876543210").exists());
+        assert!(!base.join("update").exists());
     }
 
     #[test]

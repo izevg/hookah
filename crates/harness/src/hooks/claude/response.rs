@@ -12,6 +12,9 @@
 //!   Exit 0 with a `systemMessage` that summarizes the failures for the user.
 //! - `Degraded` (and degradation notices): exit 0, `systemMessage` warning for the user only.
 //!   Never blocks and never reaches the model.
+//! - Session start: nothing on stdout and a stderr warning when the baseline could not start. An
+//!   update notice (hookah updated itself, or a newer version exists) is a `systemMessage`: it
+//!   reaches the user, never the model.
 //! - Anything else: exit 0, no output.
 
 use hookah_application::Outcome;
@@ -25,7 +28,7 @@ use crate::protocol::{Invocation, Response, blocking_report, degraded_warnings, 
 pub fn render(invocation: &Invocation, outcome: &Outcome) -> Response {
     match invocation {
         Invocation::Ignore | Invocation::EditBatch(_) => Response::silent(),
-        Invocation::Start(_) => start_response(outcome),
+        Invocation::Start(_) => start(outcome),
         Invocation::Edit(request) => match blocking_report(outcome) {
             Some(report) => block(
                 format!(
@@ -61,6 +64,23 @@ pub fn render(invocation: &Invocation, outcome: &Outcome) -> Response {
     }
 }
 
+/// Session start: the shared answer, except that update notices go out as a `systemMessage`.
+fn start(outcome: &Outcome) -> Response {
+    let updates: Vec<String> = outcome
+        .notices
+        .iter()
+        .filter(|n| matches!(n, Notice::Update(_)))
+        .map(ToString::to_string)
+        .collect();
+    let mut rest = outcome.clone();
+    rest.notices.retain(|n| !matches!(n, Notice::Update(_)));
+    let mut response = start_response(&rest);
+    if !updates.is_empty() {
+        response.stdout = json_response(json!({ "systemMessage": updates.join("\n") })).stdout;
+    }
+    response
+}
+
 fn problems(report: &Report) -> String {
     match report.findings().len() {
         1 => "1 problem".into(),
@@ -89,7 +109,7 @@ fn allow(outcome: &Outcome, edit_phase: bool) -> Response {
         .iter()
         .filter_map(|n| match n {
             Notice::FileRewritten(p) => Some(p.display().to_string()),
-            Notice::Degraded(_) | Notice::MissingTool(_) => None,
+            Notice::Degraded(_) | Notice::MissingTool(_) | Notice::Update(_) => None,
         })
         .collect();
     let missing: Vec<&MissingTool> = outcome
@@ -315,5 +335,26 @@ mod tests {
         assert_eq!(r.exit_code, 0);
         assert!(r.stdout.is_empty());
         assert!(r.stderr.contains("no store"));
+    }
+
+    #[test]
+    fn a_session_start_shows_an_update_notice_to_the_user_only() {
+        let start = Invocation::Start(hookah_application::StartRequest::new("/w", "s"));
+        let mut outcome = Outcome::pass();
+        outcome
+            .notices
+            .push(Notice::Update("updated hookah from 1.0.0 to 1.1.0".into()));
+        let r = render(&start, &outcome);
+        assert_eq!(r.exit_code, 0);
+        assert!(r.stderr.is_empty());
+        let json: Value = serde_json::from_str(&r.stdout).unwrap();
+        assert_eq!(
+            json,
+            json!({"systemMessage": "hookah: updated hookah from 1.0.0 to 1.1.0"})
+        );
+        assert!(
+            json.get("hookSpecificOutput").is_none(),
+            "never model context"
+        );
     }
 }

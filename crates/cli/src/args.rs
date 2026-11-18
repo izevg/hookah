@@ -11,6 +11,7 @@
 //! - `hookah baseline --session <id> --root <dir>`: the background job that a session-start hook
 //!   spawns (hidden). It records the project's existing findings so later reports show only new
 //!   ones.
+//! - `hookah update [--check]`: look for a newer official release and install it (or only report).
 //! - `--report-limit <N>` (global): cap on findings shown per report.
 //!
 //! - `hookah setup <harness>` / `hookah setup --detect`: write the hook config of a harness, or
@@ -105,6 +106,17 @@ pub enum Command {
         /// The project root.
         #[arg(long)]
         root: PathBuf,
+    },
+    /// Check the official GitHub releases for a newer hookah and install it, or with `--check`
+    /// only report. A session start also checks, in the background and at most once a day, and
+    /// installs by itself unless `HOOKAH_NO_UPDATE=1` or `[update]` in the user config says no.
+    Update {
+        /// Only report whether a newer release exists; install nothing.
+        #[arg(long, conflicts_with = "background")]
+        check: bool,
+        /// The throttled, silent run a session start spawns; not meant to be run by hand.
+        #[arg(long, hide = true)]
+        background: bool,
     },
     /// Print the config files in effect for a path and the tool environment they set, with the
     /// file each variable comes from. Use it to check config instead of editing a hook command.

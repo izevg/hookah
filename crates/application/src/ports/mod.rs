@@ -5,10 +5,15 @@
 pub mod discovery;
 pub mod execution;
 pub mod storage;
+pub mod update;
 
 pub use discovery::{ChangeSource, ProjectLocator, ToolchainDetector};
 pub use execution::{CheckRunner, ContentHasher, ProcessOutput};
 pub use storage::{BaselineSpawner, BaselineState, BaselineStore, StatusStore};
+pub use update::{
+    Clock, Installer, LockGuard, Package, Release, ReleaseSource, UpdateError, UpdatePorts,
+    UpdateSpawner, UpdateStore,
+};
 
 /// All ports the use cases need, borrowed. Built by the composition root.
 #[derive(Clone, Copy)]

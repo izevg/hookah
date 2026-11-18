@@ -141,6 +141,21 @@ toolchains of both. `hookah` does not guess a `JAVA_HOME` from `.sdkmanrc`, `.ja
 `.tool-versions`: they name a version, not a path, and the install location depends on the
 machine, so set `JAVA_HOME` in `[env]`.
 
+## The `[update]` table: self-update
+
+hookah checks for a newer official release at a session start and installs it by itself (see
+[Updates](setup/update.md)). The user config can change that; `.hookah.toml` cannot, because the
+binary is shared by every project.
+
+```toml
+# ~/.config/hookah/config.toml
+[update]
+check = true   # false: no check, no install, no notice
+auto = true    # false: check and notify only; `hookah update` installs
+```
+
+`HOOKAH_NO_UPDATE=1` in the environment does what `check = false` does and wins over the file.
+
 ## `.hookah.toml` (planned)
 
 Optional project file that overrides auto-detection: tool commands per check kind, disabled

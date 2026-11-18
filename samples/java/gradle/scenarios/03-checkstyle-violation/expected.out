@@ -1,0 +1,6 @@
+exit: 2
+--- stdout
+--- stderr
+hookah: 2 problems after editing src/main/java/shop/Pricing.java - fix before continuing:
+src/main/java/shop/Pricing.java:9:5: warning: 'if' construct must use '{}'s. [NeedBraces]
+src/main/java/shop/Pricing.java:9:19: warning: '50' is a magic number. [MagicNumber]

@@ -38,6 +38,7 @@ enum ArgDto {
     Literal(String),
     Targets,
     TargetsOutside(Vec<String>),
+    TargetsJoined { prefix: String, separator: String },
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
@@ -82,6 +83,10 @@ impl From<&Arg> for ArgDto {
             Arg::Literal(s) => Self::Literal(s.clone()),
             Arg::Targets => Self::Targets,
             Arg::TargetsOutside(paths) => Self::TargetsOutside(paths.clone()),
+            Arg::TargetsJoined { prefix, separator } => Self::TargetsJoined {
+                prefix: prefix.clone(),
+                separator: separator.clone(),
+            },
         }
     }
 }
@@ -92,6 +97,9 @@ impl From<ArgDto> for Arg {
             ArgDto::Literal(s) => Self::Literal(s),
             ArgDto::Targets => Self::Targets,
             ArgDto::TargetsOutside(paths) => Self::TargetsOutside(paths),
+            ArgDto::TargetsJoined { prefix, separator } => {
+                Self::TargetsJoined { prefix, separator }
+            }
         }
     }
 }
@@ -182,6 +190,10 @@ mod tests {
                         Arg::Literal("--flag".into()),
                         Arg::Targets,
                         Arg::TargetsOutside(vec!["src".into(), "tests".into()]),
+                        Arg::TargetsJoined {
+                            prefix: "-Dx=".into(),
+                            separator: ",".into(),
+                        },
                     ],
                 )
             })

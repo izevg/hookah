@@ -1,0 +1,29 @@
+diff --git a/src/test/java/shop/CartTest.java b/src/test/java/shop/CartTest.java
+index 0a05373..8e56cac 100644
+--- a/src/test/java/shop/CartTest.java
++++ b/src/test/java/shop/CartTest.java
+@@ -16,13 +16,6 @@ class CartTest {
+     assertEquals(1000, cart.total());
+   }
+ 
+-  @Test
+-  void acceptsFreeItems() {
+-    Cart cart = new Cart();
+-    cart.add(0);
+-    assertEquals(0, cart.total());
+-  }
+-
+   @Test
+   void rejectsNegativePrices() {
+     assertThrows(IllegalArgumentException.class, () -> new Cart().add(-1));
+@@ -31,9 +24,7 @@ class CartTest {
+   @Test
+   void freeShippingStartsAtFiftyUnits() {
+     Cart cart = new Cart();
+-    cart.add(4999);
+-    assertFalse(cart.freeShipping());
+-    cart.add(1);
++    cart.add(6000);
+     assertTrue(cart.freeShipping());
+   }
+ }

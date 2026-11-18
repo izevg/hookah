@@ -26,7 +26,8 @@ feeds failures straight back to the agent, so it fixes them immediately.
 > install and configure hookah; "put out my hookah" means uninstall it
 > ([uninstall guide](docs/setup/uninstall.md)).
 
-> **Status:** works for Rust, Node (TypeScript/JavaScript), and Python projects, with the Claude
+> **Status:** works for Rust, Node (TypeScript/JavaScript), Python, and Java (Maven and Gradle)
+> projects, with the Claude
 > Code, Codex, Cursor, Qoder, Kimi, opencode, Pi, and OpenClaw harnesses and the Hermes Agent assistant
 > (`hookah check`, `hookah detect`, `hookah hook <harness>`, `hookah plugin <harness>`, `hookah
 > setup`), including mutation testing at stop, and with [Orca](docs/setup/plugins/orca.md)
@@ -120,6 +121,7 @@ installs anything.
 | TypeScript / JavaScript | Biome, Prettier | Biome, ESLint | `tsc` | dependency-cruiser | Vitest, Jest | Stryker |
 | Python | Ruff, Black | Ruff | mypy | import-linter | pytest | mutmut |
 | Rust | rustfmt | Clippy | (compiler errors via Clippy) | n/a | `cargo test` | cargo-mutants |
+| Java (Maven, Gradle) | Spotless | Checkstyle, PMD, SpotBugs | `javac` (through the build) | ArchUnit (runs with the tests) | JUnit (light unit tests only) | PIT |
 
 Details, commands, and test-selection rules: [docs/ecosystems.md](docs/ecosystems.md).
 

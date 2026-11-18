@@ -1,0 +1,25 @@
+diff --git a/core/src/main/java/shop/Money.java b/core/src/main/java/shop/Money.java
+index 0389dc9..f107d07 100644
+--- a/core/src/main/java/shop/Money.java
++++ b/core/src/main/java/shop/Money.java
+@@ -9,7 +9,7 @@ public record Money(int cents) {
+   }
+ 
+   /** The amount as text, such as {@code 12.50}. */
+-  public String format() {
++  public String text() {
+     return String.format("%d.%02d", cents / 100, cents % 100);
+   }
+ }
+diff --git a/core/src/test/java/shop/MoneyTest.java b/core/src/test/java/shop/MoneyTest.java
+index cbe1535..eafb5ab 100644
+--- a/core/src/test/java/shop/MoneyTest.java
++++ b/core/src/test/java/shop/MoneyTest.java
+@@ -12,6 +12,6 @@ class MoneyTest {
+ 
+   @Test
+   void formatsWithTwoDecimals() {
+-    assertEquals("12.05", new Money(1205).format());
++    assertEquals("12.05", new Money(1205).text());
+   }
+ }

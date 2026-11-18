@@ -210,6 +210,7 @@ mod tests {
         found
             .iter()
             .map(|f| format!("{} {}", f.location, f.message))
+            .map(|line| line.replace('\\', "/"))
             .collect()
     }
 

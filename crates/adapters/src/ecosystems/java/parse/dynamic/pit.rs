@@ -121,6 +121,7 @@ mod tests {
                     f.rule.as_deref().unwrap_or("-")
                 )
             })
+            .map(|line| line.replace('\\', "/"))
             .collect()
     }
 

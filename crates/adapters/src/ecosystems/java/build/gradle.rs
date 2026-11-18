@@ -242,7 +242,14 @@ test { useJUnitPlatform() }
         assert_eq!(b.root, t.0);
         assert_eq!(b.selector, None);
         assert_eq!(b.task("test"), ":test");
-        assert_eq!(b.program, "gradle");
+        assert_eq!(
+            b.program,
+            if cfg!(windows) {
+                "gradle.bat"
+            } else {
+                "gradle"
+            }
+        );
         assert!(b.dependents.is_empty());
         assert_eq!(
             b.features,

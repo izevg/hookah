@@ -308,12 +308,16 @@ Do not call pure method length if the result is not used.
                     f.rule.as_deref().unwrap_or("-")
                 )
             })
+            .map(|line| line.replace('\\', "/"))
             .collect()
     }
 
     #[test]
     fn checkstyle_maps_severities_rules_and_locations() {
-        let found = checkstyle_xml(&parse_xml(CHECKSTYLE_XML).unwrap(), &root());
+        let found = checkstyle_xml(
+            &parse_xml(&crate::ecosystems::testing::rooted(CHECKSTYLE_XML)).unwrap(),
+            &root(),
+        );
         assert_eq!(
             show(&found),
             [
@@ -329,7 +333,10 @@ Do not call pure method length if the result is not used.
 
     #[test]
     fn pmd_maps_priorities_and_reports_unparseable_files() {
-        let found = pmd_xml(&parse_xml(PMD_XML).unwrap(), &root());
+        let found = pmd_xml(
+            &parse_xml(&crate::ecosystems::testing::rooted(PMD_XML)).unwrap(),
+            &root(),
+        );
         assert_eq!(
             show(&found),
             [

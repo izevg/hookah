@@ -170,7 +170,7 @@ mod tests {
         assert_eq!(b.kind, BuildKind::Maven);
         assert_eq!(b.root, t.0);
         assert_eq!(b.selector, None);
-        assert_eq!(b.program, "mvn");
+        assert_eq!(b.program, if cfg!(windows) { "mvn.cmd" } else { "mvn" });
         assert_eq!(
             b.features,
             Features {

@@ -245,6 +245,7 @@ Execution failed for task ':compileJava'.
         found
             .iter()
             .map(|f| format!("{} {:?} {}", f.location, f.severity, f.message))
+            .map(|line| line.replace('\\', "/"))
             .collect()
     }
 

@@ -7,8 +7,10 @@
 //! - Unix: the child leads its own process group, so a signal sent to the hook's group (a
 //!   harness killing a timed-out hook) does not reach it.
 //! - Windows: the child is created `DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP`, which cuts it
-//!   from the hook's console and Ctrl+C group. This path compiles in principle and has not been
-//!   run on Windows yet.
+//!   from the hook's console and Ctrl+C group. It also asks to `CREATE_BREAKAWAY_FROM_JOB`: a
+//!   harness that runs hooks in a kill-on-close Job Object (Codex does) would otherwise kill the
+//!   baseline job the moment the hook returns. A job that forbids breakaway makes that request
+//!   fail, so the spawn is retried without it.
 //!
 //! With `wait`, the call blocks until the child exits; tests and the sample runner use it to get a
 //! baseline synchronously.
@@ -47,8 +49,6 @@ impl BackgroundSpawner {
             .stderr(Stdio::null());
         #[cfg(unix)]
         detach(&mut command);
-        #[cfg(windows)]
-        detach_from_console(&mut command);
         command
     }
 }
@@ -60,20 +60,29 @@ fn detach(command: &mut Command) {
 
 /// Windows only; not covered by mutation testing, which runs on Unix (`.cargo/mutants.toml`).
 #[cfg(windows)]
-fn detach_from_console(command: &mut Command) {
+fn detach_from_console(command: &mut Command) -> std::io::Result<std::process::Child> {
+    use std::os::windows::process::CommandExt;
     const DETACHED_PROCESS: u32 = 0x0000_0008;
     const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
-    std::os::windows::process::CommandExt::creation_flags(
-        command,
-        DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP,
-    );
+    const CREATE_BREAKAWAY_FROM_JOB: u32 = 0x0100_0000;
+    let flags = DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP;
+    command.creation_flags(flags | CREATE_BREAKAWAY_FROM_JOB);
+    command.spawn().or_else(|_| {
+        command.creation_flags(flags);
+        command.spawn()
+    })
+}
+
+fn start(command: &mut Command) -> std::io::Result<std::process::Child> {
+    #[cfg(windows)]
+    return detach_from_console(command);
+    #[cfg(not(windows))]
+    command.spawn()
 }
 
 impl BaselineSpawner for BackgroundSpawner {
     fn spawn(&self, root: &Path, session: &str) -> Result<(), PortError> {
-        let mut child = self
-            .command(root, session)
-            .spawn()
+        let mut child = start(&mut self.command(root, session))
             .map_err(|e| PortError::new(format!("cannot run {}: {e}", self.exe.display())))?;
         if self.wait {
             child

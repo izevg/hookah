@@ -33,6 +33,7 @@ extensions `ts tsx js jsx mjs cjs mts cts` are checked.
 | typecheck    | tsc        | `typescript` and a `tsconfig.json`     | `tsc --noEmit --pretty false -p tsconfig.json --incremental --tsBuildInfoFile <cache>/tsc.tsbuildinfo`          | 120 s   |
 | typecheck    | tsc        | same, with project `references`        | `tsc -b --pretty false tsconfig.json`                                                                          | 120 s   |
 | architecture | depcruise  | `dependency-cruiser` and a `.dependency-cruiser.{js,cjs,mjs,json}` | `depcruise --config <abs config> --output-type json <files>`                       | 60 s    |
+| unused       | knip       | `knip` declared and installed (stop phase only) | `knip --reporter json --no-progress --no-exit-code --no-config-hints [--workspace <package dir>]`, cwd = workspace root | 120 s |
 | test         | vitest     | `vitest` present (preferred)           | `vitest related --run --reporter=json --outputFile=<cache>/vitest-report.json --passWithNoTests --exclude=<heavy glob>... <files>` | 300 s |
 | test         | jest       | `jest` present                         | `jest --ci --json --no-watchman --passWithNoTests --testPathIgnorePatterns=<heavy regex>... --findRelatedTests <files>` | 300 s |
 | mutation     | stryker    | `@stryker-mutator/core` present        | `stryker run --incremental --reporters json --mutate <comma-joined files>`                                     | 480 s   |
@@ -48,6 +49,9 @@ flags are dropped.
   --write`, so the formatter never reorders imports or applies lint fixes.
 - Lint: Biome (configured) and ESLint (any config file, or `eslintConfig` in `package.json`) both
   run when both are configured. Biome older than 1.9 has no JSON reporter and is skipped for lint.
+- Unused: Knip, when `knip` is declared and installed. It needs no config file; it reads its own
+  (`knip.json`, `knip.jsonc`, `knip.ts`, a `knip` key in `package.json`, ...) and finds entry
+  files from `package.json` and its plugins. See "Unused code" below.
 - Test: Vitest, unless `scripts.test` names jest and not vitest. Both rely on the runner's own
   import graph; hookah never guesses which tests to run.
 - A project may be TypeScript without `tsc`, or have tests without a runner. Nothing is invented
@@ -62,6 +66,23 @@ incremental by itself and rejects `--noEmit` for referenced projects (`TS6310`),
 build outputs the projects declare (`outDir`, `*.tsbuildinfo`), exactly like the project's own
 `tsc -b`. Only the project's `tsconfig.json` is considered; test-only configs such as
 `tsconfig.spec.json` are not.
+
+**Unused code.** Knip builds the import graph of the whole project (and, in a workspace, of
+all packages), which takes seconds, so it runs in the **stop phase only**, never after a single
+edit. Its own check kind, `unused`, keeps it apart from dependency-cruiser's `architecture`
+(which runs per edit). In a workspace it runs from the workspace root with `--workspace
+<package dir>`: from inside a package it cannot see the other packages and would flag their
+files and dependencies as unused. The workspace root package runs without `--workspace`.
+Every issue is a **warning** with the knip issue type as its rule: `files`, `exports`, `types`,
+`enumMembers`, `namespaceMembers`, `duplicates`, `dependencies`, `devDependencies`, `unlisted`,
+`binaries`, `unresolved`, ... A message names the symbol and no position, so a baseline still
+matches it after lines shift: `src/money.ts:5: warning: unused export: format [exports]`.
+Dependency issues point into the `package.json` that declares the dependency. Knip cannot be
+limited to changed files, so "light" comes from the reporting rules: with a session baseline only
+issues new since the session started are reported, anywhere (an edit that drops the last import
+of a dependency reports it in `package.json`); without one, only warnings in changed files and on
+changed lines. Exports of entry files are not reported, as in knip itself, and a failed run (such
+as a broken `knip.json`) is a non-blocking notice.
 
 **Workspace dependents.** An API change breaks the packages that use it, not the package, so
 the edit's checks also cover its dependents, like the Rust adapter does for path dependents.

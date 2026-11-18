@@ -3,8 +3,9 @@
 //! Ask the change source for the files changed since the last commit and group them by project.
 //! For each project, in order:
 //!
-//! 1. Lint, Typecheck, and Architecture over all its changed files. This catches files changed
-//!    outside edit hooks (a shell `sed`). Format never runs at stop.
+//! 1. Lint, Typecheck, Architecture, and Unused over all its changed files. This catches files
+//!    changed outside edit hooks (a shell `sed`). Format never runs at stop. Unused (a
+//!    whole-project analysis) runs here and never in the edit phase.
 //! 2. Test, on the light tests the detector selects as related. Without related tests nothing
 //!    runs, and neither does anything when more targets than the test budget are selected.
 //! 3. Mutation, only if at least one changed file is a test and the change fits the mutation
@@ -321,6 +322,20 @@ mod tests {
                 "test t"
             ]
         );
+    }
+
+    #[test]
+    fn unused_code_runs_after_architecture_at_stop() {
+        let mut w = World::new(
+            "/r/Cargo.toml",
+            vec![
+                tool("unused", CheckKind::Unused),
+                tool("arch", CheckKind::Architecture),
+            ],
+        );
+        w.files = vec!["/r/src/a.rs".into()];
+        assert_eq!(run(&w), Outcome::pass());
+        assert_eq!(w.calls(), ["arch src/a.rs", "unused src/a.rs"]);
     }
 
     #[test]

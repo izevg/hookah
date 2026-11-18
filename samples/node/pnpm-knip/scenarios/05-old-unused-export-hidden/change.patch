@@ -1,0 +1,11 @@
+diff --git a/packages/lib/src/cart.ts b/packages/lib/src/cart.ts
+index 64760ad..6a6f88e 100644
+--- a/packages/lib/src/cart.ts
++++ b/packages/lib/src/cart.ts
+@@ -1,5 +1,6 @@
+ import { round } from "./money.ts";
+ 
++/** Sums the prices and rounds the result. */
+ export function total(prices: number[]): number {
+   return round(prices.reduce((sum, price) => sum + price, 0));
+ }

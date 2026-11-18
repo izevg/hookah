@@ -1,0 +1,11 @@
+{
+  "name": "@shop/app",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "main": "src/main.ts",
+  "dependencies": {
+    "@shop/lib": "workspace:*",
+    "left-pad": "^1.3.0"
+  }
+}

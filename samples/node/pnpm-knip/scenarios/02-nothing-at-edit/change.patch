@@ -1,0 +1,12 @@
+diff --git a/packages/lib/src/money.ts b/packages/lib/src/money.ts
+index 82123b1..250c84b 100644
+--- a/packages/lib/src/money.ts
++++ b/packages/lib/src/money.ts
+@@ -1,3 +1,7 @@
+ export function round(amount: number): number {
+   return Math.round(amount * 100) / 100;
+ }
++
++export function format(amount: number): string {
++  return amount.toFixed(2);
++}

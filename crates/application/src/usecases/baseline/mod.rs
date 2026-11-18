@@ -3,8 +3,8 @@
 //!
 //! - [`StartSession`] (session-start event): claims the baseline of the session's project and
 //!   starts the background job.
-//! - [`ComputeBaseline`] (the background job): runs the Lint, Typecheck, and Architecture tools
-//!   over the whole project and stores the fingerprints.
+//! - [`ComputeBaseline`] (the background job): runs the Lint, Typecheck, Architecture, and Unused
+//!   tools over the whole project and stores the fingerprints.
 //! - [`lookup`] (edit and stop phases): the baseline when it is ready. When a harness has no
 //!   session-start event, the first edit of a session starts the job instead (lazily); that
 //!   first edit is not baseline-filtered.

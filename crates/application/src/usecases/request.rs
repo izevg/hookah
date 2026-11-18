@@ -13,6 +13,7 @@
 use std::path::{Path, PathBuf};
 
 use hookah_domain::finding::Finding;
+use hookah_domain::light::Skip;
 use hookah_domain::path::display_path;
 use hookah_domain::project::Project;
 use hookah_domain::toolchain::{CheckKind, Tool, Toolchain};
@@ -149,6 +150,14 @@ impl RunLog {
     pub fn fail(&mut self, reason: String) {
         if !self.failures.contains(&reason) {
             self.failures.push(reason);
+        }
+    }
+
+    /// Tells the agent a check was skipped because its input was over budget. Never a failure.
+    pub fn skipped(&mut self, skip: &Skip) {
+        let notice = Notice::Degraded(skip.to_string());
+        if !self.notices.contains(&notice) {
+            self.notices.push(notice);
         }
     }
 

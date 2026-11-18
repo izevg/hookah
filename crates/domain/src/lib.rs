@@ -13,10 +13,12 @@
 //! - [`verdict`]: the decision and compact report handed back to the agent, and the rule that
 //!   decides which findings are reported.
 //! - [`session`]: phases of an agent run, the files changed in it, and their roles.
+//! - [`light`]: test weight and budgets, so the stop phase helps instead of gatekeeping.
 //! - [`status`]: the latest outcome of a check run per project, for other tools to show.
 
 pub mod error;
 pub mod finding;
+pub mod light;
 pub mod path;
 pub mod project;
 pub mod session;

@@ -1,0 +1,6 @@
+exit: 0
+--- stdout
+{
+  "systemMessage": "hookah: mutation testing skipped: change too large (1 files / 171 lines, budget 3 / 150)"
+}
+--- stderr

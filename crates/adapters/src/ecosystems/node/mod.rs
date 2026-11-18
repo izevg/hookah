@@ -8,6 +8,7 @@
 //! [`detect`] for the rules and [`parse`] for the output formats.
 
 pub mod detect;
+pub mod heavy;
 pub mod parse;
 pub mod select;
 

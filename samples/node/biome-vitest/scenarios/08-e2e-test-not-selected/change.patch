@@ -1,0 +1,10 @@
+diff --git a/src/domain/discount.ts b/src/domain/discount.ts
+index a3c3eb3..e4d678f 100644
+--- a/src/domain/discount.ts
++++ b/src/domain/discount.ts
+@@ -1,4 +1,4 @@
+-/** Applies a percentage discount to a price in cents, clamping the rate to 0..100. */
++/** Applies a percentage discount to a price in cents, clamping the rate to 0..100 (rounded to whole cents). */
+ export function applyDiscount(cents: number, percent: number): number {
+   if (percent < 0) {
+     return cents;

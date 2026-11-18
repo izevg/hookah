@@ -141,6 +141,16 @@ mod tests {
     use super::*;
 
     #[test]
+    fn version_flag_prints_the_cargo_version() {
+        let err = Cli::try_parse_from(["hookah", "--version"]).unwrap_err();
+        assert_eq!(err.kind(), clap::error::ErrorKind::DisplayVersion);
+        assert_eq!(
+            err.to_string().trim(),
+            format!("hookah {}", env!("CARGO_PKG_VERSION"))
+        );
+    }
+
+    #[test]
     fn parses_check_with_global_limit() {
         let cli = Cli::try_parse_from(["hookah", "check", "a.rs", "b.rs", "--report-limit", "3"])
             .unwrap();

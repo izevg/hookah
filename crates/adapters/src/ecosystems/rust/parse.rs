@@ -380,18 +380,27 @@ mod tests {
 
     #[test]
     fn rustfmt_clean_and_parse_errors() {
-        assert!(
-            rustfmt(Path::new("/p"), &out(0, "", ""))
-                .unwrap()
-                .is_empty()
+        let root = abs("/p");
+        assert!(rustfmt(&root, &out(0, "", "")).unwrap().is_empty());
+        let util = root.join("src").join("util.rs");
+        let stderr = format!(
+            "error: expected one of `!` or `::`, found `}}`\n --> src/lib.rs:4:1\n  |\n4 | }}\n  | ^ expected one of `!` or `::`\n\nerror: expected item, found `}}`\n --> {}:9:2:\n",
+            util.display()
         );
-        let stderr = "error: expected one of `!` or `::`, found `}`\n --> src/lib.rs:4:1\n  |\n4 | }\n  | ^ expected one of `!` or `::`\n\nerror: expected item, found `}`\n --> /p/src/util.rs:9:2:\n";
-        let found = rustfmt(Path::new("/p"), &out(1, "", stderr)).unwrap();
+        let found = rustfmt(&root, &out(1, "", &stderr)).unwrap();
         assert_eq!(found.len(), 2);
         assert_eq!(found[0].location.to_string(), "src/lib.rs:4:1");
         assert_eq!(found[0].message, "expected one of `!` or `::`, found `}`");
         assert_eq!(found[0].kind, CheckKind::Format);
         assert_eq!(found[1].location.to_string(), "src/util.rs:9:2");
+    }
+
+    #[test]
+    fn a_position_after_a_drive_letter_splits_from_the_right() {
+        assert_eq!(
+            split_position(r"C:\x\src\lib.rs:3:5"),
+            Some((r"C:\x\src\lib.rs", 3, 5))
+        );
     }
 
     #[test]

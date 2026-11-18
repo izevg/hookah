@@ -74,7 +74,7 @@ Keeps the tree shallow enough to read and deep enough to mean something.
   It starts fast (every hook call is a cold start) and needs no runtime on the user's machine.
 - Keep dependencies few and justified. Add a crate only when writing the code yourself would be
   worse.
-- The tool *checks* TypeScript/JavaScript, Python, and Rust projects. That target list is
+- The tool *checks* TypeScript/JavaScript, Python, Rust, and Java projects. That target list is
   separate from the implementation language.
 
 ## Architecture: DDD + Clean + Hexagonal

@@ -13,6 +13,7 @@ hookah-application.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 dunce = "1"
+quick-xml = "0.38"
 
 [lints]
 workspace = true

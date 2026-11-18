@@ -1,6 +1,6 @@
 # Ecosystems
 
-For each ecosystem: how its manifests are recognized, which tools are detected and in what order
+For each ecosystem (Node, Python, Rust, Java): how its manifests are recognized, which tools are detected and in what order
 of preference, how output is parsed, and how related tests are selected.
 
 ## Node (TypeScript / JavaScript)
@@ -364,3 +364,179 @@ no toolchain, and a missing `cargo` degrades the run instead of failing it.
   `mutant survived: <description>`, at the mutated line. A timed-out mutant is a `Warning`
   (`mutant timed out: ...`): it is usually an endless loop, which is a kind of catch. A failing
   baseline (exit code 4), a whole-run timeout, or any other tool failure degrades the run.
+
+## Java (Maven and Gradle)
+
+Implemented. Files with the extension `java` are checked. The project root is the directory of the
+nearest `pom.xml`, `build.gradle`, `build.gradle.kts`, `settings.gradle`, or `settings.gradle.kts`:
+a module of a multi-module build, or the whole of a single-module one. `hookah` reads the build
+files as data (XML for Maven, plain text for the Groovy and Kotlin DSLs of Gradle) and never runs
+a build to detect anything. Detection costs about as much as starting the process, so it is not
+cached (`hookah detect` says `cache: off`). Only Java sources are checked: Kotlin, Groovy, and
+Scala files in the same build are not.
+
+**Detection.**
+
+- Build tool: Maven when the module directory has a `pom.xml`, else Gradle.
+- Where commands run: at the root of the build, addressing the module from there. Maven: the
+  topmost `pom.xml` that lists the module in its `<modules>` (through intermediate aggregators, and
+  with the `<module>dir/pom.xml</module>` spelling too), with `-pl <module>`; a module whose parent
+  does not aggregate it is its own root. Gradle: the nearest directory with a `settings.gradle(.kts)`,
+  with tasks addressed as `:<project>:<task>` (project path = directory relative to the root;
+  `projectDir` overrides are not followed). The search stops at the first directory that holds a
+  `.git`.
+- Program: the project's wrapper (`mvnw`, `gradlew`; `.cmd` and `.bat` on Windows) at the root or in
+  the module when it is executable, else `mvn` or `gradle` from `PATH`. A missing program or JDK
+  makes the tool fail to start or exit without a result, which is a degraded run (never a block).
+  The wrapper downloads its distribution on first use; that is the wrapper's business, not
+  `hookah`'s.
+- Offline: every command runs with `mvn -o` or `gradle --offline`. `hookah` never downloads
+  anything, so a project whose dependencies and plugins are not in `~/.m2` or the Gradle cache yet
+  is reported as degraded (quoting Maven's or Gradle's own error), not as a failure. Run one online
+  build first (`mvn verify`, `gradle build`), or prefetch with `mvn dependency:go-offline`.
+- Tools: only what the build files configure. A Maven plugin counts when it is in
+  `<build><plugins>` or `<reporting><plugins>` of the module's pom, of an aggregator above it, or of
+  a parent reached through `<relativePath>` (a parent that exists only in a remote repository is not
+  read). A Gradle plugin counts when its id is quoted in the module's script or the root script (so
+  `subprojects {}` configuration is seen), or, for the built-in `checkstyle` and `pmd`, when it is
+  named bare in a `plugins {}` block or configured by a `checkstyle {` block. Convention plugins in
+  `buildSrc` or an included build are not read.
+
+| Check     | Tool         | Used when                          | Timeout |
+|-----------|--------------|------------------------------------|---------|
+| format    | `spotless`   | the Spotless plugin                | 60 s    |
+| lint      | `checkstyle` | the Checkstyle plugin              | 120 s   |
+| lint      | `pmd`        | the PMD plugin                     | 120 s   |
+| lint      | `spotbugs`   | the SpotBugs plugin                | 180 s   |
+| typecheck | `javac`      | always (the build compiles)        | 180 s   |
+| test      | `surefire` (Maven), `gradle-test` | always        | 480 s   |
+| mutation  | `pitest`     | the PIT plugin                     | 600 s   |
+
+There is no separate architecture tool: ArchUnit rules are ordinary tests, so they run, and fail,
+with the tests at stop. google-java-format and palantir-java-format are used through Spotless
+(`googleJavaFormat()`, `palantirJavaFormat()`), which is how projects configure them; standalone
+formatters and Gradle's `com.palantir.java-format` plugin are not run.
+
+**Maven commands.** All start with `mvn -B -o`. `-pl <m>` appears only in a multi-module build,
+where `<m>` is the module path relative to the reactor root.
+
+| Tool         | Command                                                                                              |
+|--------------|------------------------------------------------------------------------------------------------------|
+| `spotless`   | `-q spotless:apply -pl <m> -DspotlessFiles=.*/<project-relative file>`                               |
+| `checkstyle` | `checkstyle:checkstyle`, then `target/checkstyle-result.xml` of the module                           |
+| `pmd`        | `pmd:pmd`, then `target/pmd.xml`                                                                     |
+| `spotbugs`   | `test-compile spotbugs:spotbugs`, then `target/spotbugsXml.xml`                                      |
+| `javac`      | `-q test-compile -pl <m> -am -amd`                                                                   |
+| `surefire`   | `test -pl <m> -am -Dtest=<classes> -Dsurefire.failIfNoSpecifiedTests=false -DfailIfNoTests=false [-DexcludedGroups=integration,slow,e2e]` |
+| `pitest`     | `test-compile org.pitest:pitest-maven:mutationCoverage -pl <m> -am -DtargetClasses=<fqcns> -DtargetTests=<fqcns> -DoutputFormats=XML -DtimestampedReports=false -DwithHistory=true -DhistoryInputFile=<m>/target/pit-history.bin -DhistoryOutputFile=<same> -DfailWhenNoMutations=false` |
+
+In a reactor, `checkstyle` and `pmd` run as `test-compile <goal> -pl <m> -am -amd`, and `spotbugs`
+the same (a module resolves its siblings from the reactor, which has them only after they
+compiled). `-am` makes the modules this one needs part of the run, so they resolve from the reactor
+and not from `~/.m2`; `-amd` adds the modules that need it, so an API change that breaks them is
+found in the edit phase. Their errors are reported at their own paths (`../app/src/...` relative
+to the module, shown relative to where the agent stands). The compiler plugin notices that a
+dependency changed only when it changed during the same Maven run, so every command that compiles
+in a reactor covers the same set of modules (the test and PIT runs, which come after the compile
+check, take `-am` only); otherwise a lint run that compiled the module first would hide the
+breakage of its dependents from the compile check. `-DexcludedGroups` is passed only for JUnit 5
+projects (a `junit-jupiter*` or `junit-bom` dependency): the JUnit 4 provider would read the tag
+names as category classes. The failsafe plugin is never invoked. Spotless' file filter is a regular
+expression over absolute paths, so on Windows (backslash separators) the formatter may not match
+the file and then does nothing.
+
+**Gradle commands.** All start with `gradle --console=plain --offline`, plus `--continue` except
+for the formatter and PIT. `:m:` is the project path (empty for the root project).
+
+| Tool          | Tasks                                                                                          |
+|---------------|------------------------------------------------------------------------------------------------|
+| `spotless`    | `:m:spotlessApply -PspotlessIdeHook=<absolute file>` (Spotless formats just that file)         |
+| `checkstyle`  | `:m:checkstyleMain :m:checkstyleTest`, then `build/reports/checkstyle/{main,test}.xml`         |
+| `pmd`         | `:m:pmdMain :m:pmdTest`, then `build/reports/pmd/{main,test}.xml`                              |
+| `spotbugs`    | `:m:spotbugsMain`, then `build/reports/spotbugs/main.xml` (needs the XML report enabled)       |
+| `javac`       | `:m:compileTestJava` and `:d:compileTestJava` for every dependent project `d`                  |
+| `gradle-test` | `:m:test --tests=<class>...`                                                                   |
+| `pitest`      | `:m:pitest --targetTests=<classes>`, then `build/reports/pitest/mutations.xml`                 |
+
+Dependents are the included projects whose scripts mention `project(":<path>")` of the module or
+of a dependent (transitively). Gradle takes neither PIT's `targetClasses`, nor its output format,
+nor tag exclusion on the command line, so those come from the project. The `pitest {}` block must
+set `outputFormats = ["XML"]` (otherwise the tool is reported as missing, with that hint). It
+decides the classes to mutate through `targetClasses`; the run is narrowed by tests only, so a
+survivor in another class that a selected test covers is reported too. It is incremental only with
+`enableDefaultIncrementalAnalysis = true` in that block. SpotBugs needs `reports { xml.required =
+true }` likewise.
+
+**Typecheck.** The build compiles the module's main and test sources and the dependents, so a
+broken test is caught at edit time too. Findings come from javac's own diagnostics: Maven's
+`path:[line,col] message` and Gradle's `path:line: error: message` (with the column taken from the
+caret line); the `symbol:`, `location:`, `required:`, `found:`, and `reason:` lines are folded into
+the message. Duplicates (Maven prints each error twice) are merged. A build that fails without a
+diagnostic (an unresolved dependency offline, a missing JDK) degrades the run, quoting the build
+tool's own error line.
+
+**Lint.** Checkstyle, PMD, and SpotBugs run per module and write XML reports in the build
+directory; `hookah` reads those, and trusts a report only when the console shows the tool ran (an
+older report survives a build that fails before the tool starts). The findings are everything the
+tool reports for the module, so the use case's usual filter decides what shows (the session
+baseline, else errors anywhere and warnings on changed lines). A build that stopped on a compile
+error is not a lint failure: the compile check reports it. Severities: Checkstyle `error` is an
+error, `warning` and `info` are warnings, `ignore` is dropped; PMD priorities 1 and 2 are errors,
+the rest warnings; SpotBugs priority 1 is an error, the rest warnings. The rule is the check or bug
+pattern name. A file that Spotless cannot parse is a syntax error that the compile check reports
+with its own location, so the formatter adds nothing for it.
+
+**Light tests.** Tests run at stop only, and only light unit tests that relate to the change. A
+changed test selects itself. A changed `src/main/java/a/b/Foo.java` selects the files of
+`src/test/java/a/b/` named `FooTest`, `FooTests`, `TestFoo`, and `FooTestCase` that exist; at most
+30 classes. Nothing related selects nothing: the whole suite never runs. These never run, however
+they are named or tagged:
+
+- classes named `*IT`, `*ITCase`, `*IntegrationTest(s)`, `*E2E`, `*E2ETest`;
+- everything under `src/it/` and `src/integrationTest/` (only `src/test/` is selected from);
+- classes whose source carries `@Tag("integration")`, `@Tag("slow")`, `@Tag("e2e")`,
+  `@SpringBootTest`, or `@Testcontainers`;
+- anything the failsafe plugin would run: the plugin is never invoked.
+
+For Maven and JUnit 5 projects `-DexcludedGroups=integration,slow,e2e` also covers tags on single
+methods; Gradle's `excludeTags` is a build-script setting, so a tag on a method of a selected class
+is not excluded there. A changed heavy test does not start a mutation run. Test files are the ones
+under `src/test`, `src/it`, and `src/integrationTest`, and any named `*Test`, `*Tests`, or `*IT`;
+everything else is source.
+
+Failed tests are error findings at the test source, on the line of the first stack frame in the
+test class: `CartTest.totalsItems failed: expected: <1001> but was: <1000>` (`errored: <exception
+type>: <message>` for exceptions). Surefire reports are read only for the classes the console says
+ran (it never deletes old ones); Gradle's results directory belongs to the run. If the tests do not
+compile, the compiler errors are the findings (`compile error: ...`); a Gradle selection that
+matches nothing is not a failure.
+
+**Mutation (PIT).** Available when the PIT plugin is configured. With tests but without it, a
+non-blocking notice names the coordinates: `org.pitest:pitest-maven`, plus
+`org.pitest:pitest-junit5-plugin` for JUnit 5, or the `info.solidsoft.pitest` plugin for Gradle.
+It runs at stop, after green tests, and only when a light test changed (the shared mutation
+rules). The sources to mutate are the changed sources plus those the changed tests cover by name
+(`FooTest` covers `Foo`), at most 10; the tests are the light tests related to them. For Maven
+these become `-DtargetClasses=a.Foo,a.Foo$*,...` and `-DtargetTests=a.FooTest,...` (the `$*` keeps
+nested classes in), so only the changed code and its own tests run. History is kept at
+`<module>/target/pit-history.bin` (`withHistory`), which makes the next run incremental: unchanged
+code with unchanged tests is not mutated again. A `SURVIVED` mutant is an error,
+`mutant survived: <what PIT changed>`, at the source line, with the mutator as the rule.
+`NO_COVERAGE` mutants are not reported: the selected tests are a deliberate subset, so what they do
+not reach is expected to be uncovered (the Node policy). "No mutations found" is an empty result.
+PIT needs green tests; a failing run degrades.
+
+**Caveats.**
+
+- JVM start dominates. A Maven call takes 1 to 3 s warm and a Gradle call about the same with the
+  daemon, so the edit phase (format, lint, compile) takes several seconds when all tools are
+  configured. Gradle's daemon is on by default and survives between hook calls, which is the
+  biggest speed-up; do not disable it (`org.gradle.daemon=false`). For Maven, a resident daemon such
+  as [mvnd](https://github.com/apache/maven-mvnd) helps the same way. `hookah` calls `mvn` or
+  `mvnw` and does not choose `mvnd` itself; to use it, put a `mvn` executable that forwards to
+  `mvnd` first on the `PATH` of the hook.
+- Timeouts are generous (see the table) because of JVM start and first-run compilation; a timeout
+  is a degraded run, never a block.
+- Multi-module reactors cost more: `-am -amd` compile the neighbors (incrementally). The test and
+  PIT runs cover the module and what it needs, not the dependents' tests.
+- Source layouts other than `src/<set>/java/<package>/<Class>.java` are not mapped to tests.

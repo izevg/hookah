@@ -170,9 +170,10 @@ of the `adapters` crate keeps its results between calls. It is a decorator insid
 `Ecosystems` registry: `ToolchainDetector::detect` goes through it, and `hookah detect` prints
 whether the result was a `hit`, a `miss`, or `off`.
 
-**Only Rust is cached.** Node and Python detection reads a few small files and takes about 3 ms,
-as much as starting the process, so caching it would add stale-cache risk for no gain. Node and
-Python detect directly on every call (`hookah detect` says `cache: off` for them). The module is
+**Only Rust is cached.** Node, Python, and Java detection reads a few small files and takes about
+3 ms, as much as starting the process (the JVM start in the commands that follow costs a
+thousand times more), so caching it would add stale-cache risk for no gain. Node, Python, and Java
+detect directly on every call (`hookah detect` says `cache: off` for them). The module is
 generic: to cache another ecosystem, give it `detection_inputs` and `derived_inputs` functions
 like Rust's and add an arm in `Ecosystems::detect_traced`.
 

@@ -1,6 +1,6 @@
 //! `Manifest` value object.
 //!
-//! A recognized package manifest (`package.json`, `pyproject.toml`, `Cargo.toml`): its path and
+//! A recognized package manifest (`package.json`, `pyproject.toml`, `Cargo.toml`, `pom.xml`, `build.gradle`): its path and
 //! the ecosystem it implies. It does not parse file contents; adapters do that.
 
 use std::path::{Path, PathBuf};
@@ -23,6 +23,11 @@ impl Manifest {
             "package.json" => Ecosystem::Node,
             "pyproject.toml" => Ecosystem::Python,
             "Cargo.toml" => Ecosystem::Rust,
+            "pom.xml"
+            | "build.gradle"
+            | "build.gradle.kts"
+            | "settings.gradle"
+            | "settings.gradle.kts" => Ecosystem::Java,
             _ => return None,
         };
         Some(Self {
@@ -52,5 +57,15 @@ mod tests {
         assert_eq!(node.ecosystem, Ecosystem::Node);
         let py = Manifest::from_path(Path::new("/p/pyproject.toml")).unwrap();
         assert_eq!(py.ecosystem, Ecosystem::Python);
+        for name in [
+            "pom.xml",
+            "build.gradle",
+            "build.gradle.kts",
+            "settings.gradle",
+            "settings.gradle.kts",
+        ] {
+            let java = Manifest::from_path(&Path::new("/p").join(name)).unwrap();
+            assert_eq!(java.ecosystem, Ecosystem::Java, "{name}");
+        }
     }
 }

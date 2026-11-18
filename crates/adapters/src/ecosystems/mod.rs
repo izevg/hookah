@@ -2,13 +2,14 @@
 //!
 //! [`Ecosystems`] is the registry: it sends each [`ToolchainDetector`] call to the module of the
 //! project's ecosystem. Each module implements toolchain detection, tool-output parsing into
-//! findings, and related-test selection. Rust, Node, and Python are implemented.
+//! findings, and related-test selection. Rust, Node, Python, and Java are implemented.
 //!
 //! Rust toolchain detection goes through the detection [`cache`]: the result is kept between hook
 //! calls until one of the inputs that the Rust module declares changes.
 
 mod baseline;
 pub mod cache;
+pub mod java;
 pub mod node;
 pub mod python;
 pub mod rust;
@@ -25,6 +26,7 @@ use hookah_domain::session::{ChangedLines, FileRole};
 use hookah_domain::toolchain::{MutationSelection, TestSelection, Tool, Toolchain};
 
 use cache::{CacheConfig, Origin, detect_cached};
+use java::JavaEcosystem;
 use node::NodeEcosystem;
 use python::PythonEcosystem;
 use rust::RustEcosystem;
@@ -32,6 +34,7 @@ use rust::RustEcosystem;
 /// Registry of all ecosystem detectors.
 #[derive(Debug)]
 pub struct Ecosystems {
+    java: JavaEcosystem,
     node: NodeEcosystem,
     python: PythonEcosystem,
     rust: RustEcosystem,
@@ -47,6 +50,7 @@ impl Ecosystems {
     /// Creates the registry with an explicit cache configuration.
     pub fn with_cache(cache: CacheConfig) -> Self {
         Self {
+            java: JavaEcosystem::new(),
             node: NodeEcosystem::new(),
             python: PythonEcosystem::new(),
             rust: RustEcosystem::with_cache(cache.clone()),
@@ -55,8 +59,9 @@ impl Ecosystems {
     }
 
     /// Like [`ToolchainDetector::detect`], and says whether the result came from the cache. Only
-    /// Rust detection is cached (it runs `cargo`, about 40 ms); Node and Python detection costs
-    /// about as much as starting the process, so caching it would add risk for no gain. To cache
+    /// Rust detection is cached (it runs `cargo`, about 40 ms); Node, Python, and Java detection
+    /// reads a few small files and costs about as much as starting the process, so caching it
+    /// would add risk for no gain. To cache
     /// another ecosystem, give it a `detection_inputs` and `derived_inputs` like Rust's and add an
     /// arm here.
     pub fn detect_traced(&self, project: &Project) -> Result<(Toolchain, Origin), PortError> {
@@ -76,6 +81,7 @@ impl Ecosystems {
 
     fn detect_uncached(&self, project: &Project) -> Result<Toolchain, PortError> {
         match project.ecosystem {
+            Ecosystem::Java => self.java.detect(project),
             Ecosystem::Rust => self.rust.detect(project),
             Ecosystem::Node => self.node.detect(project),
             Ecosystem::Python => self.python.detect(project),
@@ -90,6 +96,7 @@ impl ToolchainDetector for Ecosystems {
 
     fn classify(&self, project: &Project, file: &Path, changed: &ChangedLines) -> FileRole {
         match project.ecosystem {
+            Ecosystem::Java => self.java.classify(project, file, changed),
             Ecosystem::Rust => self.rust.classify(project, file, changed),
             Ecosystem::Node => self.node.classify(project, file, changed),
             Ecosystem::Python => self.python.classify(project, file, changed),
@@ -103,6 +110,9 @@ impl ToolchainDetector for Ecosystems {
         changed_sources: &[PathBuf],
     ) -> MutationSelection {
         match project.ecosystem {
+            Ecosystem::Java => self
+                .java
+                .select_mutants(project, changed_tests, changed_sources),
             Ecosystem::Rust => self
                 .rust
                 .select_mutants(project, changed_tests, changed_sources),
@@ -122,6 +132,7 @@ impl ToolchainDetector for Ecosystems {
         changed: &[PathBuf],
     ) -> Result<TestSelection, PortError> {
         match project.ecosystem {
+            Ecosystem::Java => self.java.select_tests(project, changed),
             Ecosystem::Rust => self.rust.select_tests(project, changed),
             Ecosystem::Node => self.node.select_tests(project, changed),
             Ecosystem::Python => self.python.select_tests(project, changed),
@@ -139,6 +150,7 @@ impl ToolchainDetector for Ecosystems {
         output: &ProcessOutput,
     ) -> Result<Vec<Finding>, PortError> {
         match project.ecosystem {
+            Ecosystem::Java => self.java.parse(project, tool, output),
             Ecosystem::Rust => self.rust.parse(project, tool, output),
             Ecosystem::Node => self.node.parse(project, tool, output),
             Ecosystem::Python => self.python.parse(project, tool, output),
@@ -191,7 +203,7 @@ mod tests {
     }
 
     #[test]
-    fn node_and_python_detection_is_never_cached() {
+    fn node_python_and_java_detection_is_never_cached() {
         use crate::ecosystems::node::detect::package::scratch::Scratch;
 
         let dir = std::env::temp_dir().join(format!("hookah-reg-{}", std::process::id()));

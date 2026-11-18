@@ -64,9 +64,11 @@ jobs:
         run: cargo test --workspace --no-fail-fast
 
   # The sample runner (samples/run.sh) is a bash script that applies patches and replays hook
-  # events against Rust, Node, and Python projects. On Windows it runs under Git Bash (the runner
-  # translates paths with cygpath and sends native `C:\...` paths in the payloads) and replays
-  # the Rust samples only.
+  # events against Rust, Node, Python, and Java projects. On Windows it runs under Git Bash (the
+  # runner translates paths with cygpath and sends native `C:\...` paths in the payloads) and
+  # replays the Rust samples only: the Java ones need a JDK, Maven, and Gradle (a long install for
+  # no new coverage of hookah's Windows paths), and Maven's Spotless file filter is a regular
+  # expression over absolute paths, which backslash separators break (see docs/ecosystems.md).
   samples:
     name: samples (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
@@ -84,7 +86,7 @@ jobs:
       # jdx/mise-action v5.2.9
       - uses: jdx/mise-action@236a21c3b91f5db6d4e174b348674a0f0caac06d
         with:
-          install_args: ${{ matrix.os == 'windows-latest' && 'rust cargo:cargo-mutants' || 'rust node pnpm python uv cargo:cargo-mutants' }}
+          install_args: ${{ matrix.os == 'windows-latest' && 'rust cargo:cargo-mutants' || 'rust node pnpm python uv java maven gradle cargo:cargo-mutants' }}
       # Swatinem/rust-cache v2.9.3
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0
       - name: Show the tools the runner uses

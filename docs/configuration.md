@@ -55,7 +55,7 @@ directory), `hookah` works without a cache.
 
 Set `HOOKAH_NO_CACHE=1` (any value other than empty or `0`) in the environment of the hook. Every
 call then detects from scratch and writes nothing. `hookah detect <path>` prints a `cache:` line
-that says `hit`, `miss`, or `off` (always `off` for Node and Python, which are not cached).
+that says `hit`, `miss`, or `off` (always `off` for Node, Python, and Java, which are not cached).
 
 ### Clearing the cache
 

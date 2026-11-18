@@ -1,0 +1,12 @@
+diff --git a/src/main/java/shop/Pricing.java b/src/main/java/shop/Pricing.java
+index efbb506..84a6e19 100644
+--- a/src/main/java/shop/Pricing.java
++++ b/src/main/java/shop/Pricing.java
+@@ -6,6 +6,7 @@ public final class Pricing {
+ 
+   /** Applies a percentage discount, rounding down. */
+   public static int discount(int cents, int percent) {
++    if (percent > 50) return cents / 2;
+     return cents - cents * percent / 100;
+   }
+ }

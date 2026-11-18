@@ -16,3 +16,7 @@ pnpm = "12"
 # Release versioning and notes from Conventional Commits (.github/cliff.toml).
 "aqua:orhun/git-cliff" = "2.14.2"
 "aqua:PowerShell/PowerShell" = "7.6.10"
+# Java samples (samples/java/*): a JDK plus both build tools, all in ~/.local.
+java = "temurin-21"
+maven = "3.9.16"
+gradle = "9.5.0"

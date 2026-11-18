@@ -20,6 +20,15 @@ pub enum Arg {
     /// them (whole path components), each as its own argument. For tools that are handed whole
     /// directories already and reject the same file given twice.
     TargetsOutside(Vec<String>),
+    /// Placeholder replaced by one argument: `prefix`, then every target joined with `separator`.
+    /// Nothing is added when there are no targets. For tools that take a value list in a single
+    /// option, such as `-DspotlessFiles=a,b`.
+    TargetsJoined {
+        /// Text in front of the first target.
+        prefix: String,
+        /// Text between two targets.
+        separator: String,
+    },
 }
 
 /// A command to run: program, arguments with target placeholders, directory, and time limit.
@@ -70,6 +79,11 @@ impl CommandSpec {
             match arg {
                 Arg::Literal(s) => out.push(s.clone()),
                 Arg::Targets => out.extend(targets.iter().cloned()),
+                Arg::TargetsJoined { prefix, separator } => {
+                    if !targets.is_empty() {
+                        out.push(format!("{prefix}{}", targets.join(separator)));
+                    }
+                }
                 Arg::TargetsOutside(covered) => out.extend(
                     targets
                         .iter()
@@ -138,6 +152,32 @@ mod tests {
             ["test", "-p", "a", "b", "--quiet"]
         );
         assert_eq!(spec.expand_args(&[]), ["test", "-p", "--quiet"]);
+    }
+
+    #[test]
+    fn joined_targets_make_one_argument_or_none() {
+        let spec = CommandSpec::new(
+            "mvn",
+            vec![
+                Arg::Literal("apply".into()),
+                Arg::TargetsJoined {
+                    prefix: "-Df=.*/".into(),
+                    separator: ",.*/".into(),
+                },
+                Arg::Literal("-q".into()),
+            ],
+            "/r",
+            Duration::from_secs(1),
+        );
+        assert_eq!(
+            spec.expand_args(&["a.java".into(), "b.java".into()]),
+            ["apply", "-Df=.*/a.java,.*/b.java", "-q"]
+        );
+        assert_eq!(
+            spec.expand_args(&["a.java".into()]),
+            ["apply", "-Df=.*/a.java", "-q"]
+        );
+        assert_eq!(spec.expand_args(&[]), ["apply", "-q"]);
     }
 
     #[test]

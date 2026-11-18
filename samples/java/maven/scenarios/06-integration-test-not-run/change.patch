@@ -1,0 +1,12 @@
+diff --git a/src/test/java/shop/CartIT.java b/src/test/java/shop/CartIT.java
+index 3cb9b95..f3a4e6e 100644
+--- a/src/test/java/shop/CartIT.java
++++ b/src/test/java/shop/CartIT.java
+@@ -10,6 +10,6 @@ class CartIT {
+   void bigCart() {
+     Cart cart = new Cart();
+     cart.add(1);
+-    assertEquals(1, cart.total());
++    assertEquals(2, cart.total());
+   }
+ }

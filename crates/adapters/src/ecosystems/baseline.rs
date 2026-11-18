@@ -11,6 +11,8 @@
 //!   architecture tool (dependency-cruiser) gets `src` when the package has one, else `.`: it
 //!   follows imports, and a bare `.` would walk `node_modules` and build output in projects whose
 //!   config does not exclude them.
+//! - Java: the lint and typecheck commands name the module and take no file targets, so the
+//!   targets are ignored.
 //! - Python: mypy already lists the top-level packages in its command; import-linter reads its
 //!   contracts from the config file. Both get no targets.
 
@@ -28,7 +30,7 @@ pub fn targets(project: &Project, tool: &Tool) -> Vec<String> {
         Ecosystem::Node if tool.name == DEPCRUISE && project.root.join("src").is_dir() => {
             vec!["src".to_string()]
         }
-        Ecosystem::Rust | Ecosystem::Node | Ecosystem::Python => whole,
+        Ecosystem::Java | Ecosystem::Rust | Ecosystem::Node | Ecosystem::Python => whole,
     }
 }
 

@@ -16,9 +16,11 @@ Without `HOOKAH_BIN`, the runner builds `target/release/hookah` once. Tools come
 repository's pinned toolchain through `mise exec` (`MISE=/path/to/mise` overrides
 `~/.local/bin/mise`; without mise the runner uses the `PATH` as is).
 
-The runner is a bash script that relies on POSIX tools, so it runs on Linux and macOS, in CI
-as well. Windows is covered by the unit and integration tests
-of `cargo test --workspace`.
+The runner is a bash script that relies on POSIX tools. It runs on Linux and macOS, and on
+Windows under Git Bash: there it translates paths with `cygpath` (payloads carry native `C:\...`
+paths, as Claude Code on Windows sends them, and every spelling of the project copy path becomes
+`<root>`), drops carriage returns, and starts `hookah.exe`. CI replays the Rust samples on Windows
+(`samples/run.sh rust/`), where the toolchain comes straight from `PATH` (no mise).
 
 ## Layout
 

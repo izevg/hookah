@@ -63,7 +63,9 @@ jobs:
         run: cargo test --workspace --no-fail-fast
 
   # The sample runner (samples/run.sh) is a bash script that applies patches and replays hook
-  # events against Rust, Node, and Python projects. It runs on Linux and macOS only.
+  # events against Rust, Node, and Python projects. On Windows it runs under Git Bash (the runner
+  # translates paths with cygpath and sends native `C:\...` paths in the payloads) and replays
+  # the Rust samples only.
   samples:
     name: samples (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
@@ -71,19 +73,37 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
+      # The patches and expected outputs are compared byte for byte: no CRLF conversion.
+      - name: Keep line endings as they are
+        run: git config --global core.autocrlf false
       # actions/checkout v7.0.1
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       # jdx/mise-action v5.2.9
       - uses: jdx/mise-action@236a21c3b91f5db6d4e174b348674a0f0caac06d
         with:
-          install_args: rust node pnpm python uv
+          install_args: ${{ matrix.os == 'windows-latest' && 'rust' || 'rust node pnpm python uv' }}
       # Swatinem/rust-cache v2.9.3
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0
+      - name: Show the tools the runner uses
+        if: matrix.os == 'windows-latest'
+        run: |
+          uname -a
+          bash --version | head -n 1
+          git --version
+          cargo --version
+          jq --version
+          cygpath -w "$PWD"
       - name: Run the samples
-        # run.sh looks for mise at ~/.local/bin/mise by default.
-        run: MISE="$(command -v mise)" samples/run.sh
+        # run.sh looks for mise at ~/.local/bin/mise by default; on Windows the tools are already
+        # on PATH, so it runs them directly.
+        run: |
+          if [ "$RUNNER_OS" = Windows ]; then
+            samples/run.sh rust/
+          else
+            MISE="$(command -v mise)" samples/run.sh
+          fi
 
   # Only on pull requests: mutate what the branch changed. Any missed mutant fails the job.
   mutation:

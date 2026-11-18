@@ -1,0 +1,1 @@
+node -e "const { chromium } = require('playwright'); require('fs').accessSync(chromium.executablePath())"

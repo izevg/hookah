@@ -1,0 +1,6 @@
+exit: 0
+--- stdout
+{
+  "systemMessage": "hookah: checks incomplete: vitest: story tests skipped: Playwright could not launch its browser (run `npx playwright install`)"
+}
+--- stderr

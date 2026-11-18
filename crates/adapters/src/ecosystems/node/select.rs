@@ -2,14 +2,19 @@
 //!
 //! - [`classify`]: a file is a test when its name has a `.test.` or `.spec.` segment
 //!   (`foo.test.ts`, `foo.spec.tsx`) or when a directory between the project root and the file is
-//!   called `__tests__`, `test`, or `tests`. Everything else is source.
+//!   called `__tests__`, `test`, or `tests`. Everything else is source, including Storybook
+//!   stories (see [`is_story`]).
 //! - [`related_tests`]: the changed JavaScript and TypeScript files under the project, as absolute
 //!   paths. The runner's own import graph (`vitest related`, `jest --findRelatedTests`) finds the
 //!   tests that import them, so no test file is guessed here. Heavy files (integration, e2e, see
 //!   [`super::heavy`]) are never handed over, and the runner is told to exclude heavy tests. No
-//!   runner or no such file selects nothing.
+//!   runner or no such file selects nothing. Storybook stories need no rule of their own: when the
+//!   project's Vitest config has the Storybook addon's project, `vitest related` maps a changed
+//!   story, or a changed component a story imports, to exactly those story files, and only that
+//!   project's browser starts for them. See the Storybook section of the ecosystem docs.
 //! - [`mutants`]: the sources to mutate. A changed test maps to its source by naming convention
-//!   (see [`sources_of_test`]); heavy tests map to nothing; changed sources count directly. Only files that exist survive.
+//!   (see [`sources_of_test`]); heavy tests map to nothing; changed sources count directly. Stories are never
+//!   mutation targets: they run in a browser, which is not light. Only files that exist survive.
 //!   Stryker takes one comma-separated `--mutate` list, so the selection is a single target.
 
 use std::path::{Path, PathBuf};
@@ -37,6 +42,19 @@ pub fn classify(project: &Project, file: &Path) -> FileRole {
     } else {
         FileRole::Source
     }
+}
+
+/// A Storybook stories file: a `stories` segment between the stem and the extension
+/// (`Button.stories.tsx`). Stories are source for the file role, run as tests by the project's
+/// own Vitest setup, and never mutated.
+pub fn is_story(path: &Path) -> bool {
+    path.file_name()
+        .and_then(|n| n.to_str())
+        .is_some_and(|name| {
+            let mut parts = name.split('.').skip(1).collect::<Vec<_>>();
+            parts.pop(); // the extension
+            parts.contains(&"stories")
+        })
 }
 
 /// `foo.test.ts` and `foo.spec.js`: a `test` or `spec` segment between the stem and the extension.
@@ -161,11 +179,11 @@ pub fn mutants(
     let mut files: Vec<PathBuf> = Vec::new();
     let mapped = changed_tests
         .iter()
-        .filter(|t| !heavy::is_heavy(project, t))
+        .filter(|t| !heavy::is_heavy(project, t) && !is_story(t))
         .flat_map(|t| sources_of_test(project, t));
     let direct = changed_sources
         .iter()
-        .filter(|f| Ecosystem::Node.can_check(f) && f.is_file())
+        .filter(|f| Ecosystem::Node.can_check(f) && !is_story(f) && f.is_file())
         .filter_map(|f| project.relative(f).ok());
     for rel in mapped.chain(direct) {
         if mutate_safe(&rel) && !files.contains(&rel) {
@@ -405,6 +423,48 @@ mod tests {
                 ]
             ),
             MutationSelection::Targets(vec!["src/foo.ts,src/other.ts".into()])
+        );
+    }
+
+    #[test]
+    fn stories_are_source_and_never_mutation_targets() {
+        let s = Scratch::new();
+        for story in ["src/Button.stories.tsx", "src/a/b.stories.js"] {
+            assert_eq!(role(&s, story), FileRole::Source, "{story}");
+            assert!(is_story(Path::new(story)), "{story}");
+        }
+        for other in ["src/stories.ts", "src/Button.story.tsx", "src/Button.tsx"] {
+            assert!(!is_story(Path::new(other)), "{other}");
+        }
+        files(
+            &s,
+            &[
+                "src/Button.tsx",
+                "src/Button.stories.tsx",
+                "src/Button.test.tsx",
+            ],
+        );
+        assert_eq!(
+            mutate(
+                &s,
+                &["src/Button.test.tsx"],
+                &["src/Button.stories.tsx", "src/Button.tsx"]
+            ),
+            MutationSelection::Targets(vec!["src/Button.tsx".into()])
+        );
+        assert_eq!(
+            mutate(&s, &[], &["src/Button.stories.tsx"]),
+            MutationSelection::None
+        );
+    }
+
+    #[test]
+    fn a_changed_story_goes_to_the_runner_like_any_file() {
+        let s = Scratch::new();
+        let story = s.path("src/Button.stories.tsx");
+        assert_eq!(
+            related_tests(&project(&s), std::slice::from_ref(&story), true),
+            TestSelection::Targets(vec![story.to_string_lossy().into_owned()])
         );
     }
 

@@ -37,7 +37,10 @@ nothing and loses time. So the default is light: cheap checks on what changed, a
   `playwright/`, `cypress/`; files `*.e2e.*`, `*.int.*`, `*_integration.*`) and leaves the heavy
   ones out. Tests marked `#[ignore]` stay skipped, and Python's `integration`, `e2e`, and `slow`
   markers are deselected when the project registers them. Per-ecosystem details are in
-  [ecosystems.md](ecosystems.md).
+  [ecosystems.md](ecosystems.md). The exception that is light: a Storybook story that the
+  project runs through the Vitest addon, scoped to the changed story file (or the stories that
+  import a changed component), with a missing browser reported as a notice. The legacy
+  `@storybook/test-runner`, which needs a running Storybook, is never run.
 - The full test suite. With no related test, no test runs. With more related test targets than
   the budget, none run either.
 - Benches.

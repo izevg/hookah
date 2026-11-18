@@ -1,0 +1,12 @@
+diff --git a/src/badge/badge.stories.js b/src/badge/badge.stories.js
+index 5d8491c..8ff6e11 100644
+--- a/src/badge/badge.stories.js
++++ b/src/badge/badge.stories.js
+@@ -13,6 +13,6 @@ export const Small = {
+ export const Capped = {
+   args: { count: 120 },
+   play: async ({ canvasElement }) => {
+-    await expect(canvasElement.textContent).toBe("99+");
++    await expect(canvasElement.textContent).toBe("100");
+   },
+ };

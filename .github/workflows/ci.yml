@@ -98,6 +98,11 @@ jobs:
           cargo --version
           jq --version
           cygpath -w "$PWD"
+      # The Storybook sample runs its stories in Playwright's Chromium; without it, those
+      # scenarios report SKIP. The version must match `playwright` in the sample's lockfile.
+      - name: Install Chromium for the Storybook sample
+        if: matrix.os != 'windows-latest'
+        run: mise exec -- npx --yes playwright@1.65.1 install --with-deps chromium
       - name: Run the samples
         # run.sh looks for mise at ~/.local/bin/mise by default; on Windows the tools are already
         # on PATH, so it runs them directly.

@@ -110,6 +110,22 @@ mod tests {
         assert!(err.message().contains("/nonexistent/hookah"));
     }
 
+    /// Spawns, retrying while the script is "Text file busy" (ETXTBSY): another test thread forked
+    /// while this script's write handle was open, and that child still holds it until its `exec`.
+    /// A failed `exec` ran nothing, so retrying is safe.
+    #[cfg(unix)]
+    fn spawn(spawner: &BackgroundSpawner, root: &str, session: &str) {
+        for _ in 0..200 {
+            match spawner.spawn(Path::new(root), session) {
+                Err(e) if e.message().contains("Text file busy") => {
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                other => return other.unwrap(),
+            }
+        }
+        panic!("the script stayed busy");
+    }
+
     #[cfg(unix)]
     fn script(tag: &str, body: &str) -> (PathBuf, PathBuf) {
         use std::os::unix::fs::PermissionsExt;
@@ -130,9 +146,7 @@ mod tests {
             "sleep 0.3; echo \"$@\" > \"$(dirname \"$0\")/args\"",
         );
         let started = Instant::now();
-        BackgroundSpawner::new(&exe, true)
-            .spawn(Path::new("/some/root"), "ses 1")
-            .unwrap();
+        spawn(&BackgroundSpawner::new(&exe, true), "/some/root", "ses 1");
         assert!(started.elapsed() >= Duration::from_millis(300));
         let args = fs::read_to_string(dir.join("args")).unwrap();
         assert_eq!(args.trim(), "baseline --session=ses 1 --root /some/root");
@@ -144,9 +158,7 @@ mod tests {
     fn returns_at_once_without_wait_and_the_child_keeps_running() {
         let (dir, exe) = script("detach", "sleep 1; echo done > \"$(dirname \"$0\")/done\"");
         let started = Instant::now();
-        BackgroundSpawner::new(&exe, false)
-            .spawn(Path::new("/r"), "s")
-            .unwrap();
+        spawn(&BackgroundSpawner::new(&exe, false), "/r", "s");
         assert!(started.elapsed() < Duration::from_millis(800));
         let done = dir.join("done");
         let deadline = Instant::now() + Duration::from_secs(10);
@@ -164,9 +176,7 @@ mod tests {
             "group",
             "ps -o pid=,pgid= -p $$ > \"$(dirname \"$0\")/ids\"; [ -t 0 ] || echo notty >> \"$(dirname \"$0\")/ids\"",
         );
-        BackgroundSpawner::new(&exe, true)
-            .spawn(Path::new("/r"), "s")
-            .unwrap();
+        spawn(&BackgroundSpawner::new(&exe, true), "/r", "s");
         let ids = fs::read_to_string(dir.join("ids")).unwrap();
         let mut fields = ids.split_whitespace();
         let (pid, pgid) = (fields.next().unwrap(), fields.next().unwrap());

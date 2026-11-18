@@ -44,6 +44,7 @@ impl Sandbox {
             .env("HOME", self.root.join("home"))
             .env("USERPROFILE", self.root.join("home"))
             .env_remove("XDG_CONFIG_HOME")
+            .env_remove("HERMES_HOME")
             .env("PATH", self.root.join("bin"))
             .output()
             .unwrap()
@@ -203,6 +204,122 @@ fn the_opencode_plugin_matches_hookah_plugin_opencode() {
     let printed = sb.ok(&["plugin", "opencode"]);
     assert_eq!(text(&sb.project(".opencode/plugins/hookah.ts")), printed);
     assert_eq!(sb.ok(&["setup", "opencode", "--print"]), printed);
+}
+
+#[test]
+fn hermes_setup_installs_the_plugin_and_enables_it_without_touching_the_rest() {
+    let sb = Sandbox::new("hermes");
+    let config = sb.home(".hermes/config.yaml");
+    fs::create_dir_all(config.parent().unwrap()).unwrap();
+    let original = "# mine\nmodel: x\nplugins:\n  enabled:\n    - kanban  # keep\n";
+    fs::write(&config, original).unwrap();
+    let out = sb.ok(&["setup", "hermes"]);
+    assert!(
+        out.starts_with("hookah setup: hermes, user scope\nupdated .hermes/config.yaml\n")
+            || out.contains("updated"),
+        "{out}"
+    );
+    assert!(out.contains("hook_callback_timeout"), "{out}");
+    assert_eq!(text(&config), format!("{original}    - hookah\n"));
+    assert_eq!(text(&sb.home(".hermes/config.yaml.hookah.bak")), original);
+    let plugin = sb.home(".hermes/plugins/hookah");
+    assert!(text(&plugin.join("plugin.yaml")).starts_with("name: hookah\n"));
+    assert_eq!(
+        text(&plugin.join("__init__.py")),
+        sb.ok(&["plugin", "hermes"])
+    );
+    // A second run changes nothing.
+    let again = sb.ok(&["setup", "hermes"]);
+    assert!(
+        again.contains("already up to date, nothing written"),
+        "{again}"
+    );
+    assert_eq!(text(&config), format!("{original}    - hookah\n"));
+}
+
+#[test]
+fn hermes_setup_creates_a_missing_config_and_honors_hermes_home() {
+    let sb = Sandbox::new("hermes-home");
+    sb.ok(&["setup", "hermes"]);
+    assert_eq!(
+        text(&sb.home(".hermes/config.yaml")),
+        "plugins:\n  enabled:\n    - hookah\n"
+    );
+    let elsewhere = sb.root.join("elsewhere");
+    let out = Command::new(HOOKAH)
+        .args(["setup", "hermes"])
+        .current_dir(sb.root.join("project"))
+        .env("HOME", sb.root.join("home"))
+        .env("HERMES_HOME", &elsewhere)
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    assert!(elsewhere.join("config.yaml").is_file());
+    assert!(elsewhere.join("plugins/hookah/__init__.py").is_file());
+}
+
+#[test]
+fn hermes_refuses_what_it_cannot_edit_safely_and_project_scope() {
+    let sb = Sandbox::new("hermes-refuse");
+    let config = sb.home(".hermes/config.yaml");
+    fs::create_dir_all(config.parent().unwrap()).unwrap();
+    fs::write(&config, "plugins:\n  enabled: [a]\n").unwrap();
+    let refused = sb.hookah(&["setup", "hermes"]);
+    assert_eq!(refused.status.code(), Some(1));
+    let stderr = String::from_utf8(refused.stderr).unwrap();
+    assert!(
+        stderr.contains("add `hookah` to plugins.enabled by hand"),
+        "{stderr}"
+    );
+    assert_eq!(text(&config), "plugins:\n  enabled: [a]\n");
+    assert!(!sb.home(".hermes/plugins").exists());
+    let project = sb.hookah(&["setup", "hermes", "--scope", "project"]);
+    assert_eq!(project.status.code(), Some(1));
+    assert!(
+        String::from_utf8(project.stderr)
+            .unwrap()
+            .contains("hermes has no project-level config")
+    );
+}
+
+#[test]
+fn hermes_dry_run_print_and_command_note() {
+    let sb = Sandbox::new("hermes-dry");
+    let dry = sb.ok(&["setup", "hermes", "--dry-run"]);
+    assert!(
+        dry.contains("would create .hermes/config.yaml") || dry.contains("config.yaml"),
+        "{dry}"
+    );
+    assert!(
+        dry.contains("would create") && dry.contains("plugins/hookah/__init__.py"),
+        "{dry}"
+    );
+    assert_eq!(
+        sb.ok(&["setup", "hermes", "--print"]),
+        "plugins:\n  enabled:\n    - hookah\n"
+    );
+    assert!(!sb.home(".hermes").exists());
+    let out = sb.ok(&["setup", "hermes", "--command", "x"]);
+    assert!(
+        out.contains("note: --command is ignored for Hermes"),
+        "{out}"
+    );
+}
+
+#[test]
+fn hermes_is_detected_once_the_plugin_is_installed_and_enabled() {
+    let sb = Sandbox::new("hermes-detect");
+    fs::write(sb.root.join("bin/hermes"), "").unwrap();
+    let before = sb.ok(&["setup", "--detect"]);
+    assert!(before.contains("hermes: installed (binary"), "{before}");
+    assert!(
+        before.contains("project: no project config; user: not configured"),
+        "{before}"
+    );
+    sb.ok(&["setup", "hermes"]);
+    let after = sb.ok(&["setup", "--detect"]);
+    let line = after.lines().find(|l| l.starts_with("hermes")).unwrap();
+    assert!(line.ends_with("user: configured"), "{line}");
 }
 
 #[test]

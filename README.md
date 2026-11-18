@@ -25,9 +25,10 @@ feeds failures straight back to the agent, so it fixes them immediately.
 > <https://izevg.github.io/hookah/llms.txt>).
 
 > **Status:** works for Rust, Node (TypeScript/JavaScript), and Python projects, with the Claude
-> Code, Codex, Cursor, Qoder, Kimi, and opencode harnesses (`hookah check`, `hookah detect`, `hookah hook
-> <harness>`, `hookah plugin opencode`, `hookah setup`), including mutation testing at stop, and
-> with [Orca](docs/setup/plugins/orca.md) (`hookah plugin orca`, `hookah status`).
+> Code, Codex, Cursor, Qoder, Kimi, and opencode harnesses and the Hermes Agent assistant
+> (`hookah check`, `hookah detect`, `hookah hook <harness>`, `hookah plugin <harness>`, `hookah
+> setup`), including mutation testing at stop, and with [Orca](docs/setup/plugins/orca.md)
+> (`hookah plugin orca`, `hookah status`).
 > End-to-end [samples](samples/README.md) cover the behavior. Prebuilt binaries and the install
 > scripts ship with each [release](https://github.com/izevg/hookah/releases). This repository runs `hookah` on itself; see
 > [Claude Code setup](docs/setup/hooks/cli/claude-code.md#dogfooding).
@@ -78,7 +79,7 @@ old warnings from code it did not touch.
 
    ```sh
    hookah setup --detect     # which harnesses are installed and configured
-   hookah setup claude       # or: codex, cursor, qoder, kimi, opencode (add --scope user for every project)
+   hookah setup claude       # or: codex, cursor, qoder, kimi, opencode, hermes (add --scope user for every project)
    ```
 
    Setup merges into existing settings, is safe to repeat, and backs the original up once. Use
@@ -96,6 +97,7 @@ Per-harness details and the manual snippets:
 | Qoder       | [docs/setup/hooks/cli/qoder.md](docs/setup/hooks/cli/qoder.md) |
 | Kimi Code   | [docs/setup/hooks/cli/kimi.md](docs/setup/hooks/cli/kimi.md) |
 | opencode    | [docs/setup/plugins/opencode.md](docs/setup/plugins/opencode.md) |
+| Hermes Agent | [docs/setup/assistants/hermes.md](docs/setup/assistants/hermes.md) |
 | Orca        | [docs/setup/plugins/orca.md](docs/setup/plugins/orca.md) (planned) |
 
 An agent doing this for you follows [docs/setup/agents.md](docs/setup/agents.md).
@@ -123,6 +125,7 @@ reports results in the format that harness expects. The table shows the integrat
 | Claude Code | `PostToolUse` (`Edit\|Write\|MultiEdit`), `Stop`    | exit code 2 + stderr                     |
 | Codex CLI   | `PostToolUse` (`apply_patch`), `Stop` in `config.toml` / `hooks.json` | JSON `decision: block` + `reason` |
 | opencode    | bundled plugin (`hookah plugin opencode`): `tool.execute.after`, `session.idle` | appended tool output (edit), injected message (stop) |
+| Hermes Agent | bundled plugin (`hookah setup hermes`): `transform_tool_result` (`write_file`, `patch`), `pre_verify`, `on_session_start` | tool result field (edit), `continue` directive (stop) |
 | Kimi Code   | `PostToolUse` (`Write\|Edit`) `[[hooks]]` in `config.toml` (beta); no stop phase | stdout (may reach the model) |
 | Qoder       | `PostToolUse` (`Write\|Edit`), `Stop` in `.qoder/settings.json` | `additionalContext` (edit), exit 2 + stderr (stop) |
 | Cursor      | `afterFileEdit`, `stop`, `sessionStart` in `.cursor/hooks.json` (IDE and `cursor-agent`) | `followup_message` (stop); the edit hook cannot reach the model |

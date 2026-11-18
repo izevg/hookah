@@ -49,6 +49,12 @@ fn execute(args: &SetupArgs, env: &Env, exe: &str) -> Result<String, String> {
     if target == Target::Opencode && args.command.is_some() {
         out.push_str("note: --command is ignored for opencode; the plugin runs `hookah` from PATH or HOOKAH_BIN\n");
     }
+    if target == Target::Hermes {
+        if args.command.is_some() {
+            out.push_str("note: --command is ignored for Hermes; the plugin runs `hookah` from PATH or HOOKAH_BIN\n");
+        }
+        out.push_str("note: Hermes abandons a plugin hook after plugins.hook_callback_timeout seconds (30 by default); raise it in config.yaml if the stop checks run slow tests\n");
+    }
     Ok(out)
 }
 
@@ -60,5 +66,6 @@ fn target(kind: HarnessKind) -> Target {
         HarnessKind::Kimi => Target::Kimi,
         HarnessKind::Cursor => Target::Cursor,
         HarnessKind::Opencode => Target::Opencode,
+        HarnessKind::Hermes => Target::Hermes,
     }
 }

@@ -21,7 +21,7 @@ feeds failures straight back to the agent, so it fixes them immediately.
 
 > **Status:** works for Rust, Node (TypeScript/JavaScript), and Python projects, with the Claude
 > Code, Codex, Qoder, Kimi, and opencode harnesses (`hookah check`, `hookah detect`, `hookah hook
-> <harness>`, `hookah plugin opencode`), including mutation testing at stop. Orca is still to come.
+> <harness>`, `hookah plugin opencode`, `hookah setup`), including mutation testing at stop. Orca is still to come.
 > End-to-end [samples](samples/README.md) cover the behavior. Prebuilt binaries and the install
 > scripts arrive with the first release. This repository runs `hookah` on itself; see
 > [Claude Code setup](docs/setup/hooks/claude-code.md#dogfooding).
@@ -62,13 +62,25 @@ old warnings from code it did not touch.
 | From source   | `cargo install --git https://github.com/izevg/hookah --locked hookah` |
 
 > **Let your agent do it.** Paste `https://github.com/izevg/hookah` into your coding agent and
-> say: *"install and configure hookah for me."* An agent-readable install guide will live at
-> <https://izevg.github.io/hookah/> (coming soon).
+> say: *"install and configure hookah for me."* The agent follows the deterministic procedure in
+> [docs/setup/agents.md](docs/setup/agents.md).
 
 ## Quick start
 
-1. Put `hookah` on your `PATH`.
-2. Add the hook config for your harness:
+1. Put `hookah` on your `PATH` (see Install).
+2. Configure your harness, one command, no hand-editing:
+
+   ```sh
+   hookah setup --detect     # which harnesses are installed and configured
+   hookah setup claude       # or: codex, qoder, kimi, opencode (add --scope user for every project)
+   ```
+
+   Setup merges into existing settings, is safe to repeat, and backs the original up once. Use
+   `--dry-run` to preview and `--command "mise exec -- hookah"` for a mise-pinned toolchain.
+3. Restart the harness, or approve the new hooks in it. To try it by hand: `hookah check <file>`
+   runs the edit phase on one file, and `hookah detect <file>` shows which tools it found.
+
+Per-harness details and the manual snippets:
 
 | Harness     | Setup |
 |-------------|-------|
@@ -76,11 +88,10 @@ old warnings from code it did not touch.
 | Codex CLI   | [docs/setup/hooks/codex.md](docs/setup/hooks/codex.md) |
 | Qoder       | [docs/setup/hooks/qoder.md](docs/setup/hooks/qoder.md) |
 | Kimi Code   | [docs/setup/hooks/kimi.md](docs/setup/hooks/kimi.md) |
-| opencode    | `hookah plugin opencode > .opencode/plugins/hookah.ts` — [docs/setup/plugins/opencode.md](docs/setup/plugins/opencode.md) |
+| opencode    | [docs/setup/plugins/opencode.md](docs/setup/plugins/opencode.md) |
 | Orca        | [docs/setup/plugins/orca.md](docs/setup/plugins/orca.md) (planned) |
 
-3. Edit a file. To try it by hand: `hookah check <file>` runs the edit phase on one file, and
-   `hookah detect <file>` shows which tools it found.
+An agent doing this for you follows [docs/setup/agents.md](docs/setup/agents.md).
 
 ## Supported ecosystems
 
@@ -110,8 +121,8 @@ is still planned.
 | Qoder       | `PostToolUse` (`Write\|Edit`), `Stop` in `.qoder/settings.json` | `additionalContext` (edit), exit 2 + stderr (stop) |
 | Orca        | through the hooks of the agent it runs; Orca plugin for workspace-level events | per hosted agent |
 
-Each harness is supported through written setup instructions. A setup wizard that detects
-installed harnesses is planned.
+Each harness is configured by `hookah setup <harness>`, and the manual steps are written down per
+harness.
 
 ## How it works
 
@@ -164,6 +175,7 @@ They run once, when the agent says it's done, and a red result blocks the finish
 | [Configuration](docs/configuration.md) | `.hookah.toml` and the cache (in progress) |
 | [Mutation testing](docs/mutation.md) | mutation-testing `hookah` itself |
 | [Harness setup](docs/setup/hooks/claude-code.md) | one page per harness, linked in Quick start |
+| [Setup for agents](docs/setup/agents.md) | the exact procedure an agent follows to install and configure `hookah` |
 
 ## Contributing
 

@@ -24,6 +24,23 @@ The Qoder docs do not say that `PostToolUse` can block, so the edit phase uses t
 
 ## Setup
 
+Run this in the project:
+
+```sh
+hookah setup qoder                # .qoder/settings.json in this project
+hookah setup qoder --scope user   # ~/.qoder/settings.json, for every project
+```
+
+Both write the same configuration as the manual snippet below. Existing settings are kept, a
+second run changes nothing, and the original file is backed up once to `<file>.hookah.bak`. A file
+that does not parse is refused and left untouched. `--dry-run` shows the result without writing,
+`--print` prints only the snippet, and `--command "mise exec -- hookah"` replaces the default command
+(the absolute path of the running binary).
+
+Then restart Qoder.
+
+### Manual setup
+
 Put `hookah` at `$HOME/.local/bin/hookah`. Add this to `.qoder/settings.json` in the project (or
 `~/.qoder/settings.json`; `.qoder/settings.local.json` also works):
 

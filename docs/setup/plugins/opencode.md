@@ -51,6 +51,21 @@ plugin warns the user to reinstall it.
 
 ## Setup
 
+Run this in the project:
+
+```sh
+hookah setup opencode                # .opencode/plugins/hookah.ts in this project
+hookah setup opencode --scope user   # ~/.config/opencode/plugins/hookah.ts (or under $XDG_CONFIG_HOME)
+```
+
+It writes exactly the text of `hookah plugin opencode`. The plugin embeds no command: it runs
+`hookah` from `PATH`, or from `HOOKAH_BIN` (see below), so `--command` has no effect here. A file
+that already exists is backed up once to `hookah.ts.hookah.bak` and then replaced; run the command
+again after upgrading `hookah` to get the matching plugin. `--dry-run` and `--print` work as for
+the other harnesses. Then restart opencode.
+
+### Manual setup
+
 1. Install `hookah` somewhere on `PATH` (for example `$HOME/.local/bin/hookah`).
 2. Install the plugin, per project or globally:
 

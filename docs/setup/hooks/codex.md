@@ -28,6 +28,25 @@ there, and prints nothing when there is nothing to say.
 
 ## Setup
 
+Run this in the project:
+
+```sh
+hookah setup codex                # .codex/config.toml in this project
+hookah setup codex --scope user   # ~/.codex/config.toml, for every project
+```
+
+Both write the same configuration as the manual snippet below. Existing settings are kept, a
+second run changes nothing, and the original file is backed up once to `<file>.hookah.bak`. A file
+that does not parse is refused and left untouched. `--dry-run` shows the result without writing,
+`--print` prints only the snippet, and `--command "mise exec -- hookah"` replaces the default command
+(the absolute path of the running binary).
+Comments and formatting of an existing `config.toml` are kept. Setup writes `config.toml`, not
+`hooks.json`.
+
+Then restart Codex and run `/hooks` in it to review and trust the new hooks.
+
+### Manual setup
+
 Put `hookah` at `$HOME/.local/bin/hookah`. Add this to `.codex/config.toml` in the project (or
 `~/.codex/config.toml`):
 

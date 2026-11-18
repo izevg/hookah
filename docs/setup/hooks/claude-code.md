@@ -24,6 +24,23 @@ Feedback goes back through the hook protocol:
 
 ## Setup
 
+Run this in the project:
+
+```sh
+hookah setup claude                # .claude/settings.json in this project
+hookah setup claude --scope user   # ~/.claude/settings.json, for every project
+```
+
+Both write the same configuration as the manual snippet below. Existing settings are kept, a
+second run changes nothing, and the original file is backed up once to `<file>.hookah.bak`. A file
+that does not parse is refused and left untouched. `--dry-run` shows the result without writing,
+`--print` prints only the snippet, and `--command "mise exec -- hookah"` replaces the default command
+(the absolute path of the running binary).
+
+Then restart Claude Code, or run `/hooks` in it to review and approve the new hooks.
+
+### Manual setup
+
 Put `hookah` on `PATH`, then add this to `.claude/settings.json` in the project (or
 `~/.claude/settings.json` for every project):
 

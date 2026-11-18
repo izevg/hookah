@@ -60,6 +60,7 @@ crates/
   application/   use cases; depends on domain only; defines ports as traits
   adapters/      driven adapters: filesystem, process runner, cache, toolchain detectors
   harness/       driving adapters: one module per agent harness (hook payload in, verdict out)
+  setup/         install-time adapter: writes and merges each harness's hook config files
   cli/           binary and composition root; the only place that wires adapters to ports
 ```
 
@@ -67,7 +68,8 @@ Allowed dependency directions:
 
 ```
 cli ──► harness ──► application ──► domain
- └────► adapters ──► application
+ ├────► adapters ──► application
+ └────► setup ────► harness (reads the opencode plugin text only)
 ```
 
 - **domain**: entities and value objects such as `Project`, `Toolchain`, `CheckKind`

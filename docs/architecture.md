@@ -3,7 +3,9 @@
 ## Layers
 
 How `domain`, `application`, `adapters`, `harness`, and `cli` fit together, and which way
-dependencies may point. The rules themselves are in [AGENTS.md](../AGENTS.md#architecture-ddd--clean--hexagonal).
+dependencies may point. A sixth crate, `setup`, is an install-time adapter: it owns the file formats
+of the harness configs (JSON, TOML, the opencode plugin file) for `hookah setup`, which keeps
+config-file editing out of the crates that run on every hook call. The rules themselves are in [AGENTS.md](../AGENTS.md#architecture-ddd--clean--hexagonal).
 
 ## Request flow
 

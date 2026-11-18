@@ -19,6 +19,23 @@ Code runs `hookah hook kimi` and sends a JSON payload on stdin.
 
 ## Setup
 
+Kimi Code has no project-level config, so setup always edits the user-level file:
+
+```sh
+hookah setup kimi    # ~/.kimi-code/config.toml (`--scope project` is refused)
+```
+
+Both write the same configuration as the manual snippet below. Existing settings are kept, a
+second run changes nothing, and the original file is backed up once to `<file>.hookah.bak`. A file
+that does not parse is refused and left untouched. `--dry-run` shows the result without writing,
+`--print` prints only the snippet, and `--command "mise exec -- hookah"` replaces the default command
+(the absolute path of the running binary).
+Comments and formatting of an existing `config.toml` are kept.
+
+Then restart Kimi Code.
+
+### Manual setup
+
 Put `hookah` at `$HOME/.local/bin/hookah`. Add this to `~/.kimi-code/config.toml`:
 
 ```toml

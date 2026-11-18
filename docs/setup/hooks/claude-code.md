@@ -4,6 +4,9 @@
 
 Command hooks. Claude Code runs `hookah hook claude` and sends a JSON payload on stdin.
 
+- `SessionStart` with matcher `startup|resume` records the problems the project already has, in
+  the background, so later reports show only what the agent introduced (the baseline; see
+  [architecture](../../architecture.md#baseline)). The hook returns at once and prints nothing.
 - `PostToolUse` with matcher `Edit|Write|MultiEdit|NotebookEdit` runs the edit phase (format and
   lint of the edited file).
 - `Stop` and `SubagentStop` run the stop phase (checks over the files changed in the session,
@@ -27,6 +30,14 @@ Put `hookah` on `PATH`, then add this to `.claude/settings.json` in the project 
 ```json
 {
   "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume",
+        "hooks": [
+          { "type": "command", "command": "hookah hook claude", "timeout": 30 }
+        ]
+      }
+    ],
     "PostToolUse": [
       {
         "matcher": "Edit|Write|MultiEdit|NotebookEdit",
@@ -75,12 +86,14 @@ cargo install --path crates/cli --root ~/.local --locked
 ```
 
 The committed [`.claude/settings.json`](../../../.claude/settings.json) calls
-`$HOME/.local/bin/mise exec -- $HOME/.local/bin/hookah hook claude` on `PostToolUse`
-(timeout 180) and `Stop` (timeout 600). Re-run the install after changing `hookah` to pick up
+`$HOME/.local/bin/mise exec -- $HOME/.local/bin/hookah hook claude` on `SessionStart`
+(timeout 30), `PostToolUse` (timeout 180), and `Stop` (timeout 900). Re-run the install after changing `hookah` to pick up
 the new build.
 
 ## Limitations
 
+- Without the `SessionStart` hook there is no up-front baseline: the first edit of a session
+  starts it, and that edit is reported with the changed-lines filter only.
 - `PostToolUse` cannot undo the edit; the tool already ran. Exit 2 only feeds the report back.
 - Claude Code caps hook output (`additionalContext`, `systemMessage`) at 10,000 characters;
   `hookah` reports are already capped by `--report-limit`.

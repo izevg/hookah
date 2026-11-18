@@ -1,0 +1,12 @@
+diff --git a/tally/report.py b/tally/report.py
+new file mode 100644
+index 0000000..d45d8e2
+--- /dev/null
++++ b/tally/report.py
+@@ -0,0 +1,6 @@
++"""Report helpers."""
++
++
++def label(count: int) -> str:
++    """Return a label for a count."""
++    return count

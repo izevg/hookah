@@ -1,0 +1,5 @@
+exit: 2
+--- stdout
+--- stderr
+hookah: 1 problem after editing tally/stats.py - fix before continuing:
+tally/report.py:6:12: [typecheck] Incompatible return value type (got "int", expected "str") [return-value]

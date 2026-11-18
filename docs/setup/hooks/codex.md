@@ -5,6 +5,9 @@
 Command hooks, stable since Codex CLI v0.124. Codex runs `hookah hook codex` and sends one JSON
 object on stdin. Hooks live in `hooks.json` or inline under `[hooks]` in `config.toml`.
 
+- `SessionStart` records the problems the project already has, in the background, so later
+  reports show only what the agent introduced (the baseline; see
+  [architecture](../../architecture.md#baseline)). The hook returns at once and prints nothing.
 - `PostToolUse` with matcher `^apply_patch$` runs the edit phase. One patch can touch several
   files; `hookah` reads the `*** Add File:`, `*** Update File:`, and `*** Move to:` headers from
   the patch text (`tool_input.command`), checks each file, and merges the results into one
@@ -29,6 +32,14 @@ Put `hookah` at `$HOME/.local/bin/hookah`. Add this to `.codex/config.toml` in t
 `~/.codex/config.toml`):
 
 ```toml
+[[hooks.SessionStart]]
+matcher = "startup|resume"
+
+[[hooks.SessionStart.hooks]]
+type = "command"
+command = '$HOME/.local/bin/hookah hook codex'
+timeout = 30
+
 [[hooks.PostToolUse]]
 matcher = "^apply_patch$"
 
@@ -50,6 +61,14 @@ The same thing as `hooks.json`:
 ```json
 {
   "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume",
+        "hooks": [
+          { "type": "command", "command": "$HOME/.local/bin/hookah hook codex", "timeout": 30 }
+        ]
+      }
+    ],
     "PostToolUse": [
       {
         "matcher": "^apply_patch$",
@@ -82,6 +101,8 @@ echo '{"cwd":"'"$PWD"'","hook_event_name":"PostToolUse","tool_name":"apply_patch
 
 ## Limitations
 
+- Without the `SessionStart` hook there is no up-front baseline: the first edit of a session
+  starts it, and that edit is reported with the changed-lines filter only.
 - The tool already ran; a block only feeds the report back. It cannot undo the patch.
 - Only `apply_patch` is checked. Files changed through shell commands are picked up by the stop
   phase only.
@@ -95,6 +116,7 @@ echo '{"cwd":"'"$PWD"'","hook_event_name":"PostToolUse","tool_name":"apply_patch
 ## Verified against
 
 <https://developers.openai.com/codex/hooks> (redirects to <https://learn.chatgpt.com/docs/hooks>),
-read on 2026-11-17: event names, matcher syntax, stdin fields (`cwd`, `tool_name`,
+read on 2026-11-17: event names (`SessionStart` with `source` matchers `startup`, `resume`,
+`clear`, `compact`, `fork`, and `session_id` in every payload), matcher syntax, stdin fields (`cwd`, `tool_name`,
 `tool_input.command`, `stop_hook_active`), `decision`/`reason` JSON, `additionalContext`,
 `systemMessage`, exit codes. Not verified: the patch text format and live behavior.

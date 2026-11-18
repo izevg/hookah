@@ -1,0 +1,13 @@
+diff --git a/app/src/lib.rs b/app/src/lib.rs
+index 459c092..2266dfc 100644
+--- a/app/src/lib.rs
++++ b/app/src/lib.rs
+@@ -17,3 +17,8 @@ mod tests {
+         assert_eq!(receipt(&[199, 1]), "total: 2.00");
+     }
+ }
++
++/// Not finished yet: the discount rate is still a placeholder.
++pub fn discount() -> i64 {
++    "ten percent"
++}

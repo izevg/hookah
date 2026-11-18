@@ -24,8 +24,9 @@ shell `sed`. Format never runs at stop.
   the domain picks the nearest one as the `Project`. The `ToolchainDetector` yields its tools.
   The formatter runs first and may rewrite the file (reported as a notice, so the agent
   re-reads it). The other tools run through the `CommandRunner`, the detector parses their output
-  into findings, and the `ChangeSource` gives the changed lines so only findings on those lines
-  count. The resulting `Verdict` goes back to the harness, which renders it (exit code, stderr,
+  into findings, and the reporting filter decides which count: the session baseline when there is
+  one (only new findings), else the changed lines from the `ChangeSource` (see Baseline). The
+  resulting `Verdict` goes back to the harness, which renders it (exit code, stderr,
   JSON).
 - **Stop phase:** the harness parses the payload into a `StopRequest` (the project root and the
   display root). `CheckSession` asks the `ChangeSource` for every file changed in the session and
@@ -45,8 +46,8 @@ means nothing runs. A surviving mutant is an `Error` finding, `mutant survived: 
 at the source path and line.
 
 `Test` and `Mutation` findings are never filtered by changed lines: their scope is already
-narrow. `Lint`, `Typecheck`, and `Architecture` findings follow the usual rule (errors always,
-warnings on changed lines only).
+narrow. `Lint`, `Typecheck`, and `Architecture` findings follow the baseline when there is one,
+else the usual rule (errors always, warnings on changed lines only).
 
 ### Missing tools
 
@@ -68,7 +69,8 @@ real paths in the stop phase. Kinds `Typecheck`, `Architecture`, and `Mutation` 
 in reports (`[typecheck]`).
 
 The `cli` crate is the composition root: `wiring.rs` builds the real adapters
-(`FsLocator`, `Ecosystems`, `ProcessRunner`, `GitChanges`, `FileHasher`) and hands them to the
+(`FsLocator`, `Ecosystems`, `ProcessRunner`, `GitChanges`, `FileHasher`, `FileBaselineStore`,
+`BackgroundSpawner`) and hands them to the
 use cases as `Ports`.
 
 ## Detection cache
@@ -114,8 +116,67 @@ like Rust's and add an arm in `Ecosystems::detect_traced`.
 
 ## Baseline
 
-Post-MVP. Until then the changed-lines filter stands in for a baseline. Fingerprints will be
-taken, stored, and compared so only new findings are reported.
+The baseline makes `hookah` report only what the agent introduced. It is the state of the
+project's static findings when the agent session started.
+
+**Taking it.** A session-start event (see the table below) makes `StartSession` find the project
+of the agent's working directory, plus the projects nested up to three levels below it (a monorepo
+root holds none itself; at most 8), and claim a baseline for each. The hook then spawns a detached
+child, `hookah baseline --session=<id> --root <project>` (`BaselineSpawner`), and returns at once.
+The child (`ComputeBaseline`) runs every Lint, Typecheck, and Architecture tool of the project over
+the whole project and stores the fingerprints of what they find. Format does not run (it rewrites
+files), and Test and Mutation are never baseline-filtered. The detector chooses the targets that
+make a tool cover the whole project (`ToolchainDetector::baseline_targets`): the root `.` for file
+tools such as eslint, biome, and ruff; none for tools whose command is already project-wide
+(clippy, `tsc`, mypy, import-linter); `src` for dependency-cruiser when the package has one.
+
+Spawning: on Unix the child leads its own process group and its three standard streams are the null
+device, so a harness waiting for the hook's pipes never waits for it. On Windows the same code
+uses `DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP` (compiles in principle, not run there yet).
+`HOOKAH_BASELINE_FOREGROUND=1` makes the hook wait for the child instead; tests and
+`samples/run.sh` use it to get a baseline synchronously.
+
+**Session start per harness.** Each harness's docs were read on 2026-11-17, except opencode, which
+is our own plugin.
+
+| Harness | Event | Status |
+| --- | --- | --- |
+| Claude Code | `SessionStart` (matchers `startup`, `resume`, `clear`, `compact`) | verified |
+| Codex CLI | `SessionStart` (same matchers, plus `fork`) | verified |
+| Qoder | `SessionStart` | verified: the event exists and every payload has `session_id` and `cwd`; its matcher values are not documented |
+| Kimi Code | `SessionStart` (matchers `startup`, `resume`) | verified |
+| opencode | the plugin's `session.created` event, sent as `event: "start"` (contract v1, backward compatible) | plugin written against the SDK types; not run live |
+
+Where a harness has no session start, or the hook is not configured, the **first edit** of a
+session starts the job lazily: the first edit of a (project, session) pair finds no baseline,
+claims one, spawns the job, and is itself reported with the changed-lines filter. A project the
+session start could not see (deeper than three levels, or outside the working directory) gets its
+baseline the same way. A session id is required: a harness payload without one gets no baseline.
+
+**Fingerprint.** `kind | path | rule | normalized message`, for example
+`lint|src/a.rs|clippy::needless_return|unneeded return statement`. The path is relative to the
+project root. There is no line or column, so a finding survives unrelated edits that shift it. The
+normalization removes `:<line>` and `:<line>:<col>` references and the word pairs `line N` and
+`column N`, and collapses whitespace. Numbers and quoted names stay: masking them would merge
+different problems.
+
+**The rule.** With a ready baseline for the project and session, a fresh run reports exactly the
+static findings (Format, Lint, Typecheck, Architecture), of any severity and in any file, whose
+fingerprints occur more often than in the baseline. The comparison is a multiset: with two in the
+baseline and three now, one is new, and the one reported is the last by line and column. Test and
+Mutation findings pass through unfiltered. Without a baseline (none, still running, or failed) the
+changed-lines filter described above applies. Both phases use it: the edit phase filters the
+edited file's findings, the stop phase the findings over all changed files.
+
+**Lifetime.** Baselines live in `<project cache dir>/baselines/<session>.json` (see
+`project_cache_dir`), one file per (project root, session). One JSON record holds the state:
+`in_progress`, `failed` with a reason, or `ready` with the fingerprint counts. Claiming creates the
+file exclusively, so only one job runs per pair; results are written to a temporary file and
+renamed. An unreadable or corrupt file counts as absent. An `in_progress` record older than 30
+minutes belongs to a dead job and reads as failed. Any failure of any tool fails the whole
+baseline, because a baseline missing a tool's findings would make old problems look new; so does a
+project without any static tool. Records older than 7 days are deleted whenever a baseline is
+claimed.
 
 ## Failure handling
 

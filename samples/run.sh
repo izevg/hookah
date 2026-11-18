@@ -42,6 +42,8 @@ work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 work_real=$(cd "$work" && pwd -P)
 
+# Session-start events compute their baseline before the hook returns, so the next event sees it.
+export HOOKAH_BASELINE_FOREGROUND=1
 export GIT_CONFIG_GLOBAL=/dev/null
 export GIT_CONFIG_SYSTEM=/dev/null
 # Python reuses a cached .pyc when the source has the same mtime (to the second) and size, which
@@ -65,15 +67,20 @@ normalize() { # <copy>
 }
 
 # Prints the normalized result of one hook call: exit code, stdout, stderr.
-run_hook() { # <copy> <event-line> <out-file>
-  local copy=$1 event=$2 payload code
+# <session> is the session id of the payload; empty means the payload carries none.
+run_hook() { # <copy> <event-line> <out-file> <session>
+  local copy=$1 event=$2 session=$4 payload code sid=""
+  [ -z "$session" ] || sid=$(printf '"session_id":"%s",' "$session")
   case "$event" in
+    start)
+      payload=$(printf '{%s"hook_event_name":"SessionStart","source":"startup","cwd":"%s"}' "$sid" "$copy")
+      ;;
     "edit "*)
-      payload=$(printf '{"hook_event_name":"PostToolUse","tool_name":"Edit","cwd":"%s","tool_input":{"file_path":"%s/%s"}}' \
-        "$copy" "$copy" "${event#edit }")
+      payload=$(printf '{%s"hook_event_name":"PostToolUse","tool_name":"Edit","cwd":"%s","tool_input":{"file_path":"%s/%s"}}' \
+        "$sid" "$copy" "$copy" "${event#edit }")
       ;;
     stop)
-      payload=$(printf '{"hook_event_name":"Stop","stop_hook_active":false,"cwd":"%s"}' "$copy")
+      payload=$(printf '{%s"hook_event_name":"Stop","stop_hook_active":false,"cwd":"%s"}' "$sid" "$copy")
       ;;
     *)
       echo "bad event: $event" >&2
@@ -125,6 +132,7 @@ for sample in "$here"/*/*/; do
     }
   fi
   (cd "$copy" && git init -q -b main && git add -A && git_ commit -q -m pristine) || exit 1
+  pristine=$(cd "$copy" && git rev-parse HEAD)
 
   for s in $scenarios; do
     name=$config/${s##*/}
@@ -135,20 +143,45 @@ for sample in "$here"/*/*/; do
       continue
     fi
 
-    (cd "$copy" && git checkout -q -- . && git clean -fdq && find . -name __pycache__ -type d -prune -exec rm -rf {} + && git apply "$s/change.patch") || {
-      echo "FAIL  $name (patch does not apply)"
+    # Reset to the pristine commit, then add the state the session starts from (`base.patch`,
+    # committed so it is not part of the agent's change).
+    (cd "$copy" && git reset -q --hard "$pristine" && git clean -fdq && find . -name __pycache__ -type d -prune -exec rm -rf {} + &&
+      if [ -f "$s/base.patch" ]; then git apply "$s/base.patch" && git add -A && git_ commit -q -m base; fi) || {
+      echo "FAIL  $name (base.patch does not apply)"
       fail=$((fail + 1))
       failed="$failed $name"
       continue
     }
 
+    # Events run in order with one session id; only the last answer is recorded. `change.patch`
+    # is applied just before the first event that is not `start`. A scenario without a `start`
+    # event sends no session id, so no baseline is involved.
+    session=""
+    grep -qx 'start' "$s/event" && session=sample-${s##*/}
     actual=$work/actual.out
-    run_hook "$copy" "$(head -n 1 "$s/event")" "$actual" || {
-      echo "FAIL  $name (bad event)"
+    applied=0
+    ok=1
+    while IFS= read -r event || [ -n "$event" ]; do
+      [ -n "$event" ] || continue
+      if [ "$event" != start ] && [ "$applied" = 0 ]; then
+        applied=1
+        (cd "$copy" && git apply "$s/change.patch") || {
+          echo "FAIL  $name (patch does not apply)"
+          ok=0
+          break
+        }
+      fi
+      run_hook "$copy" "$event" "$actual" "$session" || {
+        echo "FAIL  $name (bad event)"
+        ok=0
+        break
+      }
+    done <"$s/event"
+    if [ "$ok" = 0 ]; then
       fail=$((fail + 1))
       failed="$failed $name"
       continue
-    }
+    fi
 
     if [ "$update" = 1 ]; then
       cp "$actual" "$s/expected.out"

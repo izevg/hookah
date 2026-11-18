@@ -1,0 +1,13 @@
+diff --git a/tally/stats.py b/tally/stats.py
+index 16caaa4..33bd9bd 100644
+--- a/tally/stats.py
++++ b/tally/stats.py
+@@ -2,7 +2,7 @@
+ 
+ 
+ def mean(values: list[float]) -> float:
+-    """Return the arithmetic mean; an empty list has mean 0."""
++    """Return the arithmetic mean of the values; an empty list has mean 0."""
+     if not values:
+         return 0.0
+     return sum(values) / len(values)

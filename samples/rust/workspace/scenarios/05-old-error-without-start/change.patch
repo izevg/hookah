@@ -1,0 +1,16 @@
+diff --git a/core/src/lib.rs b/core/src/lib.rs
+index 9bcbe79..6eae3be 100644
+--- a/core/src/lib.rs
++++ b/core/src/lib.rs
+@@ -10,6 +10,11 @@ impl Money {
+         Money(items.iter().map(|m| m.0).sum())
+     }
+ 
++    /// The amount with its sign flipped.
++    pub fn negate(self) -> Money {
++        Money(-self.0)
++    }
++
+     /// Formats the amount as `dollars.cents`.
+     pub fn display(self) -> String {
+         format!("{}.{:02}", self.0 / 100, self.0 % 100)

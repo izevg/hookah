@@ -5,6 +5,9 @@
 Command hooks (beta upstream) declared as `[[hooks]]` entries in `~/.kimi-code/config.toml`. Kimi
 Code runs `hookah hook kimi` and sends a JSON payload on stdin.
 
+- `SessionStart` with matcher `startup|resume` records the problems the project already has, in
+  the background, so later reports show only what the agent introduced (the baseline; see
+  [architecture](../../architecture.md#baseline)). The hook returns at once and prints nothing.
 - `PostToolUse` with matcher `Write|Edit` runs the edit phase for `tool_input.path`.
 - `Stop` is not supported; see the limitations.
 
@@ -19,6 +22,12 @@ Code runs `hookah hook kimi` and sends a JSON payload on stdin.
 Put `hookah` at `$HOME/.local/bin/hookah`. Add this to `~/.kimi-code/config.toml`:
 
 ```toml
+[[hooks]]
+event = "SessionStart"
+matcher = "startup|resume"
+command = "$HOME/.local/bin/hookah hook kimi"
+timeout = 30
+
 [[hooks]]
 event = "PostToolUse"
 matcher = "Write|Edit"
@@ -40,6 +49,8 @@ echo '{"cwd":"'"$PWD"'","hook_event_name":"PostToolUse","tool_name":"Write","too
 
 ## Limitations
 
+- Without the `SessionStart` rule there is no up-front baseline: the first edit of a session
+  starts it, and that edit is reported with the changed-lines filter only.
 - No stop phase. Kimi's `Stop` event can block (exit 2), but its payload has no documented
   `stop_hook_active` equivalent, so a failing check could trap the agent in a loop. `hookah` takes
   the safe option and ignores `Stop`. Failures are reported at edit time only, and related tests
@@ -56,5 +67,6 @@ echo '{"cwd":"'"$PWD"'","hook_event_name":"PostToolUse","tool_name":"Write","too
 ## Verified against
 
 <https://www.kimi.com/code/docs/en/kimi-code-cli/customization/hooks.html>, read on 2026-11-17:
-`[[hooks]]` fields, event list, base stdin fields, exit codes, blockable events. Tool parameters
+`[[hooks]]` fields, event list (`SessionStart`, matchers `startup` and `resume`, base payload with
+`session_id` and `cwd`), base stdin fields, exit codes, blockable events. Tool parameters
 from the tools reference, read on the same date.

@@ -6,6 +6,11 @@ opencode has no command hooks. It loads JavaScript/TypeScript plugins, so `hooka
 a small, dependency-free TypeScript plugin that runs inside opencode and calls the `hookah`
 binary. The plugin source is embedded in the binary and printed by `hookah plugin opencode`.
 
+- **Session start.** The plugin's `event` hook reacts to `session.created` (top-level sessions
+  only; subagent sessions get theirs lazily) and runs `hookah hook opencode` with
+  `event: "start"` and the session id. `hookah` records the problems the project already has in
+  the background, so later reports show only what the agent introduced (the baseline; see
+  [architecture](../architecture.md#baseline)), and answers at once with an empty reply.
 - **Edit phase.** The plugin's `tool.execute.after` hook fires after the built-in tools that
   write files: `write` and `edit` (argument `filePath`) and `apply_patch` (argument
   `patchText`; the plugin reads the `*** Add File:`, `*** Update File:`, and `*** Move to:`
@@ -37,7 +42,8 @@ The plugin and the binary exchange one JSON document each way, versioned with `"
 {"v": 1, "block": true, "model_text": "hookah: 1 problem ...", "user_text": "..."}
 ```
 
-`event` is `edit` or `stop`; `files` is only used by `edit` (relative paths resolve against
+`event` is `start`, `edit`, or `stop` (`start` was added to contract v1 without a version bump: an
+older binary rejects it as a malformed payload and the plugin only warns); `files` is only used by `edit` (relative paths resolve against
 `cwd`). In the reply, `block` means the model has to act on `model_text`. `model_text` without
 `block` is advice (re-read a file the formatter rewrote). `user_text` is for the human only. A
 plugin and a binary with different contract versions refuse to talk to each other, and the
@@ -145,6 +151,7 @@ Checked live, with that opencode version against a local mock model server (no A
   a second failure only warns (no further model request);
 - a missing `hookah` binary logs a warning and leaves the tool call untouched.
 
-Not checked live: `apply_patch` and `multiedit` (the tool list of the test model had `write`
+Not checked live: the `session.created` event (`event.properties.info.id` and `parentID`, from the
+SDK types), `apply_patch` and `multiedit` (the tool list of the test model had `write`
 and `edit` only; the `apply_patch` argument name `patchText` comes from the opencode binary),
 and the toast (no TUI was running).

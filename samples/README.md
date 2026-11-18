@@ -28,7 +28,8 @@ samples/
         setup.sh               optional, runs once per sample
         <NN-name>/
           change.patch         unified diff, applied with `git apply` at the project root
-          event                one line: `edit <project-relative path>` or `stop`
+          event                one event per line: `start`, `edit <project-relative path>`, `stop`
+          base.patch           optional: the state the session starts from, committed first
           expected.out         normalized output of the hook call
           requires             optional, see below
 ```
@@ -41,13 +42,21 @@ directory, dotfiles aside), including the projects inside `project/`.
 1. Copies `project/` to a temp dir, runs `scenarios/setup.sh` there if it exists, then makes it a
    git repository with one commit (the pristine state). Git is configured with a local identity
    and `GIT_CONFIG_GLOBAL=/dev/null`.
-2. For each scenario: resets the copy (`git checkout -- . && git clean -fdq`; ignored dirs such as
-   `target/`, `node_modules/`, `.venv/` survive), applies `change.patch`, builds a Claude Code
-   payload from `event`, and runs `hookah hook claude` with the copy as cwd.
+2. For each scenario: resets the copy (`git reset --hard` to the pristine commit and
+   `git clean -fdq`; ignored dirs such as `target/`, `node_modules/`, `.venv/` survive), applies
+   and commits `base.patch` if there is one, then replays the lines of `event` in order as Claude
+   Code payloads through `hookah hook claude` with the copy as cwd. `change.patch` is applied
+   just before the first event that is not `start`.
+   - `start` becomes `SessionStart`.
    - `edit <path>` becomes `PostToolUse` + `Edit` with the absolute `file_path`.
    - `stop` becomes `Stop` with `stop_hook_active: false`.
-3. Writes `exit: <code>`, `--- stdout` (JSON pretty-printed with `jq` if present), and
-   `--- stderr`, with the copy path replaced by `<root>`, and compares it with `expected.out`.
+3. Every payload of a scenario carries the same session id, `sample-<scenario>`, when the scenario
+   has a `start` line, and no session id otherwise (so scenarios without `start` involve no
+   baseline). The runner sets `HOOKAH_BASELINE_FOREGROUND=1`, so the baseline job finishes before
+   `start` returns.
+4. Writes `exit: <code>`, `--- stdout` (JSON pretty-printed with `jq` if present), and
+   `--- stderr` of the **last** event only, with the copy path replaced by `<root>`, and compares
+   it with `expected.out`.
 
 ### `setup.sh`
 
@@ -88,6 +97,9 @@ is installed on the machine.
 | `rust/workspace` | `01-core-api-break` | edit | a `core` API rename that breaks `app`: the edit phase also lints dependents, so the error in `app` is reported |
 | | `02-stop-core-change` | stop | a `core` change: stop runs the tests of `core` and of `app` |
 | | `03-core-api-break-stop` | stop | the same API break, caught at stop in `app`; clippy and `cargo test` both report E0599 there, counted once |
+| | `04-old-error-hidden` | start, edit | `base.patch` leaves an E0308 error in the untouched `app`; after `start`, an unrelated edit in `core` is silent (exit 0) |
+| | `05-old-error-without-start` | edit | the same project and edit without `start`: no baseline, so the old `app` error is reported (the changed-lines filter) |
+| | `06-new-error-with-baseline` | start, edit | the same old error, and an API break in `core`: only the new E0599 in `app` is reported |
 | `python/uv-src-layout` | `01-clean-edit` | edit | a docstring edit stays silent (exit 0) |
 | | `02-lint-error` | edit | ruff `F401` on a changed line |
 | | `03-type-error` | edit | a wrong return type: `[typecheck]` finding from mypy |
@@ -101,6 +113,8 @@ is installed on the machine.
 | | `03-failing-test-stop` | stop | a source change breaks `test_stats.py`, found by the naming convention (no testmon) |
 | | `04-test-edit-mutmut-missing` | stop | a weakened test without mutmut: passes, with a `tool not installed` warning carrying the `pip install mutmut` hint |
 | | `05-test-edit-failing-mutmut-missing` | stop | a failing test edit without mutmut: the failure plus the `pip install mutmut` hint |
+| | `06-old-type-error-hidden` | start, edit | `base.patch` leaves a mypy error in the untouched `tally/report.py`; after `start`, a docstring edit in `stats.py` is silent |
+| | `07-old-type-error-without-start` | edit | the same without `start`: mypy checks the whole project, so the old error is reported |
 | `node/biome-vitest` | `01-clean-edit` | edit | a harmless edit stays silent |
 | | `02-lint-error` | edit | a Biome lint error on a changed line is reported |
 | | `03-type-error` | edit | a wrong argument type: `[typecheck]` error from `tsc` |
@@ -115,6 +129,8 @@ is installed on the machine.
 | `node/pnpm-workspace` | `01-lib-api-break` | edit | a `lib` type change that breaks `app`: the workspace solution `tsc -b` also covers the dependent, so the break is reported in `app` |
 | | `02-lib-api-break-stop` | stop | the same change at stop: the `lib` tests, the `app` tests (run from `packages/app`), and the `app` type error are all reported |
 | | `03-app-type-error` | edit | a type error in `app` against `lib` through `tsc -b`, shown with its workspace-relative path |
+| | `04-old-type-error-hidden` | start, edit | `base.patch` leaves a `tsc` error in the untouched `app/src/extra.ts`; after `start`, a comment edit in `lib` is silent |
+| | `05-old-type-error-without-start` | edit | the same without `start`: `tsc -b` covers the dependent, so the old error is reported |
 
 `rust/crate/07-test-edit-mutation` records the answer for a machine without `cargo-mutants`, so
 its `requires` is `! cargo mutants --version`. `08-test-edit-mutation-survivor` is its sibling for

@@ -1,14 +1,19 @@
 //! `ReportingFilter`: which findings are worth the agent's attention.
 //!
-//! Replaces the baseline in the MVP. Rules:
+//! Without a baseline (none taken, still running, or failed) the rules are:
 //! - `Test` and `Mutation` findings are always reported: their scope is already narrow.
 //! - `Error` findings are always reported, in any file (a change can break callers elsewhere).
 //! - `Warning` findings are reported only in a changed file and on a changed line. A warning
 //!   without a line in a changed file counts as on a changed line.
+//!
+//! With a [`Baseline`] these rules give way to one: `Test` and `Mutation` findings are reported,
+//! and every static finding is reported exactly when it is new against the baseline, any severity,
+//! in any file ([`Baseline::introduced`]).
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+use crate::finding::baseline::Baseline;
 use crate::finding::{Finding, Severity};
 use crate::session::ChangedLines;
 use crate::toolchain::CheckKind;
@@ -17,12 +22,25 @@ use crate::toolchain::CheckKind;
 #[derive(Debug, Clone, Default)]
 pub struct ReportingFilter {
     changed: BTreeMap<PathBuf, ChangedLines>,
+    baseline: Option<Baseline>,
 }
 
 impl ReportingFilter {
     /// Creates a filter with no changed files: only errors pass.
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Reports only what is new against `baseline`, replacing the changed-lines rules.
+    #[must_use]
+    pub fn with_baseline(mut self, baseline: Baseline) -> Self {
+        self.baseline = Some(baseline);
+        self
+    }
+
+    /// Whether a baseline decides what is reported.
+    pub fn has_baseline(&self) -> bool {
+        self.baseline.is_some()
     }
 
     /// Records a changed file (path relative to the project root) and its changed lines.
@@ -35,7 +53,8 @@ impl ReportingFilter {
         self.changed.get(path)
     }
 
-    /// Whether `finding` should be reported.
+    /// Whether `finding` passes the changed-lines rules alone; ignores any baseline (a baseline
+    /// compares counts, so it decides over the whole list in [`ReportingFilter::apply`]).
     pub fn keeps(&self, finding: &Finding) -> bool {
         if matches!(finding.kind, CheckKind::Test | CheckKind::Mutation) {
             return true;
@@ -51,7 +70,10 @@ impl ReportingFilter {
 
     /// Keeps only the reportable findings, preserving order.
     pub fn apply(&self, findings: Vec<Finding>) -> Vec<Finding> {
-        findings.into_iter().filter(|f| self.keeps(f)).collect()
+        match &self.baseline {
+            Some(baseline) => baseline.introduced(findings),
+            None => findings.into_iter().filter(|f| self.keeps(f)).collect(),
+        }
     }
 }
 
@@ -137,6 +159,31 @@ mod tests {
             Severity::Warning,
             Location::line("src/new.rs", 999)
         )));
+    }
+
+    #[test]
+    fn a_baseline_replaces_the_changed_lines_rules() {
+        let old_error = finding(Severity::Error, Location::line("src/other.rs", 1));
+        let old_warning = finding(Severity::Warning, Location::line("src/a.rs", 99));
+        let mut new_warning = finding(Severity::Warning, Location::line("src/other.rs", 7));
+        new_warning.message = "new".into();
+        let test = Finding::new(
+            CheckKind::Test,
+            Severity::Error,
+            Location::line("src/other.rs", 1),
+            "m",
+        );
+        let base = Baseline::from_findings([&old_error, &old_warning, &test]);
+        let f = filter().with_baseline(base);
+        assert!(f.has_baseline());
+        assert!(!filter().has_baseline());
+        let out = f.apply(vec![
+            old_error,
+            old_warning,
+            new_warning.clone(),
+            test.clone(),
+        ]);
+        assert_eq!(out, vec![new_warning, test]);
     }
 
     #[test]

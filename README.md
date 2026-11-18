@@ -1,6 +1,6 @@
 <div align="center">
 
-<!-- logo: docs/assets/logo.svg (pending) -->
+<img src="docs/assets/logo.svg" width="180" alt="hookah logo: a caterpillar smoking a hookah on a mushroom">
 
 # hookah
 

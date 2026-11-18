@@ -1,0 +1,65 @@
+name: pages
+
+# Builds the documentation site (.github/scripts/build-site.sh) and publishes it to GitHub Pages at
+# https://izevg.github.io/hookah/. One-time repository setting: Settings > Pages > Source =
+# "GitHub Actions". The installers (install.sh, install.ps1) are published at the site root.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "docs/**"
+      - "site/**"
+      - "README.md"
+      - ".github/scripts/site.py"
+      - ".github/scripts/build-site.sh"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  build:
+    name: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      # actions/checkout v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      # jdx/mise-action v5.2.9
+      - uses: jdx/mise-action@236a21c3b91f5db6d4e174b348674a0f0caac06d
+        with:
+          install_args: aqua:rust-lang/mdBook
+      # actions/configure-pages v6.0.0
+      - uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d
+      - name: Build the site
+        run: .github/scripts/build-site.sh
+      # actions/upload-pages-artifact v5.0.0
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9
+        with:
+          path: target/site/book
+
+  deploy:
+    name: deploy
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      # actions/deploy-pages v5.0.1
+      - id: deployment
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346

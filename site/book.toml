@@ -1,0 +1,16 @@
+# The book is assembled at build time by .github/scripts/build-site.sh: docs/, the README, and
+# SUMMARY.md are copied into target/site/src. This file is copied next to them.
+[book]
+title = "hookah"
+description = "Run lint, format, and related tests on every file an AI coding agent edits."
+language = "en"
+src = "src"
+
+[output.html]
+site-url = "/hookah/"
+git-repository-url = "https://github.com/izevg/hookah"
+default-theme = "light"
+preferred-dark-theme = "navy"
+
+[output.html.search]
+enable = true

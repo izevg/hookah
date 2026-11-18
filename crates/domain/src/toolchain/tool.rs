@@ -130,6 +130,26 @@ impl MissingTool {
     }
 }
 
+/// A heads-up about how a tool runs, for the agent: for example that part of the project is left
+/// out of a check to keep it light. Never blocks; shown as a notice whenever the check runs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ToolNote {
+    /// The check the note belongs to.
+    pub kind: CheckKind,
+    /// The message, one short line.
+    pub text: String,
+}
+
+impl ToolNote {
+    /// Builds a note.
+    pub fn new(kind: CheckKind, text: impl Into<String>) -> Self {
+        Self {
+            kind,
+            text: text.into(),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

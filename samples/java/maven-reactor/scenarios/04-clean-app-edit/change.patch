@@ -1,10 +1,10 @@
 diff --git a/app/src/main/java/shop/app/Receipt.java b/app/src/main/java/shop/app/Receipt.java
-index e48b47d..680b75a 100644
+index 70d35da..1eb023f 100644
 --- a/app/src/main/java/shop/app/Receipt.java
 +++ b/app/src/main/java/shop/app/Receipt.java
-@@ -2,7 +2,7 @@ package shop.app;
- 
+@@ -3,7 +3,7 @@ package shop.app;
  import shop.Money;
+ import shop.shared.Labels;
  
 -/** Prints a total. */
 +/** Prints the total of an order. */

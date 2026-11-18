@@ -1,0 +1,28 @@
+diff --git a/app/pom.xml b/app/pom.xml
+index 4b6e11f..afc2976 100644
+--- a/app/pom.xml
++++ b/app/pom.xml
+@@ -30,5 +30,10 @@
+       <type>test-jar</type>
+       <scope>test</scope>
+     </dependency>
++    <dependency>
++      <groupId>org.example</groupId>
++      <artifactId>not-downloaded</artifactId>
++      <version>1.0</version>
++    </dependency>
+   </dependencies>
+ </project>
+diff --git a/app/src/main/java/shop/app/Receipt.java b/app/src/main/java/shop/app/Receipt.java
+index 70d35da..1eb023f 100644
+--- a/app/src/main/java/shop/app/Receipt.java
++++ b/app/src/main/java/shop/app/Receipt.java
+@@ -3,7 +3,7 @@ package shop.app;
+ import shop.Money;
+ import shop.shared.Labels;
+ 
+-/** Prints a total. */
++/** Prints the total of an order. */
+ public final class Receipt {
+   private Receipt() {}
+ 

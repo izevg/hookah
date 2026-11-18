@@ -3,5 +3,5 @@
 # hookah itself never downloads anything: it runs Maven with `-o`.
 set -e
 mvn -B -q test-compile
-mvn -B -q test-compile checkstyle:checkstyle -pl app -am
+mvn -B -q test-compile checkstyle:checkstyle -pl core,app -am
 mvn -B -q test -Dtest=MoneyTest,ReceiptTest -Dsurefire.failIfNoSpecifiedTests=false -DexcludedGroups=integration

@@ -1,0 +1,6 @@
+exit: 0
+--- stdout
+{
+  "systemMessage": "hookah: checks incomplete: javac: org.example:not-downloaded:jar:1.0 is not in the local repository and hookah runs offline, so the build could not start; run the build once online (`mvn -q install -DskipTests`), or set the environment of the build in `[env]` (docs/configuration.md)"
+}
+--- stderr

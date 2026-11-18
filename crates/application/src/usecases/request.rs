@@ -206,8 +206,15 @@ impl RunLog {
             .collect();
     }
 
-    /// Adds a `MissingTool` notice for each missing tool whose kind satisfies `wanted`.
+    /// Adds a `MissingTool` notice for each missing tool whose kind satisfies `wanted`, and a
+    /// notice for each tool note of such a kind.
     pub fn report_missing(&mut self, toolchain: &Toolchain, wanted: impl Fn(CheckKind) -> bool) {
+        for note in toolchain.notes().iter().filter(|n| wanted(n.kind)) {
+            let notice = Notice::Degraded(note.text.clone());
+            if !self.notices.contains(&notice) {
+                self.notices.push(notice);
+            }
+        }
         for tool in toolchain.missing().iter().filter(|t| wanted(t.kind)) {
             let notice = Notice::MissingTool(tool.clone());
             if !self.notices.contains(&notice) {

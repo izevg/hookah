@@ -3,18 +3,23 @@
 //! | Tool        | Command (after `mvn -B -o`; `-pl` only in a multi-module build)                                  |
 //! |-------------|----------------------------------------------------------------------------------------------------|
 //! | `spotless`  | `-q spotless:apply -pl <m> -DspotlessFiles=.*/<file>`                                              |
-//! | `checkstyle`| `checkstyle:checkstyle` (`test-compile checkstyle:checkstyle -pl <m> -am -amd` in a reactor), then `<m>/target/checkstyle-result.xml` |
+//! | `checkstyle`| `checkstyle:checkstyle` (`test-compile checkstyle:checkstyle -pl <m>,<d>... -am` in a reactor), then `<m>/target/checkstyle-result.xml` |
 //! | `pmd`       | `pmd:pmd` (likewise), then `<m>/target/pmd.xml`                                                    |
-//! | `spotbugs`  | `test-compile spotbugs:spotbugs -pl <m> -am -amd`, then `<m>/target/spotbugsXml.xml`                         |
-//! | `javac`     | `-q test-compile -pl <m> -am -amd` (the module, what it needs, and what needs it)                  |
+//! | `spotbugs`  | `test-compile spotbugs:spotbugs -pl <m>,<d>... -am`, then `<m>/target/spotbugsXml.xml`                         |
+//! | `javac`     | `-q test-compile -pl <m>,<d>... -am` (the module, its dependents `<d>`, and what they need)         |
 //! | `surefire`  | `test -pl <m> -am -Dtest=<classes> -Dsurefire.failIfNoSpecifiedTests=false -DfailIfNoTests=false [-DexcludedGroups=integration,slow,e2e]` |
 //! | `pitest`    | `test-compile org.pitest:pitest-maven:mutationCoverage -pl <m> -am -DtargetClasses=<fqcns> -DtargetTests=<fqcns> -DoutputFormats=XML -DtimestampedReports=false -DwithHistory=true -DhistoryInputFile=<m>/target/pit-history.bin -DhistoryOutputFile=<same> -DfailWhenNoMutations=false` |
 //!
-//! `-am` makes the modules the module needs part of the reactor, so they resolve from it and not
-//! from `~/.m2`; `-amd` adds the modules that depend on it, so an API change that breaks them is
-//! caught in the edit phase. The compiler plugin sees that a dependency changed only when it
-//! changed during the same Maven run, so every command that compiles in a reactor covers the same
-//! set of modules (`-am -amd`, except the test and PIT runs, which come after the compile check):
+//! `-am` makes the modules the selected ones need part of the reactor, so they resolve from it and
+//! not from `~/.m2`, which `-o` could not fill. The dependents `<d>` are the modules that depend
+//! on the module, so an API change that breaks them is caught in the edit phase. They are named in
+//! `-pl` and not asked for with `-amd`: `-amd` adds them without what they need besides the
+//! module, and that is then looked up in `~/.m2`. hookah computes them from the poms (see
+//! `build::reactor`) and keeps them within a budget (`HOOKAH_DOWNSTREAM_BUDGET`, 10): over it, only
+//! the module and its upstream compile, with a notice. The compiler plugin sees that a dependency
+//! changed only when it changed during the same Maven run, so every command that compiles in a
+//! reactor covers the same set of modules (except the test and PIT runs, which come after the
+//! compile check):
 //! otherwise a lint run that compiled the module first would hide the breakage of its dependents
 //! from the compile check.
 //!
@@ -76,7 +81,7 @@ pub fn tools(build: &Build) -> Vec<Tool> {
     // `test-compile`, not `compile`: the compiler plugin notices that the main classes changed
     // only within one Maven run, so a lint run that compiled just the main sources would hide a
     // broken test from the compile check that follows it. For the same reason the run covers the
-    // dependents (`-amd`) too: whatever compiles first sees the API change, and a module that
+    // dependents too: whatever compiles first sees the API change, and a module that
     // failed to compile is compiled again by the next run.
     let (prepare, upstream): (&[&str], Also) = if build.selector.is_some() {
         (&["test-compile"], BOTH)
@@ -313,6 +318,7 @@ mod tests {
     fn reactor_modules_compile_their_siblings_before_a_report_goal() {
         let mut b = build(BuildKind::Maven, Path::new("/r"), everything());
         b.selector = Some("m".into());
+        b.dependents = vec!["d1".into(), "d2".into()];
         let tools = tools(&b);
         assert_eq!(
             argv(by_name(&tools, CHECKSTYLE), &[]),
@@ -322,9 +328,8 @@ mod tests {
                 "test-compile",
                 "checkstyle:checkstyle",
                 "-pl",
-                "m",
-                "-am",
-                "-amd"
+                "m,d1,d2",
+                "-am"
             ]
         );
         assert_eq!(
@@ -335,9 +340,8 @@ mod tests {
                 "test-compile",
                 "pmd:pmd",
                 "-pl",
-                "m",
-                "-am",
-                "-amd"
+                "m,d1,d2",
+                "-am"
             ]
         );
     }
@@ -359,8 +363,9 @@ mod tests {
     fn modules_of_a_reactor_are_selected_with_their_neighbors() {
         let mut b = build(BuildKind::Maven, Path::new("/r"), everything());
         b.selector = Some("services/app".into());
+        b.dependents = vec!["web".into()];
         let tools = tools(&b);
-        let pl = ["-pl", "services/app"];
+        let pl = ["-pl", "services/app,web"];
         let has = |name: &str, extra: &[&str]| {
             let v = argv(by_name(&tools, name), &[]);
             let at = v.iter().position(|a| a == "-pl").unwrap();
@@ -377,19 +382,23 @@ mod tests {
                 );
             }
         };
-        has(SPOTLESS, &[]);
-        has(CHECKSTYLE, &["-am", "-amd"]);
-        has(PMD, &["-am", "-amd"]);
-        has(SPOTBUGS, &["-am", "-amd"]);
-        has(JAVAC, &["-am", "-amd"]);
-        has(SUREFIRE, &["-am"]);
-        has(PITEST, &["-am"]);
-        // Without -amd, the dependents of the module stay out of the test and PIT runs.
-        for name in [SUREFIRE, PITEST] {
+        has(CHECKSTYLE, &["-am"]);
+        has(PMD, &["-am"]);
+        has(SPOTBUGS, &["-am"]);
+        has(JAVAC, &["-am"]);
+        for name in [CHECKSTYLE, PMD, SPOTBUGS, JAVAC] {
             assert!(
                 !argv(by_name(&tools, name), &[]).contains(&"-amd".to_string()),
-                "{name}"
+                "{name}: -amd misses the upstream of the dependents"
             );
+        }
+        // Spotless formats one file; the test and PIT runs stay with the module and its upstream.
+        let spotless = argv(by_name(&tools, SPOTLESS), &[]);
+        assert!(spotless.ends_with(&["-pl".into(), "services/app".into()]));
+        for name in [SUREFIRE, PITEST] {
+            let v = argv(by_name(&tools, name), &[]);
+            let at = v.iter().position(|a| a == "-pl").unwrap();
+            assert_eq!(&v[at..at + 3], ["-pl", "services/app", "-am"], "{name}");
         }
     }
 }

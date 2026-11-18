@@ -280,21 +280,40 @@ mod tests {
     #[test]
     fn user_config_location_follows_the_platform() {
         let unix = |vars: &[(&str, &str)]| host(vars, false).user_config();
+        // `Path::is_absolute` follows the OS running the tests, so the absolute paths here are
+        // spelled for it: `/c` on Unix, `C:/c` on Windows.
+        let a = |p: &str| {
+            if cfg!(windows) {
+                format!("C:{p}")
+            } else {
+                p.to_string()
+            }
+        };
         assert_eq!(
-            unix(&[("HOOKAH_CONFIG", "/c/h.toml"), ("HOME", "/h")]),
-            Some(PathBuf::from("/c/h.toml"))
+            unix(&[("HOOKAH_CONFIG", a("/c/h.toml").as_str()), ("HOME", "/h")]),
+            Some(PathBuf::from(a("/c/h.toml")))
         );
         assert_eq!(
-            unix(&[("XDG_CONFIG_HOME", "/x"), ("HOME", "/h")]),
-            Some(PathBuf::from("/x/hookah/config.toml"))
+            unix(&[("XDG_CONFIG_HOME", a("/x").as_str()), ("HOME", "/h")]),
+            Some(PathBuf::from(a("/x")).join("hookah").join("config.toml"))
         );
         assert_eq!(
             unix(&[("XDG_CONFIG_HOME", "rel"), ("HOME", "/h")]),
-            Some(PathBuf::from("/h/.config/hookah/config.toml"))
+            Some(
+                PathBuf::from("/h")
+                    .join(".config")
+                    .join("hookah")
+                    .join("config.toml")
+            )
         );
         assert_eq!(
             unix(&[("HOOKAH_CONFIG", "rel"), ("HOME", "/h")]),
-            Some(PathBuf::from("/h/.config/hookah/config.toml"))
+            Some(
+                PathBuf::from("/h")
+                    .join(".config")
+                    .join("hookah")
+                    .join("config.toml")
+            )
         );
         assert_eq!(unix(&[("HOME", "")]), None);
         assert_eq!(unix(&[]), None);
@@ -398,12 +417,7 @@ mod tests {
             value(&env, "S"),
             Some(format!("-s {root}/ci/settings.xml").as_str())
         );
-        let home = if cfg!(windows) {
-            "~/jdk"
-        } else {
-            "/home/u/jdk"
-        };
-        assert_eq!(value(&env, "H"), Some(home));
+        assert_eq!(value(&env, "H"), Some("/home/u/jdk"));
         assert_eq!(value(&env, "P"), Some(format!("{root}/bin:/bin").as_str()));
         assert_eq!(value(&env, "G"), Some(root.as_str()));
     }

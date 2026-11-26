@@ -67,9 +67,12 @@ export function parseDetect(text: string): Detection[] {
   return found
 }
 
-/** An agent that is installed and has no hookah hooks, in its project config or the user's. */
-export function needsSetup(d: Detection): boolean {
-  return d.installed && !d.user && d.project !== 'configured'
+/** The scope that still needs hooks for an installed agent launched by Orca. */
+export function setupScope(d: Detection): 'project' | 'user' | null {
+  if (!d.installed || d.user) return null
+  // Orca starts ZCode's standalone CLI, which loads hooks from the user config.
+  if (d.harness === 'zcode' || d.project === 'none') return 'user'
+  return d.project === 'missing' ? 'project' : null
 }
 
 const STANDINGS: readonly string[] = ['pass', 'degraded', 'fail']

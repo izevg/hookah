@@ -42,7 +42,7 @@ fixed problem disappears once the worktree is checked again.
 | Command | What it does |
 | --- | --- |
 | `hookah: check this worktree` | Runs `hookah check --changed` in the focused worktree in the background, then shows the result as a notification. This is the stop phase: static checks over every changed file, then related tests and mutation testing. |
-| `hookah: set up hooks for this worktree` | For each installed agent that has no `hookah` hooks yet, writes its **project** config into the worktree (`hookah setup <harness> --scope project`). Agents without a project config (Kimi Code) are reported, never touched. |
+| `hookah: set up hooks for this worktree` | Writes missing **project** hooks for installed agents that can use them. For Kimi Code and ZCode, it prints the user-scope setup command. |
 | `hookah: show status of this worktree` | Shows the latest status as a message. The status bar item runs it. |
 
 ### Setting hookah up for hosted agents
@@ -54,14 +54,15 @@ hosted agents** decides:
 | Value | What happens when Orca is about to start an agent in a worktree where `hookah` is not set up for it |
 | --- | --- |
 | `suggest` (default) | A notification, once per worktree and agent: "hookah is not set up for claude". Nothing is written. |
-| `auto` | `hookah setup <agent> --scope project` runs *before* the agent starts, so the agent reads the hooks at startup, and a notification says what was written. Agents without a project config (Kimi Code) only get the suggestion. |
+| `auto` | Runs `hookah setup <agent> --scope project` before agents that can use project hooks start. Kimi Code and ZCode get a notification with the user-scope setup command. |
 | `off` | Nothing. |
 
-"Not set up" means the agent is installed and has no `hookah` hooks in its project config or in
-the user's config. If you ran `hookah setup <harness> --scope user` once, the plugin sees it and
-stays silent. That is the quieter route: it needs no file in any repository. Review and commit (or
-git-ignore) the project config when you use `auto`; some agents ask you to approve new hooks the
-first time (Claude Code: `/hooks`).
+When an installed agent is missing hooks, the plugin checks which scope the agent can use.
+Orca launches the standalone ZCode CLI, which reads user hooks. Run
+`hookah setup zcode --scope user` in a terminal, even if ZCode Desktop uses hooks in the same
+worktree. The plugin leaves user settings to you. When user hooks are already configured, the
+plugin stays silent. When you use `auto` with project hooks, review the project config and choose
+whether to commit it or ignore it. Some agents ask you to approve new hooks the first time.
 
 The launch hook only prepares. It never blocks or changes the launch, it passes on any error
 (Orca also passes after 2 s), and it never installs anything.

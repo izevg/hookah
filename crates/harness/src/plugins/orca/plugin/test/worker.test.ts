@@ -26,19 +26,19 @@ const NEVER = { v: 1, root: '/repo/fix', overall: null, projects: [{ root: '/rep
 const DETECT_MISSING =
   'claude: installed (binary /bin/claude); project: not configured; user: not configured\n' +
   'antigravity: installed (binary /bin/agy); project: not configured; user: not configured\n' +
-  'zcode: installed (binary /bin/zcode); project: not configured; user: not configured\n' +
+  'zcode: installed (binary /bin/zcode); project: configured; user: not configured\n' +
   'kimi: installed (binary /bin/kimi); project: no project config; user: not configured\n' +
   'codex: installed (binary /bin/codex); project: not configured; user: configured\n'
 
 /** Records every hookah call and answers like hookah would. */
-function fakeHookah(): { calls: string[]; exec: Exec } {
+function fakeHookah(detection: string): { calls: string[]; exec: Exec } {
   const calls: string[] = []
   const exec: Exec = async (_file, args, options) => {
     calls.push([...args, options.cwd].join(' '))
     const ok = (stdout: string) => ({ code: 0, stdout, stderr: '', failed: null })
     if (args[0] === '--version') return ok('hookah 0.2.0\n')
     if (args[0] === 'status') return ok(JSON.stringify(options.cwd === '/repo/feat' ? FAILING : NEVER))
-    if (args[0] === 'setup' && args[1] === '--detect') return ok(DETECT_MISSING)
+    if (args[0] === 'setup' && args[1] === '--detect') return ok(detection)
     if (args[0] === 'setup') return ok('created settings\n')
     if (args[0] === 'check') return { code: 1, stdout: 'FAIL .\n  a.rs:1: x\n', stderr: '', failed: null }
     return { code: 2, stdout: '', stderr: 'unexpected\n', failed: null }
@@ -46,8 +46,8 @@ function fakeHookah(): { calls: string[]; exec: Exec } {
   return { calls, exec }
 }
 
-async function setupWorker(settings: Record<string, string | number> = {}, focused: string | null = 'w1') {
-  const fake = fakeHookah()
+async function setupWorker(settings: Record<string, string | number> = {}, focused: string | null = 'w1', detection = DETECT_MISSING) {
+  const fake = fakeHookah(detection)
   main.runner.exec = fake.exec
   const host = mockHost({
     settings,
@@ -143,17 +143,17 @@ test('the check command runs in the background and notifies', async () => {
   await worker.deactivate()
 })
 
-test('the setup command writes project config only for agents that have one', async () => {
+test('the setup command installs project hooks where supported and prints user setup commands', async () => {
   const { worker, fake } = await setupWorker()
   const text = String(await worker.command('hookah.setup'))
   assert.match(text, /claude: wrote its project config in feat/)
   assert.match(text, /antigravity: wrote its project config in feat/)
-  assert.match(text, /zcode: wrote its project config in feat/)
+  assert.match(text, /zcode:.*hookah setup zcode --scope user/)
   assert.match(text, /kimi: has no project config/)
   assert.equal(text.includes('codex'), false)
   assert.deepEqual(
-    fake.calls.filter((c) => c.startsWith('setup claude') || c.startsWith('setup kimi')),
-    ['setup claude --scope project /repo/feat']
+    fake.calls.filter((c) => c.startsWith('setup ') && !c.startsWith('setup --detect')),
+    ['setup claude --scope project /repo/feat', 'setup antigravity --scope project /repo/feat']
   )
   await worker.deactivate()
 })
@@ -198,6 +198,34 @@ test('auto mode never writes the user config for an agent without a project conf
   await tick()
   assert.equal(fake.calls.some((c) => c.startsWith('setup kimi')), false)
   assert.deepEqual(notices(host), ['hookah is not set up for kimi'])
+  await worker.deactivate()
+})
+
+test('ZCode launch suggests user setup once in both modes even with project hooks', async () => {
+  for (const setup of ['suggest', 'auto']) {
+    const { worker, host, fake } = await setupWorker({ setup })
+    const event = launch('zcode')
+    for (let i = 0; i < 2; i++) {
+      assert.deepEqual(await worker.hooks.fire('agent.launch.before', event), { kind: 'continue', event })
+    }
+    await tick()
+    const notifications = host.callsOf('notifications.show') as { title: string; body: string }[]
+    assert.equal(notifications.length, 1)
+    assert.match(notifications[0].body, /hookah setup zcode --scope user/)
+    assert.equal(fake.calls.some((c) => c.startsWith('setup zcode')), false)
+    await worker.deactivate()
+  }
+})
+
+test('ZCode with user hooks needs no launch suggestion or palette setup', async () => {
+  const detection = 'zcode: installed (binary /bin/zcode); project: not configured; user: configured\n'
+  const { worker, host, fake } = await setupWorker({ setup: 'auto' }, 'w1', detection)
+  const event = launch('zcode')
+  assert.deepEqual(await worker.hooks.fire('agent.launch.before', event), { kind: 'continue', event })
+  assert.match(String(await worker.command('hookah.setup')), /nothing to set up/)
+  await tick()
+  assert.deepEqual(notices(host), [])
+  assert.equal(fake.calls.some((c) => c.startsWith('setup zcode')), false)
   await worker.deactivate()
 })
 

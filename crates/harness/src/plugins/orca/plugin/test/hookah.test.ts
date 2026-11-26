@@ -8,9 +8,9 @@ import {
   harnessFor,
   hookahClient,
   label,
-  needsSetup,
   parseDetect,
   parseStatus,
+  setupScope,
   summarize,
   type Exec
 } from '../src/hookah'
@@ -49,8 +49,16 @@ test('parses the survey lines and skips the hint', () => {
   assert.equal(found[3].project, 'none')
 })
 
-test('only an installed agent without hooks needs setup', () => {
-  assert.deepEqual(parseDetect(DETECT).map(needsSetup), [true, false, false, true, false])
+test('only an installed agent without hooks needs setup in its supported scope', () => {
+  assert.deepEqual(parseDetect(DETECT).map(setupScope), ['project', null, null, 'user', null])
+})
+
+test('the standalone ZCode CLI needs user hooks regardless of project setup', () => {
+  const zcode = { harness: 'zcode', installed: true, user: false }
+  assert.equal(setupScope({ ...zcode, project: 'missing' }), 'user')
+  assert.equal(setupScope({ ...zcode, project: 'configured' }), 'user')
+  assert.equal(setupScope({ ...zcode, project: 'missing', user: true }), null)
+  assert.equal(setupScope({ ...zcode, project: 'missing', installed: false }), null)
 })
 
 test('reads the status document and rejects anything else', () => {

@@ -10,7 +10,7 @@ import {
   harnessFor,
   hookahClient,
   label,
-  needsSetup,
+  setupScope,
   summarize,
   type Exec,
   type Hookah
@@ -27,6 +27,10 @@ export const runner: { exec: Exec } = { exec }
 
 const MAX_WORKTREES = 40
 const PARALLEL = 4
+
+function userSetupCommand(harness: string): string {
+  return `\`hookah setup ${harness} --scope user\``
+}
 
 export default function activate(orca: OrcaWorkerApi): void {
   const running = new Set<string>()
@@ -181,9 +185,11 @@ export default function activate(orca: OrcaWorkerApi): void {
     const client = await hookah()
     const out: string[] = []
     for (const d of await client.detect(w.path)) {
-      if (!needsSetup(d)) continue
-      if (d.project === 'none') {
-        out.push(`${d.harness}: has no project config; run \`hookah setup ${d.harness}\` yourself to set up your user config`)
+      const scope = setupScope(d)
+      if (scope === null) continue
+      if (scope === 'user') {
+        const reason = d.harness === 'zcode' ? 'the standalone CLI uses user hooks' : 'has no project config'
+        out.push(`${d.harness}: ${reason}. Run ${userSetupCommand(d.harness)} in a terminal.`)
         continue
       }
       await client.setup(w.path, d.harness)
@@ -228,9 +234,10 @@ export default function activate(orca: OrcaWorkerApi): void {
       if (w === null) return
       const client = await hookah()
       const d = (await client.detect(w.path)).find((x) => x.harness === harness)
-      if (d === undefined || !needsSetup(d)) return
+      const scope = d === undefined ? null : setupScope(d)
+      if (scope === null) return
       const key = `${w.path}|${harness}`
-      if (mode === 'auto' && d.project !== 'none') {
+      if (mode === 'auto' && scope === 'project') {
         await client.setup(w.path, harness)
         told.add(key)
         void orca.host.call('notifications.show', {
@@ -241,7 +248,9 @@ export default function activate(orca: OrcaWorkerApi): void {
         told.add(key)
         void orca.host.call('notifications.show', {
           title: `hookah is not set up for ${harness}`,
-          body: `Run "hookah: set up hooks for this worktree" in ${w.name}, or \`hookah setup ${harness}\` in a terminal.`
+          body: scope === 'user'
+            ? `Run ${userSetupCommand(harness)} in a terminal.`
+            : `Run "hookah: set up hooks for this worktree" in ${w.name}, or \`hookah setup ${harness}\` in a terminal.`
         })
       }
     } catch (e) {

@@ -28,7 +28,7 @@ feeds failures straight back to the agent, so it fixes them immediately.
 
 > **Status:** works for Rust, Node (TypeScript/JavaScript), Python, and Java (Maven and Gradle)
 > projects, with the Claude
-> Code, Codex, Cursor, Qoder, Kimi, opencode, Pi, and OpenClaw harnesses and the Hermes Agent assistant
+> Code, Codex, Cursor, Qoder, ZCode, Kimi, opencode, Pi, and OpenClaw harnesses and the Hermes Agent assistant
 > (`hookah check`, `hookah detect`, `hookah hook <harness>`, `hookah plugin <harness>`, `hookah
 > setup`), including mutation testing at stop, and with [Orca](docs/setup/plugins/orca.md)
 > (`hookah plugin orca`, `hookah status`).
@@ -90,7 +90,7 @@ old warnings from code it did not touch.
 
    ```sh
    hookah setup --detect     # which harnesses are installed and configured
-   hookah setup claude       # or: codex, cursor, qoder, kimi, opencode, hermes, pi, openclaw (add --scope user for every project)
+   hookah setup claude       # or: codex, cursor, qoder, zcode, kimi, opencode, hermes, pi, openclaw (add --scope user for every project)
    ```
 
    Setup merges into existing settings, is safe to repeat, and backs the original up once. Use
@@ -106,6 +106,7 @@ Per-harness details and the manual snippets:
 | Codex CLI   | [docs/setup/hooks/cli/codex.md](docs/setup/hooks/cli/codex.md) |
 | Cursor      | [docs/setup/hooks/ide/cursor.md](docs/setup/hooks/ide/cursor.md) |
 | Qoder       | [docs/setup/hooks/cli/qoder.md](docs/setup/hooks/cli/qoder.md) |
+| ZCode       | [docs/setup/hooks/zcode.md](docs/setup/hooks/zcode.md) |
 | Kimi Code   | [docs/setup/hooks/cli/kimi.md](docs/setup/hooks/cli/kimi.md) |
 | opencode    | [docs/setup/plugins/opencode.md](docs/setup/plugins/opencode.md) |
 | Hermes Agent | [docs/setup/assistants/hermes.md](docs/setup/assistants/hermes.md) |
@@ -144,6 +145,7 @@ reports results in the format that harness expects. The table shows the integrat
 | OpenClaw    | bundled plugin (`hookah plugin openclaw`): tool-result middleware (`write`, `edit`, `apply_patch`), `before_agent_finalize` | appended tool result (edit), report queued for the next turn (stop) |
 | Kimi Code   | `PostToolUse` (`Write\|Edit`) `[[hooks]]` in `config.toml` (beta); no stop phase | stdout (may reach the model) |
 | Qoder       | `PostToolUse` (`Write\|Edit`), `Stop` in `.qoder/settings.json` | `additionalContext` (edit), exit 2 + stderr (stop) |
+| ZCode       | `SessionStart`, `PostToolUse` (`Write\|Edit\|ApplyPatch`), `Stop` in `.zcode/config.json` | `additionalContext` (edit), JSON `decision: block` + `reason` (stop) |
 | Cursor      | `afterFileEdit`, `stop`, `sessionStart` in `.cursor/hooks.json` (IDE and `cursor-agent`) | `followup_message` (stop); the edit hook cannot reach the model |
 | Orca        | the hooks of the agent it runs, plus a bundled Orca plugin (`hookah plugin orca --out <dir>`): status bar, sidebar panel, palette commands | per hosted agent; plugin shows the verdict per worktree |
 

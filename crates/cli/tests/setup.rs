@@ -271,7 +271,8 @@ fn the_opencode_plugin_matches_hookah_plugin_opencode() {
 fn setup_never_writes_outside_the_sandbox() {
     let sb = Sandbox::new("guard");
     for harness in [
-        "claude", "codex", "qoder", "kimi", "cursor", "opencode", "hermes", "pi", "openclaw",
+        "claude", "codex", "qoder", "zcode", "kimi", "cursor", "opencode", "hermes", "pi",
+        "openclaw",
     ] {
         for scope in ["user", "project"] {
             let out = sb.hookah(&["setup", harness, "--scope", scope]);
@@ -591,5 +592,165 @@ fn detect_recognizes_cursor_by_binary_and_by_config_directory() {
     sb.ok(&["setup", "cursor", "--scope", "user"]);
     assert!(
         line(&sb.ok(&["setup", "--detect"])).ends_with("project: not configured; user: configured")
+    );
+}
+
+#[test]
+fn zcode_project_setup_uses_native_process_hooks() {
+    let sb = Sandbox::new("zcode");
+    let printed = sb.ok(&["setup", "zcode", "--print"]);
+    let config: serde_json::Value = serde_json::from_str(&printed).unwrap();
+    let runner = |timeout| {
+        serde_json::json!({
+            "type": "process", "command": HOOKAH, "args": ["hook", "zcode"], "timeoutMs": timeout
+        })
+    };
+    assert_eq!(
+        config,
+        serde_json::json!({"hooks": {"enabled": true, "events": {
+            "SessionStart": [{"matcher": "startup|resume", "hooks": [runner(30000)]}],
+            "PostToolUse": [{"matcher": "Write|Edit|ApplyPatch", "hooks": [runner(30000)]}],
+            "Stop": [{"hooks": [runner(120000)]}]
+        }}})
+    );
+    assert!(sb.ok(&["setup", "zcode", "--dry-run"]).contains(&printed));
+    let file = sb.project(".zcode/config.json");
+    assert!(!file.exists());
+    sb.ok(&["setup", "zcode"]);
+    assert_eq!(text(&file), printed);
+    assert!(sb.ok(&["setup", "zcode"]).contains("already up to date"));
+    sb.ok(&["uninstall", "zcode"]);
+    assert!(!file.exists());
+}
+
+#[test]
+fn zcode_user_setup_preserves_disabled_hooks_and_unrelated_settings() {
+    let sb = Sandbox::new("zcode-user");
+    fs::write(sb.root.join("bin/zcode"), "").unwrap();
+    let file = sb.home(".zcode/cli/config.json");
+    fs::create_dir_all(file.parent().unwrap()).unwrap();
+    let original = serde_json::json!({
+        "hooks": {"enabled": false, "maxOutputBytes": 12345, "events": {
+            "Stop": [{"hooks": [{"type": "process", "command": "other", "args": ["hook", "zcode"]}]}]
+        }}
+    });
+    fs::write(&file, original.to_string()).unwrap();
+    sb.ok(&["setup", "zcode", "--scope", "user"]);
+    let installed: serde_json::Value = serde_json::from_str(&text(&file)).unwrap();
+    assert_eq!(installed["hooks"]["enabled"], false);
+    assert_eq!(installed["hooks"]["maxOutputBytes"], 12345);
+    assert_eq!(
+        installed["hooks"]["events"]["Stop"][0],
+        original["hooks"]["events"]["Stop"][0]
+    );
+    let detected = sb.ok(&["setup", "--detect"]);
+    let zcode = detected
+        .lines()
+        .find(|line| line.starts_with("zcode:"))
+        .unwrap();
+    assert!(zcode.contains("installed (binary"));
+    assert!(zcode.ends_with("project: not configured; user: configured"));
+    sb.ok(&["uninstall", "zcode", "--scope", "user"]);
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&text(&file)).unwrap(),
+        original
+    );
+    assert!(
+        sb.ok(&["uninstall", "zcode", "--scope", "user"])
+            .contains("nothing to remove")
+    );
+}
+
+#[test]
+fn zcode_setup_uses_an_existing_alternate_project_config_and_shell_override() {
+    let sb = Sandbox::new("zcode-alternate");
+    let file = sb.project("zcode.json");
+    fs::write(&file, r#"{"hooks":{"enabled":false}}"#).unwrap();
+    sb.ok(&["setup", "zcode", "--command", "mise exec -- hookah"]);
+    let config: serde_json::Value = serde_json::from_str(&text(&file)).unwrap();
+    assert_eq!(
+        config["hooks"]["events"]["Stop"][0]["hooks"][0],
+        serde_json::json!({
+            "type": "command", "command": "mise exec -- hookah hook zcode", "timeoutMs": 120000
+        })
+    );
+    assert_eq!(config["hooks"]["enabled"], false);
+    assert!(!sb.project(".zcode/config.json").exists());
+    assert!(
+        sb.ok(&["setup", "--detect"])
+            .lines()
+            .any(|line| line.starts_with("zcode:")
+                && line.ends_with("project: configured; user: not configured"))
+    );
+    sb.ok(&["setup", "zcode"]);
+    let config: serde_json::Value = serde_json::from_str(&text(&file)).unwrap();
+    assert_eq!(
+        config["hooks"]["events"]["Stop"].as_array().unwrap().len(),
+        1
+    );
+    assert_eq!(
+        config["hooks"]["events"]["Stop"][0]["hooks"][0]["type"],
+        "process"
+    );
+    sb.ok(&["uninstall", "zcode"]);
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&text(&file)).unwrap(),
+        serde_json::json!({"hooks":{"enabled":false}})
+    );
+}
+
+#[test]
+fn zcode_keeps_its_project_hooks_in_the_existing_file_when_both_locations_exist() {
+    let sb = Sandbox::new("zcode-coexisting");
+    let alternate = sb.project("zcode.json");
+    fs::write(&alternate, "{}").unwrap();
+    sb.ok(&["setup", "zcode"]);
+    let preferred = sb.project(".zcode/config.json");
+    fs::create_dir_all(preferred.parent().unwrap()).unwrap();
+    fs::write(&preferred, "{}").unwrap();
+
+    assert!(
+        sb.ok(&["setup", "--detect"])
+            .lines()
+            .any(|line| line.starts_with("zcode:") && line.contains("project: configured"))
+    );
+    let repeat = sb.ok(&["setup", "zcode"]);
+    assert!(repeat.contains("already up to date"), "{repeat}");
+    assert_eq!(text(&preferred), "{}");
+
+    sb.ok(&["uninstall", "--all"]);
+    assert_eq!(text(&preferred), "{}");
+    assert_eq!(text(&alternate), "{}\n");
+}
+
+#[test]
+fn zcode_recognizes_its_shell_hook_when_the_command_prefix_names_a_wrapper() {
+    let sb = Sandbox::new("zcode-wrapper");
+    let args = ["setup", "zcode", "--command", "my-hook-wrapper"];
+    sb.ok(&args);
+    assert!(sb.ok(&args).contains("already up to date"));
+    assert!(
+        sb.ok(&["setup", "--detect"])
+            .lines()
+            .any(|line| line.starts_with("zcode:") && line.contains("project: configured"))
+    );
+    sb.ok(&["uninstall", "zcode"]);
+    assert!(!sb.project(".zcode/config.json").exists());
+}
+
+#[test]
+fn zcode_uninstall_preserves_a_preexisting_enabled_preference() {
+    let sb = Sandbox::new("zcode-enabled");
+    let file = sb.home(".zcode/cli/config.json");
+    fs::create_dir_all(file.parent().unwrap()).unwrap();
+    let original = serde_json::json!({"hooks": {"enabled": true}});
+    fs::write(&file, original.to_string()).unwrap();
+
+    sb.ok(&["setup", "zcode", "--scope", "user"]);
+    sb.ok(&["uninstall", "zcode", "--scope", "user"]);
+
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&text(&file)).unwrap(),
+        original
     );
 }

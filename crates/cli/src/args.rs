@@ -210,6 +210,8 @@ pub enum UninstallKind {
     Codex,
     /// Qoder CLI.
     Qoder,
+    /// ZCode.
+    Zcode,
     /// Kimi Code.
     Kimi,
     /// Cursor.
@@ -233,6 +235,7 @@ impl UninstallKind {
             Self::Claude => HarnessKind::Claude,
             Self::Codex => HarnessKind::Codex,
             Self::Qoder => HarnessKind::Qoder,
+            Self::Zcode => HarnessKind::Zcode,
             Self::Kimi => HarnessKind::Kimi,
             Self::Cursor => HarnessKind::Cursor,
             Self::Opencode => HarnessKind::Opencode,
@@ -262,6 +265,8 @@ pub enum HarnessKind {
     Codex,
     /// Qoder CLI command hooks.
     Qoder,
+    /// ZCode command hooks.
+    Zcode,
     /// Kimi Code command hooks.
     Kimi,
     /// Cursor (the IDE agent and `cursor-agent`) command hooks.

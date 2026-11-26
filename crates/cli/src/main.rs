@@ -35,6 +35,7 @@ use hookah_harness::plugins::openclaw::{Openclaw, PLUGIN_SOURCE as OPENCLAW_PLUG
 use hookah_harness::plugins::pi::{PLUGIN_SOURCE as PI_PLUGIN_SOURCE, Pi};
 use hookah_harness::protocol::{Harness, Invocation, Response, canonical_dir, merge_outcomes};
 use hookah_harness::qoder::Qoder;
+use hookah_harness::zcode::ZCode;
 
 use crate::args::{Cli, Command, HarnessKind, PluginKind};
 use crate::render::Style;
@@ -285,6 +286,7 @@ fn hook(harness: HarnessKind, limit: usize) -> Response {
         HarnessKind::Claude => run_harness(&Claude, &stdin, limit),
         HarnessKind::Codex => run_harness(&Codex, &stdin, limit),
         HarnessKind::Qoder => run_harness(&Qoder, &stdin, limit),
+        HarnessKind::Zcode => run_harness(&ZCode, &stdin, limit),
         HarnessKind::Kimi => run_harness(&Kimi, &stdin, limit),
         HarnessKind::Cursor => run_harness(&Cursor, &stdin, limit),
         HarnessKind::Opencode => run_harness(&Opencode, &stdin, limit),

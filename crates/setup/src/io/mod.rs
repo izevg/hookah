@@ -10,8 +10,8 @@ use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 
 use crate::error::SetupError;
-use crate::merge::{companions, merge};
-use crate::target::Target;
+use crate::merge::{companions, merge, zcode};
+use crate::target::{Program, Target};
 use env::{Env, Scope};
 
 /// What `hookah setup` would do to one config file.
@@ -71,9 +71,19 @@ pub struct Written {
 /// Reads the config file and works out its new content. Writes nothing.
 ///
 /// `program` starts hookah in each hook command (see [`merge`]).
-pub fn plan(target: Target, scope: Scope, env: &Env, program: &str) -> Result<Plan, SetupError> {
-    let path = env.config_path(target, scope)?;
-    let before = read(&path)?;
+pub fn plan<'a>(
+    target: Target,
+    scope: Scope,
+    env: &Env,
+    program: impl Into<Program<'a>>,
+) -> Result<Plan, SetupError> {
+    let (path, before) = if target == Target::Zcode && scope == Scope::Project {
+        zcode_project_config(env)?
+    } else {
+        let path = env.config_path(target, scope)?;
+        let before = read(&path)?;
+        (path, before)
+    };
     let after =
         merge(target, before.as_deref(), program).map_err(|reason| SetupError::Invalid {
             path: path.clone(),
@@ -99,6 +109,18 @@ pub fn plan(target: Target, scope: Scope, env: &Env, program: &str) -> Result<Pl
     })
 }
 
+fn zcode_project_config(env: &Env) -> Result<(PathBuf, Option<String>), SetupError> {
+    let [primary, alternate] = env.zcode_project_configs();
+    let before = read(&primary)?;
+    if before.as_deref().is_some_and(zcode::configured) {
+        return Ok((primary, before));
+    }
+    match read(&alternate)? {
+        Some(text) if before.is_none() || zcode::configured(&text) => Ok((alternate, Some(text))),
+        _ => Ok((primary, before)),
+    }
+}
+
 fn read(path: &Path) -> Result<Option<String>, SetupError> {
     match fs::read_to_string(path) {
         Ok(text) => Ok(Some(text)),
@@ -111,7 +133,7 @@ fn read(path: &Path) -> Result<Option<String>, SetupError> {
 }
 
 /// What setup would add to a config file that does not exist yet: the reference snippet.
-pub fn snippet(target: Target, program: &str) -> Result<String, String> {
+pub fn snippet<'a>(target: Target, program: impl Into<Program<'a>>) -> Result<String, String> {
     merge(target, None, program)
 }
 
@@ -204,6 +226,40 @@ mod tests {
         let plan = plan(target, scope, env, "hookah")?;
         let written = commit(&plan)?;
         Ok((plan, written))
+    }
+
+    #[test]
+    fn zcode_setup_keeps_its_existing_project_config_location() {
+        let env = temp_env("zcode-path");
+        let [primary, alternate] = env.zcode_project_configs();
+        let make_plan = || {
+            plan(
+                Target::Zcode,
+                Scope::Project,
+                &env,
+                Program::Executable("hookah"),
+            )
+            .unwrap()
+        };
+
+        assert_eq!(make_plan().path, primary);
+
+        fs::create_dir_all(&env.cwd).unwrap();
+        fs::write(&alternate, "{}").unwrap();
+        let alternate_setup = make_plan();
+        assert_eq!(alternate_setup.path, alternate);
+
+        fs::create_dir_all(primary.parent().unwrap()).unwrap();
+        fs::write(&primary, "{}").unwrap();
+        assert_eq!(make_plan().path, primary);
+
+        commit(&alternate_setup).unwrap();
+        assert_eq!(make_plan().path, alternate);
+
+        fs::write(&primary, alternate_setup.after).unwrap();
+        assert_eq!(make_plan().path, primary);
+        let user = plan(Target::Zcode, Scope::User, &env, "hookah").unwrap();
+        assert_eq!(user.path, env.home.unwrap().join(".zcode/cli/config.json"));
     }
 
     #[test]
@@ -450,11 +506,11 @@ mod tests {
                 r#"command = '"C:/Users/a b/AppData/Local/hookah/bin/hookah.exe" hook kimi'"#,
             ),
         ] {
-            let out = snippet(target, &program).unwrap();
+            let out = snippet(target, program.as_str()).unwrap();
             assert!(out.contains(needle), "{target:?}: {out}");
             // The old unquoted backslash form is recognized and replaced, not duplicated.
             let old = snippet(target, exe).unwrap();
-            let merged = crate::merge::merge(target, Some(&old), &program).unwrap();
+            let merged = crate::merge::merge(target, Some(&old), program.as_str()).unwrap();
             assert_eq!(merged, out, "{target:?}");
             assert!(!merged.contains("AppData\\"), "{target:?}: {merged}");
             assert!(merged.contains(new_form));

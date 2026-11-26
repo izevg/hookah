@@ -12,6 +12,7 @@ mod cursor;
 mod json;
 mod toml;
 pub(crate) mod yaml;
+pub(crate) mod zcode;
 
 use hookah_harness::opencode::PLUGIN_SOURCE;
 use hookah_harness::plugins::hermes::{PLUGIN_MANIFEST, PLUGIN_SOURCE as HERMES_PLUGIN_SOURCE};
@@ -20,21 +21,27 @@ use hookah_harness::plugins::openclaw::{
 };
 use hookah_harness::plugins::pi::PLUGIN_SOURCE as PI_PLUGIN_SOURCE;
 
-use crate::target::Target;
+use crate::target::{Program, Target};
 
 /// Merges hookah's hooks for `target` into `existing` (`None` when the file does not exist).
 ///
 /// `program` is the command prefix that starts hookah, for example `/home/u/.local/bin/hookah`;
 /// each hook runs `<program> hook <target>`.
-pub fn merge(target: Target, existing: Option<&str>, program: &str) -> Result<String, String> {
-    let command = format!("{program} hook {}", target.name());
+pub fn merge<'a>(
+    target: Target,
+    existing: Option<&str>,
+    program: impl Into<Program<'a>>,
+) -> Result<String, String> {
+    let program = program.into();
     let existing = existing.filter(|text| !text.trim().is_empty());
+    let command = || format!("{} hook {}", program.shell_command(), target.name());
     match target {
-        Target::Claude | Target::Qoder => json::merge(target, existing, &command),
-        Target::Codex => toml::codex::merge(target, existing, &command),
-        Target::Kimi => toml::kimi::merge(target, existing, &command),
-        Target::Cursor => cursor::merge(target, existing, &command),
+        Target::Claude | Target::Qoder => json::merge(target, existing, &command()),
+        Target::Codex => toml::codex::merge(target, existing, &command()),
+        Target::Kimi => toml::kimi::merge(target, existing, &command()),
+        Target::Cursor => cursor::merge(target, existing, &command()),
         Target::Hermes => yaml::merge(existing),
+        Target::Zcode => zcode::merge(existing, program),
         Target::Opencode | Target::Pi | Target::Openclaw => {
             Ok(plugin_text(target).unwrap_or_default().to_owned())
         }
@@ -82,6 +89,7 @@ pub fn unmerge(target: Target, existing: &str) -> Result<Unmerged, String> {
         Target::Kimi => toml::kimi::unmerge(target, existing),
         Target::Cursor => cursor::unmerge(target, existing),
         Target::Hermes => yaml::unmerge(existing),
+        Target::Zcode => zcode::unmerge(existing, None),
         Target::Opencode | Target::Pi | Target::Openclaw => Ok(Unmerged::Unchanged),
     }
 }

@@ -13,12 +13,13 @@
 //! - `session_id` tags every edit and stop request, so they find the session's baseline.
 //! - Any other event is ignored.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
-use hookah_application::{EditRequest, StopRequest};
+use hookah_application::StopRequest;
 use serde::Deserialize;
 
-use crate::protocol::{Invocation, PayloadError, display_root, resolve_path, start_invocation};
+use crate::hooks::patch;
+use crate::protocol::{Invocation, PayloadError, start_invocation};
 
 #[derive(Deserialize)]
 struct Payload {
@@ -66,42 +67,7 @@ fn edit(p: &Payload) -> Result<Invocation, PayloadError> {
     let Some(patch) = input.command.as_deref().or(input.patch.as_deref()) else {
         return Ok(Invocation::Ignore);
     };
-    let mut requests = Vec::new();
-    for path in patched_paths(patch) {
-        let file = resolve_path(Path::new(&path), p.cwd.as_deref())?;
-        let root = display_root(&file, p.cwd.as_deref());
-        requests.push(EditRequest::new(file, root).with_session(p.session_id.clone()));
-    }
-    Ok(if requests.is_empty() {
-        Invocation::Ignore
-    } else {
-        Invocation::EditBatch(requests)
-    })
-}
-
-/// The paths a patch leaves files at: added, updated (or moved to). Deletions are skipped.
-fn patched_paths(patch: &str) -> Vec<String> {
-    let mut paths: Vec<String> = Vec::new();
-    // Whether the last header was an update, so a following `*** Move to:` replaces its path.
-    let mut last_is_update = false;
-    for line in patch.lines() {
-        if let Some(path) = line.strip_prefix("*** Add File: ") {
-            paths.push(path.trim().to_string());
-            last_is_update = false;
-        } else if let Some(path) = line.strip_prefix("*** Update File: ") {
-            paths.push(path.trim().to_string());
-            last_is_update = true;
-        } else if let Some(path) = line.strip_prefix("*** Move to: ") {
-            if last_is_update && let Some(last) = paths.last_mut() {
-                *last = path.trim().to_string();
-            }
-            last_is_update = false;
-        } else if line.starts_with("*** Delete File: ") {
-            last_is_update = false;
-        }
-    }
-    paths.dedup();
-    paths
+    patch::invocation(patch, p.cwd.as_deref(), p.session_id.as_deref())
 }
 
 #[cfg(test)]

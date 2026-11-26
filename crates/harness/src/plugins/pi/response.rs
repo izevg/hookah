@@ -10,19 +10,20 @@
 //! reaches the model. A missing field is omitted from the JSON.
 //!
 //! - Edit, `Fail`: `block`, report as `model_text`.
-//! - Edit, `Pass` with a `FileRewritten` or missing-tool notice: no `block`, `model_text` holds
-//!   the re-read hint and the missing-tool advice.
+//! - Edit, `Pass` with a `FileRewritten` notice: no `block`, `model_text` holds the re-read hint.
 //! - Stop, `Fail`, first attempt: `block`, report as `model_text`.
 //! - Stop, `Fail`, `already_continuing`: do not block again (no loop); a summary as `user_text`.
-//! - `Degraded` (and degradation or missing-tool notices): `user_text` only; never blocks.
+//! - Non-blocking degradation and missing-tool notices go to `user_text`.
 //! - Anything else: `{"v":1,"block":false}`.
 
 use hookah_application::Outcome;
+use hookah_domain::session::Phase;
 use serde::Serialize;
 
 use crate::plugins::pi::payload::VERSION;
 use crate::protocol::{
-    Invocation, Response, blocking_report, degraded_warnings, edit_context, problems, report_text,
+    Invocation, Response, blocking_report, degraded_warnings, edit_context, problems,
+    report_feedback,
 };
 
 #[derive(Debug, Serialize, PartialEq, Eq)]
@@ -50,12 +51,7 @@ pub fn render(invocation: &Invocation, outcome: &Outcome) -> Response {
         Invocation::Edit(_) | Invocation::EditBatch(_) => match blocking_report(outcome) {
             Some(report) => {
                 reply.block = true;
-                reply.model_text = Some(format!(
-                    "hookah: {} after editing {} - fix before continuing:\n{}",
-                    problems(report),
-                    edited_files(invocation),
-                    report_text(report, outcome)
-                ));
+                reply.model_text = Some(report_feedback(Phase::Edit, report, outcome));
             }
             None => reply.model_text = edit_context(outcome),
         },
@@ -70,12 +66,7 @@ pub fn render(invocation: &Invocation, outcome: &Outcome) -> Response {
                     ));
                 } else {
                     reply.block = true;
-                    reply.model_text = Some(format!(
-                        "hookah: {} in the files changed in this session - tests or checks \
-                         are failing, fix before finishing:\n{}",
-                        problems(report),
-                        report_text(report, outcome)
-                    ));
+                    reply.model_text = Some(report_feedback(Phase::Stop, report, outcome));
                 }
             }
         }
@@ -85,18 +76,6 @@ pub fn render(invocation: &Invocation, outcome: &Outcome) -> Response {
         stdout: format!("{}\n", serde_json::to_string(&reply).unwrap_or_default()),
         stderr: String::new(),
     }
-}
-
-fn edited_files(invocation: &Invocation) -> String {
-    let files: Vec<String> = match invocation {
-        Invocation::Edit(r) => vec![r.shown_file().display().to_string()],
-        Invocation::EditBatch(rs) => rs
-            .iter()
-            .map(|r| r.shown_file().display().to_string())
-            .collect(),
-        _ => vec![],
-    };
-    files.join(", ")
 }
 
 #[cfg(test)]
@@ -159,24 +138,21 @@ mod tests {
         assert_eq!(v["v"], 1);
         assert_eq!(v["block"], true);
         let text = v["model_text"].as_str().unwrap();
-        assert!(text.starts_with("hookah: 1 problem after editing a.rs - fix before"));
+        assert!(text.starts_with("hookah: 1 problem. Fix before continuing."));
         assert!(text.contains("a.rs:3: unused variable"));
         assert!(v.get("user_text").is_none());
     }
 
     #[test]
-    fn batch_names_every_file() {
+    fn batch_reports_findings_without_echoing_unaffected_files() {
         let v = json_of(&render(&batch(), &failing()));
-        assert!(
-            v["model_text"]
-                .as_str()
-                .unwrap()
-                .starts_with("hookah: 1 problem after editing a.rs, b.rs - fix")
-        );
+        let text = v["model_text"].as_str().unwrap();
+        assert!(text.contains("a.rs:3: unused variable"));
+        assert!(!text.contains("b.rs"));
     }
 
     #[test]
-    fn rewrite_and_missing_tool_advise_without_blocking() {
+    fn rewrite_reaches_model_and_missing_tool_reaches_user() {
         let o = Outcome {
             verdict: Verdict::Pass,
             notices: vec![
@@ -191,7 +167,8 @@ mod tests {
         let v = json_of(&render(&edit(), &o));
         assert_eq!(v["block"], false);
         let text = v["model_text"].as_str().unwrap();
-        assert!(text.contains("Re-read") && text.contains("ruff"));
+        assert!(text.contains("/w/a.rs") && text.contains("Re-read"));
+        assert!(!text.contains("ruff"));
         assert_eq!(
             v["user_text"],
             "hookah: tool not installed: ruff (lint): pip install ruff"
@@ -226,7 +203,7 @@ mod tests {
         let v = json_of(&render(&stop(false), &failing()));
         assert_eq!(v["block"], true);
         let text = v["model_text"].as_str().unwrap();
-        assert!(text.contains("fix before finishing"));
+        assert!(text.contains("Fix before finishing"));
         assert!(text.contains("a.rs:3: unused variable"));
         assert!(v.get("user_text").is_none());
     }

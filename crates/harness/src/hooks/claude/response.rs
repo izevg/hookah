@@ -18,41 +18,30 @@
 //! - Anything else: exit 0, no output.
 
 use hookah_application::Outcome;
-use hookah_domain::toolchain::MissingTool;
-use hookah_domain::verdict::{Notice, Report};
+use hookah_domain::session::Phase;
+use hookah_domain::verdict::Notice;
 use serde_json::{Value, json};
 
-use crate::protocol::{Invocation, Response, blocking_report, degraded_warnings, start_response};
+use crate::protocol::{
+    Invocation, Response, blocking_report, degraded_warnings, edit_context, problems,
+    report_feedback, start_response,
+};
 
 /// Renders `outcome` for Claude Code.
 pub fn render(invocation: &Invocation, outcome: &Outcome) -> Response {
     match invocation {
         Invocation::Ignore | Invocation::EditBatch(_) => Response::silent(),
         Invocation::Start(_) => start(outcome),
-        Invocation::Edit(request) => match blocking_report(outcome) {
-            Some(report) => block(
-                format!(
-                    "hookah: {} after editing {} - fix before continuing:",
-                    problems(report),
-                    request.shown_file().display()
-                ),
-                report,
-                outcome,
-            ),
+        Invocation::Edit(_) => match blocking_report(outcome) {
+            Some(report) => block(report_feedback(Phase::Edit, report, outcome)),
             None => allow(outcome, true),
         },
         Invocation::Stop {
             already_continuing, ..
         } => match blocking_report(outcome) {
-            Some(report) if !already_continuing => block(
-                format!(
-                    "hookah: {} in the files changed in this session - tests or checks are \
-                     failing, fix before finishing:",
-                    problems(report)
-                ),
-                report,
-                outcome,
-            ),
+            Some(report) if !already_continuing => {
+                block(report_feedback(Phase::Stop, report, outcome))
+            }
             Some(report) => json_response(json!({
                 "systemMessage": format!(
                     "hookah: {} still failing; not blocking again.\n{report}",
@@ -81,18 +70,7 @@ fn start(outcome: &Outcome) -> Response {
     response
 }
 
-fn problems(report: &Report) -> String {
-    match report.findings().len() {
-        1 => "1 problem".into(),
-        n => format!("{n} problems"),
-    }
-}
-
-fn block(header: String, report: &Report, outcome: &Outcome) -> Response {
-    let mut stderr = format!("{header}\n{report}\n");
-    for notice in &outcome.notices {
-        stderr.push_str(&format!("{notice}\n"));
-    }
+fn block(stderr: String) -> Response {
     Response {
         exit_code: 2,
         stdout: String::new(),
@@ -104,44 +82,10 @@ fn block(header: String, report: &Report, outcome: &Outcome) -> Response {
 /// for degradation.
 fn allow(outcome: &Outcome, edit_phase: bool) -> Response {
     let mut out = serde_json::Map::new();
-    let rewritten: Vec<String> = outcome
-        .notices
-        .iter()
-        .filter_map(|n| match n {
-            Notice::FileRewritten(p) => Some(p.display().to_string()),
-            Notice::Degraded(_) | Notice::MissingTool(_) | Notice::Update(_) => None,
-        })
-        .collect();
-    let missing: Vec<&MissingTool> = outcome
-        .notices
-        .iter()
-        .filter_map(|n| match n {
-            Notice::MissingTool(t) => Some(t),
-            _ => None,
-        })
-        .collect();
-    let mut context = Vec::new();
-    if edit_phase && !rewritten.is_empty() {
-        context.push(format!(
-            "hookah reformatted {}. Re-read the file before editing it again.",
-            rewritten.join(", ")
-        ));
-    }
-    // Only PostToolUse can feed the model; the stop phase tells the user alone.
-    if edit_phase && !missing.is_empty() {
-        let lines: Vec<String> = missing
-            .iter()
-            .map(|t| Notice::MissingTool((*t).clone()).to_string())
-            .collect();
-        context.push(format!(
-            "hookah skipped some checks: {}. hookah never installs tools; tell the user.",
-            lines.join("; ")
-        ));
-    }
-    if !context.is_empty() {
+    if edit_phase && let Some(context) = edit_context(outcome) {
         out.insert(
             "hookSpecificOutput".into(),
-            json!({"hookEventName": "PostToolUse", "additionalContext": context.join(" ")}),
+            json!({"hookEventName": "PostToolUse", "additionalContext": context}),
         );
     }
     let warnings = degraded_warnings(outcome);
@@ -168,8 +112,8 @@ fn json_response(value: Value) -> Response {
 mod tests {
     use hookah_application::{EditRequest, StopRequest};
     use hookah_domain::finding::{Finding, Location, Severity};
-    use hookah_domain::toolchain::CheckKind;
-    use hookah_domain::verdict::Verdict;
+    use hookah_domain::toolchain::{CheckKind, MissingTool};
+    use hookah_domain::verdict::{Report, Verdict};
 
     use super::*;
 
@@ -215,7 +159,10 @@ mod tests {
         let r = render(&edit(), &o);
         assert_eq!(r.exit_code, 2);
         assert!(r.stdout.is_empty());
-        assert!(r.stderr.starts_with("hookah: 1 problem after editing a.rs"));
+        assert!(
+            r.stderr
+                .starts_with("hookah: 1 problem. Fix before continuing.")
+        );
         assert!(r.stderr.contains("a.rs:3: unused variable"));
         assert!(r.stderr.contains("re-read it before editing"));
     }
@@ -238,7 +185,7 @@ mod tests {
     }
 
     #[test]
-    fn edit_pass_with_missing_tool_tells_the_model_and_the_user() {
+    fn edit_pass_with_missing_tool_warns_the_user_only() {
         let o = Outcome {
             verdict: Verdict::Pass,
             notices: vec![missing_notice()],
@@ -246,11 +193,7 @@ mod tests {
         let r = render(&edit(), &o);
         assert_eq!(r.exit_code, 0);
         let v = stdout_json(&r);
-        let ctx = v["hookSpecificOutput"]["additionalContext"]
-            .as_str()
-            .unwrap();
-        assert!(ctx.contains("mutation testing tool cargo-mutants not installed"));
-        assert!(ctx.contains("cargo install cargo-mutants") && ctx.contains("tell the user"));
+        assert!(v.get("hookSpecificOutput").is_none());
         let msg = v["systemMessage"].as_str().unwrap();
         assert_eq!(
             msg,
@@ -313,7 +256,7 @@ mod tests {
     fn stop_fail_blocks_once() {
         let r = render(&stop(false), &failing(vec![]));
         assert_eq!(r.exit_code, 2);
-        assert!(r.stderr.contains("fix before finishing"));
+        assert!(r.stderr.contains("Fix before finishing"));
         assert!(r.stderr.contains("a.rs:3: unused variable"));
     }
 

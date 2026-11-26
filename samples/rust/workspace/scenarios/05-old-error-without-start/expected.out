@@ -1,5 +1,5 @@
 exit: 2
 --- stdout
 --- stderr
-hookah: 1 problem after editing core/src/lib.rs - fix before continuing:
+hookah: 1 problem. Fix before continuing.
 app/src/lib.rs:23:5: mismatched types [E0308]

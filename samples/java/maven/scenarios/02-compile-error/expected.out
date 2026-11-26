@@ -1,5 +1,5 @@
 exit: 2
 --- stdout
 --- stderr
-hookah: 1 problem after editing src/main/java/shop/Cart.java - fix before continuing:
+hookah: 1 problem. Fix before continuing.
 src/main/java/shop/Cart.java:29:12: [typecheck] cannot find symbol: method totl() (location: class shop.Cart)

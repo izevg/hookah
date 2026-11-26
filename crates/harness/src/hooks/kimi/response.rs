@@ -9,26 +9,22 @@
 //! - Anything else: exit 0, no output.
 
 use hookah_application::Outcome;
+use hookah_domain::session::Phase;
 
 use crate::protocol::{
-    Invocation, Response, blocking_report, degraded_warnings, edit_context, problems, report_text,
+    Invocation, Response, blocking_report, degraded_warnings, edit_context, report_feedback,
     start_response,
 };
 
 /// Renders `outcome` for Kimi Code.
 pub fn render(invocation: &Invocation, outcome: &Outcome) -> Response {
-    let request = match invocation {
-        Invocation::Edit(request) => request,
+    match invocation {
+        Invocation::Edit(_) => {}
         Invocation::Start(_) => return start_response(outcome),
         _ => return Response::silent(),
-    };
+    }
     let stdout = match blocking_report(outcome) {
-        Some(report) => format!(
-            "hookah: {} after editing {} - fix before continuing:\n{}",
-            problems(report),
-            request.shown_file().display(),
-            report_text(report, outcome)
-        ),
+        Some(report) => report_feedback(Phase::Edit, report, outcome),
         None => edit_context(outcome)
             .map(|text| format!("{text}\n"))
             .unwrap_or_default(),
@@ -84,7 +80,10 @@ mod tests {
             &failing(vec![Notice::FileRewritten("/w/a.py".into())]),
         );
         assert_eq!(r.exit_code, 0);
-        assert!(r.stdout.starts_with("hookah: 1 problem after editing a.py"));
+        assert!(
+            r.stdout
+                .starts_with("hookah: 1 problem. Fix before continuing.")
+        );
         assert!(r.stdout.contains("a.py:3: unused import"));
         assert!(r.stdout.contains("re-read it before editing"));
         assert!(r.stderr.is_empty());

@@ -27,4 +27,4 @@ pub use io::env::{Env, Scope};
 pub use io::uninstall::{Removal, Step, plan_removal, remove};
 pub use io::{Companion, Plan, Written, commit, plan, snippet};
 pub use plugin::{Installed, plan_orca_removal, plan_plugin_removal, write_plugin};
-pub use target::{Target, quote_program, shell_program};
+pub use target::{Program, Target, quote_program, shell_program};

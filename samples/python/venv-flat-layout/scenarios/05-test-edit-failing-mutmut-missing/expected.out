@@ -1,6 +1,6 @@
 exit: 2
 --- stdout
 --- stderr
-hookah: 1 problem in the files changed in this session - tests or checks are failing, fix before finishing:
+hookah: 1 problem. Fix before finishing.
 tests/test_stats.py:10: test_spread failed: assert 8 == 9
 mutation testing tool mutmut not installed: pip install mutmut

@@ -14,11 +14,12 @@
 //! - Anything else: no output.
 
 use hookah_application::Outcome;
+use hookah_domain::session::Phase;
 use serde_json::{Value, json};
 
 use crate::protocol::{
-    Invocation, Response, blocking_report, degraded_warnings, edit_context, problems, report_text,
-    start_response,
+    Invocation, Response, blocking_report, degraded_warnings, edit_context, problems,
+    report_feedback, start_response,
 };
 
 /// Renders `outcome` for Codex CLI.
@@ -27,23 +28,15 @@ pub fn render(invocation: &Invocation, outcome: &Outcome) -> Response {
         Invocation::Ignore => Response::silent(),
         Invocation::Start(_) => start_response(outcome),
         Invocation::Edit(_) | Invocation::EditBatch(_) => match blocking_report(outcome) {
-            Some(report) => block(format!(
-                "hookah: {} after editing {} - fix before continuing:\n{}",
-                problems(report),
-                edited_files(invocation),
-                report_text(report, outcome)
-            )),
+            Some(report) => block(report_feedback(Phase::Edit, report, outcome)),
             None => allow(outcome, true),
         },
         Invocation::Stop {
             already_continuing, ..
         } => match blocking_report(outcome) {
-            Some(report) if !already_continuing => block(format!(
-                "hookah: {} in the files changed in this session - tests or checks are \
-                 failing, fix before finishing:\n{}",
-                problems(report),
-                report_text(report, outcome)
-            )),
+            Some(report) if !already_continuing => {
+                block(report_feedback(Phase::Stop, report, outcome))
+            }
             Some(report) => json_response(json!({
                 "systemMessage": format!(
                     "hookah: {} still failing; not blocking again.\n{report}",
@@ -53,18 +46,6 @@ pub fn render(invocation: &Invocation, outcome: &Outcome) -> Response {
             None => allow(outcome, false),
         },
     }
-}
-
-fn edited_files(invocation: &Invocation) -> String {
-    let files: Vec<String> = match invocation {
-        Invocation::Edit(r) => vec![r.shown_file().display().to_string()],
-        Invocation::EditBatch(rs) => rs
-            .iter()
-            .map(|r| r.shown_file().display().to_string())
-            .collect(),
-        _ => vec![],
-    };
-    files.join(", ")
 }
 
 fn block(reason: String) -> Response {
@@ -142,20 +123,21 @@ mod tests {
     }
 
     #[test]
-    fn edit_fail_blocks_with_files_report_and_notices() {
+    fn edit_fail_blocks_with_findings_and_rewrite_notice() {
         let o = failing(vec![Notice::FileRewritten("/w/a.rs".into())]);
         let r = render(&batch(), &o);
         assert_eq!(r.exit_code, 0);
         let v = stdout_json(&r);
         assert_eq!(v["decision"], "block");
         let reason = v["reason"].as_str().unwrap();
-        assert!(reason.starts_with("hookah: 1 problem after editing a.rs, b.rs"));
+        assert_eq!(reason.matches("a.rs").count(), 2);
+        assert!(!reason.contains("b.rs"));
         assert!(reason.contains("a.rs:3: unused variable"));
         assert!(reason.contains("re-read it before editing"));
     }
 
     #[test]
-    fn single_edit_names_its_file() {
+    fn single_edit_includes_the_finding() {
         let single = Invocation::Edit(EditRequest::new(
             PathBuf::from("/w/a.rs"),
             PathBuf::from("/w"),
@@ -166,7 +148,7 @@ mod tests {
             v["reason"]
                 .as_str()
                 .unwrap()
-                .starts_with("hookah: 1 problem after editing a.rs - ")
+                .contains("a.rs:3: unused variable")
         );
     }
 
@@ -220,7 +202,7 @@ mod tests {
             v["reason"]
                 .as_str()
                 .unwrap()
-                .contains("fix before finishing")
+                .contains("Fix before finishing")
         );
     }
 

@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 use super::env::{Env, Scope};
 use super::{backup_path, read, sibling};
 use crate::error::SetupError;
-use crate::merge::{Unmerged, companions, plugin_text, unmerge};
+use crate::merge::{Unmerged, companions, plugin_text, unmerge, zcode};
 use crate::target::Target;
 
 /// One thing uninstall does to one file.
@@ -119,6 +119,10 @@ pub fn plan_removal(
     let mut steps = Vec::new();
     if let Some(text) = plugin_text(target) {
         files.insert(0, (path, text));
+    } else if target == Target::Zcode && scope == Scope::Project {
+        for path in env.zcode_project_configs() {
+            steps.extend(config_step(target, &path)?);
+        }
     } else if let Some(step) = config_step(target, &path)? {
         // A config that cannot be edited leaves the plugin enabled, so its files stay too.
         if matches!(step, Step::Keep { .. }) {
@@ -141,7 +145,13 @@ fn config_step(target: Target, path: &Path) -> Result<Option<Step>, SetupError> 
     let Some(text) = read(path)? else {
         return Ok(None);
     };
-    Ok(match unmerge(target, &text) {
+    let updated = if target == Target::Zcode {
+        let original = read(&backup_path(path)).ok().flatten();
+        zcode::unmerge(&text, original.as_deref())
+    } else {
+        unmerge(target, &text)
+    };
+    Ok(match updated {
         Err(reason) => Some(Step::Keep {
             path: path.to_path_buf(),
             reason: format!("{reason}; remove hookah's entries by hand"),
@@ -284,6 +294,29 @@ mod tests {
             assert!(!removal.changed() && !removal.refused());
             assert!(removal.backups.is_empty());
         }
+    }
+
+    #[test]
+    fn zcode_uninstall_checks_both_project_paths_in_project_scope() {
+        let env = temp_env("zcode");
+        setup(&env, Target::Zcode, Scope::User);
+        let user = env.config_path(Target::Zcode, Scope::User).unwrap();
+        let [primary, alternate] = env.zcode_project_configs();
+        let config = fs::read_to_string(&user).unwrap();
+        write(&primary, &config);
+        write(&alternate, &config);
+
+        let planned = plan_removal(Target::Zcode, Scope::User, &env, false).unwrap();
+        assert_eq!(planned.steps, [Step::Delete { path: user.clone() }]);
+        let removed = undo(&env, Target::Zcode, Scope::Project);
+        assert_eq!(
+            removed.steps,
+            [
+                Step::Delete { path: primary },
+                Step::Delete { path: alternate }
+            ]
+        );
+        assert!(user.is_file());
     }
 
     #[test]

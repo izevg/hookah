@@ -1,7 +1,7 @@
 exit: 2
 --- stdout
 --- stderr
-hookah: 4 problems after editing src/shop/domain/cart.py - fix before continuing:
+hookah: 4 problems. Fix before continuing.
 src/shop/infra/store.py:14:28: [typecheck] Argument 1 to "append" of "list" has incompatible type "str"; expected "int" [arg-type]
 src/shop/infra/store.py:15:16: [typecheck] Incompatible return value type (got "str", expected "int") [return-value]
 tests/test_cart.py:10:12: [typecheck] Non-overlapping equality check (left operand type: "str", right operand type: "Literal[180]") [comparison-overlap]

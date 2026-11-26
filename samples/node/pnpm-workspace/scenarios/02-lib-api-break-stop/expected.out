@@ -1,7 +1,7 @@
 exit: 2
 --- stdout
 --- stderr
-hookah: 3 problems in the files changed in this session - tests or checks are failing, fix before finishing:
+hookah: 3 problems. Fix before finishing.
 packages/app/src/main.ts:4:24: [typecheck] Object literal may only specify known properties, and 'name' does not exist in type 'User'. [TS2353]
 packages/app/test/main.test.ts:5:26: welcomes loudly: AssertionError: expected 'HELLO, UNDEFINED!' to be 'HELLO, ADA!' // Object.is equality
 packages/lib/test/index.test.ts:5:34: greets by name: AssertionError: expected 'Hello, undefined!' to be 'Hello, Ada!' // Object.is equality

@@ -1,5 +1,5 @@
 exit: 2
 --- stdout
 --- stderr
-hookah: 1 problem after editing src/shop/domain/cart.py - fix before continuing:
+hookah: 1 problem. Fix before continuing.
 src/shop/domain/cart.py:3: [architecture] shop.domain.cart -> shop.infra.store [Domain must not import infra]

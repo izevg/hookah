@@ -9,8 +9,8 @@ files of a multi-file plugin (`hookah plugin orca --out`), which keeps
 config-file editing out of the crates that run on every hook call. The rules themselves are in [AGENTS.md](../AGENTS.md#architecture-ddd--clean--hexagonal).
 
 The `harness` crate groups its modules by integration mechanism: `hooks/` holds the command-hook
-harnesses (`claude`, `codex`, `cursor`, `kimi`, `qoder`, `zcode`), and `plugins/` holds the code plugins and
-extensions (`hermes`, `openclaw`, `opencode`, `orca`, `pi`). `lib.rs` re-exports every harness at
+harnesses (`antigravity`, `claude`, `codex`, `cursor`, `kimi`, `qoder`, `zcode`), and `plugins/`
+holds the code plugins and extensions (`hermes`, `openclaw`, `opencode`, `orca`, `pi`). `lib.rs` re-exports every harness at
 the crate root, so `hookah_harness::claude` and `hookah_harness::plugins::pi` both resolve.
 
 ## Light by default: hookah helps, it doesn't gatekeep
@@ -242,6 +242,7 @@ are our own plugins.
 | Cursor | `sessionStart` (`session_id` equals `conversation_id`; fire-and-forget) | verified in the docs; not run live, and `cursor-agent` is reported not to send `conversation_id` |
 | ZCode | `SessionStart` (matchers `startup`, `resume`) | documented by ZCode |
 | Kimi Code | `SessionStart` (matchers `startup`, `resume`) | verified |
+| Antigravity CLI | `SessionStart` | the payload supplies `conversationId` and `workspacePaths` |
 | opencode | the plugin's `session.created` event, sent as `event: "start"` (contract v1, backward compatible) | plugin written against the SDK types; not run live |
 | Hermes Agent | the plugin's `on_session_start` hook (new sessions only), sent as `event: "start"` | verified live against a mock model server |
 | Pi | the extension's `session_start` event (reasons other than `reload`), sent as `event: "start"` (contract v1) | verified live against Pi 0.73.1 (RPC mode, mock model) |

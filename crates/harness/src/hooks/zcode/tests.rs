@@ -101,6 +101,7 @@ fn edit_feedback_uses_context_and_includes_re_read_hint() {
     let payload = &output["hookSpecificOutput"];
     assert_eq!(payload["hookEventName"], "PostToolUse");
     let context = payload["additionalContext"].as_str().unwrap();
+    assert!(context.starts_with("hookah: 1 problem. Fix before continuing.\n"));
     assert!(context.contains("a.rs:5: unused import"));
     assert!(context.to_ascii_lowercase().contains("re-read"));
 }
@@ -123,12 +124,9 @@ fn stop_requests_one_continuation_and_warns_on_the_next_attempt() {
     assert_eq!(response.exit_code, 0);
     let actual: Value = serde_json::from_str(&response.stdout).unwrap();
     assert_eq!(actual["decision"], "block");
-    assert!(
-        actual["reason"]
-            .as_str()
-            .unwrap()
-            .contains("a.rs:5: unused import")
-    );
+    let reason = actual["reason"].as_str().unwrap();
+    assert!(reason.starts_with("hookah: 1 problem. Fix before finishing.\n"));
+    assert!(reason.contains("a.rs:5: unused import"));
 
     let response = ZCode.render(&stop(true), &failure());
     assert_eq!(response.exit_code, 0);

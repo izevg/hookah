@@ -754,3 +754,106 @@ fn zcode_uninstall_preserves_a_preexisting_enabled_preference() {
         original
     );
 }
+
+#[test]
+fn antigravity_setup_merges_detects_and_removes_only_its_hooks() {
+    let sb = Sandbox::new("antigravity");
+    let file = sb.project(".agents/hooks.json");
+    fs::create_dir_all(file.parent().unwrap()).unwrap();
+    let other = serde_json::json!({"other": {"Stop": [{"command": "other-tool"}]}});
+    fs::write(&file, other.to_string()).unwrap();
+
+    sb.ok(&["setup", "antigravity"]);
+    let first = text(&file);
+    let config: serde_json::Value = serde_json::from_str(&first).unwrap();
+    assert_eq!(config["other"], other["other"]);
+    let hooks = &config["hookah"];
+    assert_eq!(hooks["Stop"][0]["timeout"], 120);
+    assert_eq!(hooks["PreInvocation"][0]["type"], "command");
+    assert_eq!(hooks["SessionStart"][0]["type"], "command");
+    assert_eq!(
+        hooks["PostToolUse"][0]["matcher"],
+        "^(write_file|edit_file|write_to_file|replace_file_content|multi_replace_file_content)$"
+    );
+    assert!(
+        hooks["Stop"][0]["command"]
+            .as_str()
+            .unwrap()
+            .ends_with(" hook antigravity")
+    );
+    sb.ok(&["setup", "antigravity"]);
+    assert_eq!(text(&file), first);
+    assert!(
+        sb.ok(&["setup", "--detect"])
+            .lines()
+            .any(|line| line.contains("antigravity") && line.contains("configured"))
+    );
+    sb.ok(&["uninstall", "antigravity"]);
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&text(&file)).unwrap(),
+        other
+    );
+    sb.ok(&["setup", "antigravity", "--scope", "user"]);
+    assert!(sb.home(".gemini/config/hooks.json").is_file());
+}
+
+#[test]
+fn antigravity_setup_leaves_an_unrelated_hookah_group_alone() {
+    let sb = Sandbox::new("antigravity-conflict");
+    let file = sb.project(".agents/hooks.json");
+    fs::create_dir_all(file.parent().unwrap()).unwrap();
+    let existing = r#"{"hookah":{"Stop":[{"command":"something-else"}]}}"#;
+    fs::write(&file, existing).unwrap();
+    let out = sb.hookah(&["setup", "antigravity"]);
+    assert!(!out.status.success());
+    assert_eq!(text(&file), existing);
+}
+
+#[test]
+fn antigravity_custom_command_remains_managed() {
+    let sb = Sandbox::new("antigravity-wrapper");
+    let file = sb.project(".agents/hooks.json");
+    for _ in 0..2 {
+        sb.ok(&["setup", "antigravity", "--command", "my-hook-wrapper"]);
+    }
+    assert!(text(&file).contains("my-hook-wrapper hook antigravity"));
+    assert!(
+        sb.ok(&["setup", "--detect"])
+            .lines()
+            .any(|line| line.contains("antigravity") && line.contains("configured"))
+    );
+    sb.ok(&["uninstall", "antigravity"]);
+    assert!(!file.exists());
+}
+
+#[test]
+fn antigravity_removal_preserves_user_hooks_and_their_matchers() {
+    let sb = Sandbox::new("antigravity-shared-group");
+    let file = sb.project(".agents/hooks.json");
+    fs::create_dir_all(file.parent().unwrap()).unwrap();
+    let original = serde_json::json!({
+        "hookah": {
+            "enabled": false,
+            "Stop": [{"command": "another-tool"}],
+            "PostToolUse": [
+                {"matcher": "write_file", "hooks": [{"command":"other-edit"}]},
+                {"matcher": "edit_file", "hooks": []},
+            ],
+        }
+    });
+    let mut config = original.clone();
+    config["hookah"]["PostToolUse"][0]["hooks"]
+        .as_array_mut()
+        .unwrap()
+        .push(serde_json::json!({"command": "hookah hook antigravity --report-limit 4"}));
+    config["hookah"]["Stop"]
+        .as_array_mut()
+        .unwrap()
+        .push(serde_json::json!({"command": "hookah hook antigravity"}));
+    fs::write(&file, config.to_string()).unwrap();
+    sb.ok(&["uninstall", "antigravity"]);
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&text(&file)).unwrap(),
+        original
+    );
+}

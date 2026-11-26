@@ -243,7 +243,7 @@ fn claude_edit_hook_blocks_on_a_broken_file() {
     );
     let err = stderr(&out);
     assert!(err.starts_with("hookah: "), "{err}");
-    assert!(err.contains("after editing"), "{err}");
+    assert!(err.contains("Fix before continuing."), "{err}");
     assert!(err.contains("src/lib.rs:2"), "{err}");
 }
 
@@ -823,4 +823,132 @@ fn zcode_stop_asks_the_agent_to_fix_a_failing_test_once() {
     assert_eq!(continuation.status.code(), Some(0));
     assert!(continuation.stdout.is_empty());
     assert!(stderr(&continuation).contains("tests::answers"));
+}
+
+#[test]
+fn antigravity_delivers_format_feedback_once_to_its_conversation() {
+    let fixture = Fixture::new("antigravity-format", CLEAN_LIB);
+    let file = "src/lib.rs";
+    fixture.write(file, "pub fn answer()->i32{43}\n");
+    let event = |session: &str, fields: serde_json::Value| {
+        let mut json = serde_json::json!({
+            "conversationId": session,
+            "workspacePaths": [fixture.root],
+            "lastUserInput": "Update the answer.",
+        });
+        json.as_object_mut()
+            .unwrap()
+            .extend(fields.as_object().unwrap().clone());
+        fixture.hookah(&["hook", "antigravity"], &json.to_string())
+    };
+    let args = serde_json::json!({"name": "edit_file", "args": {"Path": file}});
+    let edit = event("s", serde_json::json!({"stepIdx": 1, "toolCall": args}));
+    assert!(edit.status.success());
+    assert_eq!(stdout(&edit).trim(), "{}");
+    assert_eq!(fixture.read(file), "pub fn answer() -> i32 {\n    43\n}\n");
+
+    let before_model = serde_json::json!({"invocationNum": 1, "initialNumSteps": 2});
+    let other = event("other", before_model.clone());
+    assert_eq!(stdout(&other).trim(), "{}");
+    let feedback = event("s", before_model.clone());
+    let value: serde_json::Value = serde_json::from_str(&stdout(&feedback)).unwrap();
+    let message = value["injectSteps"][0]["systemMessage"]["systemMessage"]
+        .as_str()
+        .unwrap();
+    assert!(message.contains("src/lib.rs") && message.contains("Re-read"));
+    let repeat = event("s", before_model);
+    assert_eq!(stdout(&repeat).trim(), "{}");
+}
+
+#[test]
+fn antigravity_only_continues_a_fully_idle_stop_once_per_prompt() {
+    let fixture = Fixture::new("antigravity-stop", CLEAN_LIB);
+    fixture.write("src/lib.rs", FAILING_TEST_LIB);
+    let stop = |idle: bool, reason: &str, prompt: &str| {
+        let payload = serde_json::json!({
+            "conversationId": "stop-session",
+            "workspacePaths": [fixture.root],
+            "lastUserInput": prompt,
+            "executionNum": 0,
+            "terminationReason": reason,
+            "fullyIdle": idle,
+        });
+        let out = fixture.hookah(&["hook", "antigravity"], &payload.to_string());
+        assert!(out.status.success());
+        (
+            serde_json::from_str::<serde_json::Value>(&stdout(&out)).unwrap(),
+            stderr(&out),
+        )
+    };
+
+    assert_eq!(stop(false, "model_stop", "First").0["decision"], "allow");
+    assert_eq!(stop(true, "error", "First").0["decision"], "allow");
+    let (first, _) = stop(true, "NO_TOOL_CALL", "First");
+    assert_eq!(first["decision"], "continue");
+    assert!(first["reason"].as_str().unwrap().contains("answers"));
+    let repeated = stop(true, "model_stop", "First");
+    assert_eq!(repeated.0["decision"], "allow");
+    assert!(repeated.1.contains("answers"));
+    assert_eq!(stop(true, "model_stop", "Second").0["decision"], "continue");
+
+    fixture.write("src/lib.rs", CLEAN_LIB);
+    assert_eq!(stop(true, "model_stop", "Second").0["decision"], "allow");
+    fixture.write("src/lib.rs", FAILING_TEST_LIB);
+    assert_eq!(stop(true, "model_stop", "Second").0["decision"], "continue");
+}
+
+#[test]
+fn antigravity_warns_and_allows_progress_when_feedback_storage_fails() {
+    let fixture = Fixture::new("antigravity-cache-error", CLEAN_LIB);
+    let invoke = |fields: serde_json::Value| {
+        let mut payload = serde_json::json!({
+            "conversationId": "cache-test", "workspacePaths": [fixture.root]
+        });
+        payload
+            .as_object_mut()
+            .unwrap()
+            .extend(fields.as_object().unwrap().clone());
+        fixture.hookah(&["hook", "antigravity"], &payload.to_string())
+    };
+    let edit = serde_json::json!({
+        "toolCall": {"name": "edit_file", "args": {"Path": "src/lib.rs"}}
+    });
+    let before = serde_json::json!({"invocationNum": 1});
+    fixture.write("src/lib.rs", "pub fn answer() -> i32 {\n    43\n}\n");
+    assert_eq!(stdout(&invoke(edit.clone())).trim(), "{}");
+    assert_eq!(stdout(&invoke(before.clone())).trim(), "{}");
+
+    fixture.write("src/lib.rs", "pub fn answer()->i32{43}\n");
+    assert_eq!(stdout(&invoke(edit.clone())).trim(), "{}");
+    let cache_file = fs::read_dir(fixture.cache())
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .filter(|p| p.is_dir())
+        .flat_map(|p| fs::read_dir(p).unwrap().map(|entry| entry.unwrap().path()))
+        .find(|p| {
+            p.extension().is_some_and(|e| e == "json")
+                && p.file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .starts_with("antigravity-")
+        })
+        .unwrap();
+    fs::remove_file(&cache_file).unwrap();
+    fs::create_dir(&cache_file).unwrap();
+
+    fixture.write("src/lib.rs", "pub fn answer()->i32{44}\n");
+    for fields in [edit, before] {
+        let result = invoke(fields);
+        assert!(result.status.success());
+        assert_eq!(stdout(&result).trim(), "{}");
+        assert!(stderr(&result).contains("antigravity could not relay feedback"));
+    }
+
+    fixture.write("src/lib.rs", FAILING_TEST_LIB);
+    let result = invoke(serde_json::json!({
+        "fullyIdle": true, "executionNum": 0, "terminationReason": "NO_TOOL_CALL"
+    }));
+    assert!(result.status.success());
+    assert_eq!(stdout(&result).trim(), r#"{"decision":"allow"}"#);
+    assert!(stderr(&result).contains("antigravity could not relay feedback"));
 }

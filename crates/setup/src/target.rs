@@ -15,6 +15,8 @@ pub enum Target {
     Zcode,
     /// Kimi Code: `config.toml`, user-level only.
     Kimi,
+    /// Antigravity CLI: `hooks.json`.
+    Antigravity,
     /// Cursor (the IDE agent and `cursor-agent`): `hooks.json`.
     Cursor,
     /// opencode: a plugin file.
@@ -72,6 +74,17 @@ const KIMI: &[HookSpec] = &[
     hook("PostToolUse", Some("Write|Edit"), 30),
 ];
 
+const ANTIGRAVITY: &[HookSpec] = &[
+    hook("SessionStart", None, 30),
+    hook(
+        "PostToolUse",
+        Some(hookah_harness::antigravity::EDIT_TOOLS),
+        30,
+    ),
+    hook("PreInvocation", None, 5),
+    hook("Stop", None, 120),
+];
+
 const CURSOR: &[HookSpec] = &[
     hook("sessionStart", None, 30),
     hook("afterFileEdit", None, 30),
@@ -80,12 +93,13 @@ const CURSOR: &[HookSpec] = &[
 
 impl Target {
     /// Every harness, in the order `hookah setup --detect` lists them.
-    pub const ALL: [Self; 10] = [
+    pub const ALL: [Self; 11] = [
         Self::Claude,
         Self::Codex,
         Self::Qoder,
         Self::Zcode,
         Self::Kimi,
+        Self::Antigravity,
         Self::Cursor,
         Self::Opencode,
         Self::Hermes,
@@ -101,6 +115,7 @@ impl Target {
             Self::Qoder => "qoder",
             Self::Zcode => "zcode",
             Self::Kimi => "kimi",
+            Self::Antigravity => "antigravity",
             Self::Cursor => "cursor",
             Self::Opencode => "opencode",
             Self::Hermes => "hermes",
@@ -118,6 +133,7 @@ impl Target {
             Self::Qoder => QODER,
             Self::Zcode => ZCODE,
             Self::Kimi => KIMI,
+            Self::Antigravity => ANTIGRAVITY,
             Self::Cursor => CURSOR,
             Self::Opencode | Self::Hermes | Self::Pi | Self::Openclaw => &[],
         }
@@ -131,6 +147,7 @@ impl Target {
             Self::Qoder => &["qodercli", "qoder"],
             Self::Zcode => &["zcode"],
             Self::Kimi => &["kimi", "kimi-code"],
+            Self::Antigravity => &["agy"],
             Self::Cursor => &["cursor-agent", "cursor"],
             Self::Opencode => &["opencode"],
             Self::Hermes => &["hermes"],
@@ -147,6 +164,7 @@ impl Target {
             Self::Qoder => "Qoder",
             Self::Zcode => "ZCode",
             Self::Kimi => "Kimi Code",
+            Self::Antigravity => "Antigravity CLI",
             Self::Cursor => "Cursor",
             Self::Opencode => "opencode",
             Self::Hermes => "Hermes",
@@ -169,6 +187,7 @@ impl Target {
                 "Enable Hookah in ZCode Settings → Hooks and trust workspace hooks if prompted. Restart ZCode or run /reload."
             }
             Self::Kimi => "Restart Kimi Code so it loads the new hooks.",
+            Self::Antigravity => "Restart Antigravity CLI and run /hooks to check the new hooks.",
             Self::Cursor => {
                 "Restart Cursor (or the cursor-agent session), then check the Hooks tab in Cursor Settings."
             }
@@ -346,7 +365,16 @@ mod tests {
         assert_eq!(
             names,
             [
-                "claude", "codex", "qoder", "zcode", "kimi", "cursor", "opencode", "hermes", "pi",
+                "claude",
+                "codex",
+                "qoder",
+                "zcode",
+                "kimi",
+                "antigravity",
+                "cursor",
+                "opencode",
+                "hermes",
+                "pi",
                 "openclaw"
             ]
         );

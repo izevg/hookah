@@ -6,6 +6,7 @@
 //! exit is the deliberate 2 of a failing verdict.
 
 mod args;
+mod hooks;
 mod render;
 mod setup;
 mod update;
@@ -288,6 +289,7 @@ fn hook(harness: HarnessKind, limit: usize) -> Response {
         HarnessKind::Qoder => run_harness(&Qoder, &stdin, limit),
         HarnessKind::Zcode => run_harness(&ZCode, &stdin, limit),
         HarnessKind::Kimi => run_harness(&Kimi, &stdin, limit),
+        HarnessKind::Antigravity => hooks::antigravity::run(&stdin, limit),
         HarnessKind::Cursor => run_harness(&Cursor, &stdin, limit),
         HarnessKind::Opencode => run_harness(&Opencode, &stdin, limit),
         HarnessKind::Hermes => run_harness(&Hermes, &stdin, limit),
@@ -301,9 +303,14 @@ fn run_harness(harness: &dyn Harness, stdin: &str, limit: usize) -> Response {
         Ok(i) => i.canonical(),
         Err(e) => return warning(e.to_string()),
     };
+    let outcome = run_invocation(&invocation, limit);
+    harness.render(&invocation, &outcome)
+}
+
+fn run_invocation(invocation: &Invocation, limit: usize) -> Outcome {
     let adapters = wiring::build();
     let ports = adapters.ports();
-    let outcome: Outcome = match &invocation {
+    match invocation {
         Invocation::Edit(request) => CheckEdit::new(ports, limit).run(request),
         Invocation::EditBatch(requests) => {
             let use_case = CheckEdit::new(ports, limit);
@@ -318,8 +325,7 @@ fn run_harness(harness: &dyn Harness, stdin: &str, limit: usize) -> Response {
             outcome
         }
         Invocation::Ignore => Outcome::pass(),
-    };
-    harness.render(&invocation, &outcome)
+    }
 }
 
 fn warning(message: String) -> Response {

@@ -1,9 +1,10 @@
 use hookah_application::Outcome;
+use hookah_domain::session::Phase;
 use serde_json::json;
 
 use crate::protocol::{
-    Invocation, Response, blocking_report, degraded_warnings, edit_context, problems, report_text,
-    start_response,
+    Invocation, Response, blocking_report, degraded_warnings, edit_context, problems,
+    report_feedback, start_response,
 };
 
 pub(super) fn render(invocation: &Invocation, outcome: &Outcome) -> Response {
@@ -13,13 +14,7 @@ pub(super) fn render(invocation: &Invocation, outcome: &Outcome) -> Response {
         Invocation::Start(_) => return start_response(outcome),
         Invocation::Edit(_) | Invocation::EditBatch(_) => {
             let context = blocking_report(outcome)
-                .map(|report| {
-                    format!(
-                        "hookah: {} after editing. Fix these before continuing.\n{}",
-                        problems(report),
-                        report_text(report, outcome)
-                    )
-                })
+                .map(|report| report_feedback(Phase::Edit, report, outcome))
                 .or_else(|| edit_context(outcome));
             if let Some(context) = context {
                 response.stdout = format!(
@@ -39,11 +34,7 @@ pub(super) fn render(invocation: &Invocation, outcome: &Outcome) -> Response {
                     response.stderr =
                         format!("hookah: {} still failing.\n{report}\n", problems(report));
                 } else {
-                    let reason = format!(
-                        "hookah: {} in the files changed in this session. Fix these before finishing.\n{}",
-                        problems(report),
-                        report_text(report, outcome)
-                    );
+                    let reason = report_feedback(Phase::Stop, report, outcome);
                     response.stdout =
                         format!("{}\n", json!({"decision": "block", "reason": reason}));
                 }

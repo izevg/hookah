@@ -28,7 +28,7 @@ feeds failures straight back to the agent, so it fixes them immediately.
 
 > **Status:** works for Rust, Node (TypeScript/JavaScript), Python, and Java (Maven and Gradle)
 > projects, with the Claude
-> Code, Codex, Cursor, Qoder, ZCode, Kimi, opencode, Pi, and OpenClaw harnesses and the Hermes Agent assistant
+> Code, Codex, Cursor, Qoder, ZCode, Kimi, Antigravity CLI, opencode, Pi, OpenClaw, and Hermes Agent
 > (`hookah check`, `hookah detect`, `hookah hook <harness>`, `hookah plugin <harness>`, `hookah
 > setup`), including mutation testing at stop, and with [Orca](docs/setup/plugins/orca.md)
 > (`hookah plugin orca`, `hookah status`).
@@ -44,14 +44,14 @@ harness calls `hookah`, which runs the project's own tools on that change and an
 lines. What the agent sees after an edit that breaks a call site:
 
 ```text
-hookah: 1 problem after editing src/lib.rs - fix before continuing:
+hookah: 1 problem. Fix before continuing.
 src/lib.rs:28:5: cannot find function `sum_all` in this scope [E0425]
 ```
 
 And when the agent finishes with tests that no longer prove anything (mutation testing at stop):
 
 ```text
-hookah: 9 problems in the files changed in this session - tests or checks are failing, fix before finishing:
+hookah: 9 problems. Fix before finishing.
 src/lib.rs:17: [mutation] mutant survived: replace < with <= in clamp
 src/lib.rs:17: [mutation] mutant survived: replace clamp -> i64 with 0
 src/lib.rs:19: [mutation] mutant survived: replace > with < in clamp
@@ -90,7 +90,7 @@ old warnings from code it did not touch.
 
    ```sh
    hookah setup --detect     # which harnesses are installed and configured
-   hookah setup claude       # or: codex, cursor, qoder, zcode, kimi, opencode, hermes, pi, openclaw (add --scope user for every project)
+   hookah setup claude       # or: codex, cursor, qoder, zcode, kimi, antigravity, opencode, hermes, pi, openclaw (add --scope user for every project)
    ```
 
    Setup merges into existing settings, is safe to repeat, and backs the original up once. Use
@@ -108,6 +108,7 @@ Per-harness details and the manual snippets:
 | Qoder       | [docs/setup/hooks/cli/qoder.md](docs/setup/hooks/cli/qoder.md) |
 | ZCode       | [docs/setup/hooks/zcode.md](docs/setup/hooks/zcode.md) |
 | Kimi Code   | [docs/setup/hooks/cli/kimi.md](docs/setup/hooks/cli/kimi.md) |
+| Antigravity CLI | [docs/setup/hooks/cli/antigravity/index.md](docs/setup/hooks/cli/antigravity/index.md) |
 | opencode    | [docs/setup/plugins/opencode.md](docs/setup/plugins/opencode.md) |
 | Hermes Agent | [docs/setup/assistants/hermes.md](docs/setup/assistants/hermes.md) |
 | Pi          | [docs/setup/plugins/pi.md](docs/setup/plugins/pi.md) |
@@ -144,6 +145,7 @@ reports results in the format that harness expects. The table shows the integrat
 | Pi          | bundled extension (`hookah plugin pi`): `tool_result`, `agent_end` | appended tool result (edit), injected message (stop) |
 | OpenClaw    | bundled plugin (`hookah plugin openclaw`): tool-result middleware (`write`, `edit`, `apply_patch`), `before_agent_finalize` | appended tool result (edit), report queued for the next turn (stop) |
 | Kimi Code   | `PostToolUse` (`Write\|Edit`) `[[hooks]]` in `config.toml` (beta); no stop phase | stdout (may reach the model) |
+| Antigravity CLI | `SessionStart`, `PostToolUse`, `PreInvocation`, `Stop` in `hooks.json` | one-time edit context; JSON `decision: continue` at stop |
 | Qoder       | `PostToolUse` (`Write\|Edit`), `Stop` in `.qoder/settings.json` | `additionalContext` (edit), exit 2 + stderr (stop) |
 | ZCode       | `SessionStart`, `PostToolUse` (`Write\|Edit\|ApplyPatch`), `Stop` in `.zcode/config.json` | `additionalContext` (edit), JSON `decision: block` + `reason` (stop) |
 | Cursor      | `afterFileEdit`, `stop`, `sessionStart` in `.cursor/hooks.json` (IDE and `cursor-agent`) | `followup_message` (stop); the edit hook cannot reach the model |

@@ -75,6 +75,7 @@ pub(super) fn target(kind: HarnessKind) -> Target {
         HarnessKind::Qoder => Target::Qoder,
         HarnessKind::Zcode => Target::Zcode,
         HarnessKind::Kimi => Target::Kimi,
+        HarnessKind::Antigravity => Target::Antigravity,
         HarnessKind::Cursor => Target::Cursor,
         HarnessKind::Opencode => Target::Opencode,
         HarnessKind::Hermes => Target::Hermes,

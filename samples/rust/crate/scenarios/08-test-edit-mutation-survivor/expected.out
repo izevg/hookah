@@ -1,7 +1,7 @@
 exit: 2
 --- stdout
 --- stderr
-hookah: 9 problems in the files changed in this session - tests or checks are failing, fix before finishing:
+hookah: 9 problems. Fix before finishing.
 src/lib.rs:17: [mutation] mutant survived: replace < with <= in clamp
 src/lib.rs:17: [mutation] mutant survived: replace < with == in clamp
 src/lib.rs:17: [mutation] mutant survived: replace < with > in clamp

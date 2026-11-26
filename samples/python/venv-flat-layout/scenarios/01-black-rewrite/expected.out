@@ -3,7 +3,7 @@ exit: 0
 {
   "hookSpecificOutput": {
     "hookEventName": "PostToolUse",
-    "additionalContext": "hookah reformatted tally/stats.py. Re-read the file before editing it again."
+    "additionalContext": "hookah reformatted tally/stats.py. Re-read before editing."
   }
 }
 --- stderr

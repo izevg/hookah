@@ -1,5 +1,5 @@
 exit: 2
 --- stdout
 --- stderr
-hookah: 1 problem after editing src/cart.js - fix before continuing:
+hookah: 1 problem. Fix before continuing.
 src/cart.js:10:22: Expected '===' and instead saw '=='. [eqeqeq]

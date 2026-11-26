@@ -28,7 +28,7 @@ that hookah uses:
 To print the manual JSON configuration, run:
 
 ```sh
-hookah setup antigravity --manual
+hookah setup antigravity --print
 ```
 
 Copy the `hookah` group into the hook file. To remove the managed entries, run

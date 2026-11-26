@@ -7,3 +7,6 @@ pub mod codex;
 pub mod cursor;
 pub mod kimi;
 pub mod qoder;
+pub mod zcode;
+
+mod patch;

@@ -785,6 +785,47 @@ fn config_prints_the_effective_environment_and_where_it_came_from() {
 }
 
 #[test]
+fn zcode_apply_patch_routes_check_findings_into_post_tool_context() {
+    let f = Fixture::new("zcode-edit", CLEAN_LIB);
+    f.write("src/lib.rs", "pub fn answer() -> i32 {\n    \"nope\"\n}\n");
+    let payload = serde_json::json!({
+        "cwd": f.root,
+        "hook_event_name": "PostToolUse",
+        "tool_name": "ApplyPatch",
+        "tool_input": {"patch_text": "*** Begin Patch\n*** Update File: src/lib.rs\n*** End Patch"}
+    });
+
+    let out = f.hookah(&["hook", "zcode"], &payload.to_string());
+
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let json: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert!(json.get("decision").is_none());
+    assert!(
+        json["hookSpecificOutput"]["additionalContext"]
+            .as_str()
+            .unwrap()
+            .contains("src/lib.rs:2")
+    );
+}
+
+#[test]
+fn zcode_stop_asks_the_agent_to_fix_a_failing_test_once() {
+    let f = Fixture::new("zcode-stop", CLEAN_LIB);
+    f.write("src/lib.rs", FAILING_TEST_LIB);
+
+    let out = f.hookah(&["hook", "zcode"], &f.stop_payload(false));
+    let continuation = f.hookah(&["hook", "zcode"], &f.stop_payload(true));
+
+    assert_eq!(out.status.code(), Some(0), "{}", stderr(&out));
+    let json: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(json["decision"], "block");
+    assert!(json["reason"].as_str().unwrap().contains("tests::answers"));
+    assert_eq!(continuation.status.code(), Some(0));
+    assert!(continuation.stdout.is_empty());
+    assert!(stderr(&continuation).contains("tests::answers"));
+}
+
+#[test]
 fn antigravity_delivers_format_feedback_once_to_its_conversation() {
     let fixture = Fixture::new("antigravity-format", CLEAN_LIB);
     let file = "src/lib.rs";

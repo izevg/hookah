@@ -500,7 +500,8 @@ fn uninstall_never_touches_anything_outside_the_sandbox() {
     write(&canary.join("kept"), "x");
     let inside = |reported: &str| support::is_inside(&sb.root, &sb.root.join("project"), reported);
     for harness in [
-        "claude", "codex", "qoder", "kimi", "cursor", "opencode", "hermes", "pi", "openclaw",
+        "claude", "codex", "qoder", "zcode", "kimi", "cursor", "opencode", "hermes", "pi",
+        "openclaw",
     ] {
         for scope in ["user", "project"] {
             sb.hookah(&["setup", harness, "--scope", scope]);

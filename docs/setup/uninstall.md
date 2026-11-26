@@ -96,6 +96,16 @@ Under `hooks`, delete every hook object whose `command` contains `hookah hook cl
 Code) or `SessionStart`, `PostToolUse`, and `Stop` (Qoder). If that leaves a group
 (`{"matcher": ..., "hooks": []}`) or an event empty, delete it too. If `hooks` is empty, delete it.
 
+### ZCode
+
+Files: `.zcode/config.json` or `zcode.json` in the project, and `~/.zcode/cli/config.json` for
+the user scope.
+
+Under `hooks.events`, remove each `SessionStart`, `PostToolUse`, and `Stop` hook whose
+process runner points to `hookah` (or `hookah.exe`) with `["hook", "zcode"]` as its
+arguments. For a shell runner, remove the entry that runs `hookah hook zcode`. Remove groups
+and event lists that this leaves empty. Start a new ZCode session or run `/reload`.
+
 ### Codex CLI
 
 Files: `.codex/config.toml` or `~/.codex/config.toml`.
@@ -219,7 +229,7 @@ Notes:
    ```sh
    grep -n "hookah" .claude/settings.json .codex/config.toml .qoder/settings.json .cursor/hooks.json \
      ~/.claude/settings.json ~/.codex/config.toml ~/.qoder/settings.json ~/.kimi-code/config.toml \
-     ~/.cursor/hooks.json ~/.hermes/config.yaml 2>/dev/null
+     .zcode/config.json zcode.json ~/.zcode/cli/config.json ~/.cursor/hooks.json ~/.hermes/config.yaml 2>/dev/null
    ls .opencode/plugins/hookah.ts .pi/extensions/hookah.ts ~/.config/opencode/plugins/hookah.ts \
      ~/.pi/agent/extensions/hookah.ts ~/.hermes/plugins/hookah ~/.openclaw/extensions/hookah \
      ~/.hookah-orca-plugin 2>/dev/null
@@ -232,7 +242,7 @@ Notes:
    ```powershell
    Select-String -Pattern 'hookah' -Path .claude\settings.json, .codex\config.toml, .qoder\settings.json, .cursor\hooks.json, `
      "$HOME\.claude\settings.json", "$HOME\.codex\config.toml", "$HOME\.qoder\settings.json", "$HOME\.kimi-code\config.toml", `
-     "$HOME\.cursor\hooks.json", "$HOME\.hermes\config.yaml" -ErrorAction SilentlyContinue
+     .zcode\config.json, zcode.json, "$HOME\.zcode\cli\config.json", "$HOME\.cursor\hooks.json", "$HOME\.hermes\config.yaml" -ErrorAction SilentlyContinue
    Get-Item .opencode\plugins\hookah.ts, .pi\extensions\hookah.ts, "$HOME\.config\opencode\plugins\hookah.ts", `
      "$HOME\.pi\agent\extensions\hookah.ts", "$HOME\.hermes\plugins\hookah", "$HOME\.openclaw\extensions\hookah", `
      "$HOME\.hookah-orca-plugin" -ErrorAction SilentlyContinue

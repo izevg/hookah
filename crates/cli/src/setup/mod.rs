@@ -8,7 +8,7 @@ pub use uninstall::run as uninstall;
 
 use std::io::Write;
 
-use hookah_setup::{Env, Scope, SetupError, Target, commit, detect, plan, shell_program, snippet};
+use hookah_setup::{Env, Program, Scope, SetupError, Target, commit, detect, plan, snippet};
 
 use crate::args::{HarnessKind, ScopeKind, SetupArgs};
 
@@ -34,21 +34,24 @@ fn execute(args: &SetupArgs, env: &Env, exe: &str) -> Result<String, String> {
         return Ok(render::detection(&detect(env)));
     };
     let target = target(kind);
-    let program = args.command.clone().unwrap_or_else(|| shell_program(exe));
+    let program = args
+        .command
+        .as_deref()
+        .map_or(Program::Executable(exe), Program::Shell);
     if args.print {
-        return snippet(target, &program);
+        return snippet(target, program);
     }
     let scope = match args.scope {
         Some(ScopeKind::Project) => Scope::Project,
         Some(ScopeKind::User) => Scope::User,
         None => Scope::default_for(target),
     };
-    let planned = plan(target, scope, env, &program).map_err(|e: SetupError| e.to_string())?;
+    let planned = plan(target, scope, env, program).map_err(|e: SetupError| e.to_string())?;
     if args.dry_run {
         return Ok(render::dry_run(&planned, &env.cwd));
     }
     let written = commit(&planned).map_err(|e| e.to_string())?;
-    let mut out = render::applied(&planned, &written, &env.cwd, &program);
+    let mut out = render::applied(&planned, &written, &env.cwd, &program.shell_command());
     if matches!(target, Target::Opencode | Target::Pi | Target::Openclaw) && args.command.is_some()
     {
         out.push_str(&format!(
@@ -70,6 +73,7 @@ pub(super) fn target(kind: HarnessKind) -> Target {
         HarnessKind::Claude => Target::Claude,
         HarnessKind::Codex => Target::Codex,
         HarnessKind::Qoder => Target::Qoder,
+        HarnessKind::Zcode => Target::Zcode,
         HarnessKind::Kimi => Target::Kimi,
         HarnessKind::Antigravity => Target::Antigravity,
         HarnessKind::Cursor => Target::Cursor,

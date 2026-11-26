@@ -141,6 +141,7 @@ impl Env {
             Target::Hermes => self.hermes_dir().ok(),
             Target::Pi => self.pi_dir().ok(),
             Target::Openclaw => self.openclaw_dir().ok(),
+            Target::Zcode => self.home().ok().map(|h| h.join(".zcode/cli")),
             _ => self.home().ok().map(|h| h.join(dir_name(target))),
         }
     }
@@ -152,6 +153,14 @@ impl Env {
             Scope::Project => Some(self.cwd.join(dir_name(target))),
             Scope::User => self.user_dir(target),
         }
+    }
+
+    /// The two project config locations supported by ZCode, in setup preference order.
+    pub(crate) fn zcode_project_configs(&self) -> [PathBuf; 2] {
+        [
+            self.cwd.join(".zcode/config.json"),
+            self.cwd.join("zcode.json"),
+        ]
     }
 
     /// The config file `hookah setup <target> --scope <scope>` edits.
@@ -172,6 +181,7 @@ impl Env {
                 scope: "project",
                 hint: "OpenClaw loads project plugins only from its agent workspace; use --scope user (~/.openclaw)",
             }),
+            (Target::Zcode, Scope::User) => Ok(self.home()?.join(".zcode/cli/config.json")),
             (Target::Openclaw, Scope::User) => Ok(self.openclaw_dir()?.join(OPENCLAW_PLUGIN_PATH)),
             (Target::Hermes, Scope::User) => Ok(self.hermes_dir()?.join("config.yaml")),
             (Target::Opencode, Scope::Project) => Ok(self.cwd.join(".opencode").join(PLUGIN_PATH)),
@@ -213,6 +223,7 @@ fn dir_name(target: Target) -> &'static str {
         Target::Claude => ".claude",
         Target::Codex => ".codex",
         Target::Qoder => ".qoder",
+        Target::Zcode => ".zcode",
         Target::Kimi => ".kimi-code",
         Target::Antigravity => ".agents",
         Target::Cursor => ".cursor",
@@ -227,6 +238,7 @@ fn file_name(target: Target) -> &'static str {
     match target {
         Target::Claude | Target::Qoder => "settings.json",
         Target::Codex | Target::Kimi => "config.toml",
+        Target::Zcode => "config.json",
         Target::Cursor | Target::Antigravity => "hooks.json",
         Target::Opencode => "plugins/hookah.ts",
         Target::Hermes => "config.yaml",

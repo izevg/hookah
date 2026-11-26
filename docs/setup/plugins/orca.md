@@ -8,13 +8,14 @@ protocol of its own for `hookah` to speak, so there are two layers, and they do 
 
 1. **Per-edit feedback comes from the agent Orca hosts.** An agent in an Orca worktree runs its own
    hooks, so `hookah setup <harness>` is all it takes. See the guide of that harness:
-   [Claude Code](../hooks/cli/claude-code.md), [Codex](../hooks/cli/codex.md), [Qoder](../hooks/cli/qoder.md),
-   [Kimi Code](../hooks/cli/kimi.md), [opencode](opencode.md). Nothing about Orca is needed for this.
+   [Antigravity](../hooks/cli/antigravity/index.md), [Claude Code](../hooks/cli/claude-code.md),
+   [Codex](../hooks/cli/codex.md), [Qoder](../hooks/cli/qoder.md), [Kimi Code](../hooks/cli/kimi.md),
+   [opencode](opencode.md), and [ZCode](../hooks/zcode.md).
 2. **The Orca plugin adds what only Orca knows.** It is a small Orca plugin that ships inside the
    `hookah` binary. It never touches your code. It does three things:
    - shows the latest `hookah` verdict of every worktree, in a sidebar panel and in the status bar;
    - adds palette commands to check a worktree and to set up hooks for it;
-   - can set `hookah` up for an agent right before Orca starts that agent (off by default).
+   - suggests hook setup by default and can set up `hookah` right before Orca starts an agent.
 
 The plugin only runs the `hookah` binary: `hookah status --json` to read, `hookah check --changed`
 to check, `hookah setup` to configure. Every rule stays in `hookah` itself.
@@ -111,6 +112,10 @@ Under the plugin in Orca's Settings:
 
 ### Verify
 
+The plugin was verified on Orca 1.4.277 for macOS. The live checks covered installation and
+upgrade, worktree verdicts in the sidebar and status bar, and project hook setup before the
+Antigravity launch command.
+
 1. In a worktree, ask an agent to edit a file with a problem. The status bar item turns red.
 2. Open the **hookah** panel from the right sidebar: the worktree row says `failing`.
 3. Run **hookah: check this worktree** from the palette. A notification shows the report.
@@ -136,11 +141,9 @@ have a record, and `null` when none has. It runs no checks and always exits 0.
   each other's record.
 - **No inline results.** The plugin reports; the hooks of the hosted agent still feed findings to
   the agent. A verdict never travels through Orca.
-- **Agents Orca cannot map.** Setup on launch covers `claude`, `codex`, `qoder`, `kimi`, and
-  `opencode`. Other agents Orca can host are ignored.
-- **Written against the published plugin API, tested without Orca.** The plugin's type-check and
-  its worker and pure-function tests pass, and the manifest validates with `orca plugin validate`.
-  It has not been loaded into a running Orca desktop.
+- **Agents supported at launch.** Setup on launch covers `antigravity`, `claude`, `codex`, `qoder`,
+  `kimi`, `opencode`, and `zcode`. Launching ZCode through Orca requires a working `zcode` terminal
+  launcher on `PATH`.
 
 ## Development
 

@@ -119,12 +119,14 @@ export function summarize(projects: ProjectRow[]): {
 
 /** The Orca agent names hookah can set up, mapped to `hookah setup` names. */
 const HARNESSES: Record<string, string> = {
+  antigravity: 'antigravity',
   claude: 'claude',
   codex: 'codex',
   qoder: 'qoder',
   'qoder-cn': 'qoder',
   kimi: 'kimi',
-  opencode: 'opencode'
+  opencode: 'opencode',
+  zcode: 'zcode'
 }
 
 export function harnessFor(agent: string): string | null {

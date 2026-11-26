@@ -25,6 +25,8 @@ const NEVER = { v: 1, root: '/repo/fix', overall: null, projects: [{ root: '/rep
 
 const DETECT_MISSING =
   'claude: installed (binary /bin/claude); project: not configured; user: not configured\n' +
+  'antigravity: installed (binary /bin/agy); project: not configured; user: not configured\n' +
+  'zcode: installed (binary /bin/zcode); project: not configured; user: not configured\n' +
   'kimi: installed (binary /bin/kimi); project: no project config; user: not configured\n' +
   'codex: installed (binary /bin/codex); project: not configured; user: configured\n'
 
@@ -121,9 +123,19 @@ test('the status command prints the report of the focused worktree', async () =>
 
 test('the check command runs in the background and notifies', async () => {
   const { worker, host, fake } = await setupWorker()
-  const first = String(await worker.command('hookah.check'))
-  assert.match(first, /checking feat/)
-  assert.match(String(await worker.command('hookah.check')), /already running/)
+  let finishCheck!: () => void
+  const checkInProgress = new Promise<void>((resolve) => { finishCheck = resolve })
+  main.runner.exec = async (file, args, options) => {
+    if (args[0] === 'check') await checkInProgress
+    return fake.exec(file, args, options)
+  }
+  try {
+    const first = String(await worker.command('hookah.check'))
+    assert.match(first, /checking feat/)
+    assert.match(String(await worker.command('hookah.check')), /already running/)
+  } finally {
+    finishCheck()
+  }
   await tick()
   assert.ok(fake.calls.includes('check --changed --root /repo/feat /repo/feat'))
   assert.deepEqual(notices(host), ['hookah: feat'])
@@ -135,6 +147,8 @@ test('the setup command writes project config only for agents that have one', as
   const { worker, fake } = await setupWorker()
   const text = String(await worker.command('hookah.setup'))
   assert.match(text, /claude: wrote its project config in feat/)
+  assert.match(text, /antigravity: wrote its project config in feat/)
+  assert.match(text, /zcode: wrote its project config in feat/)
   assert.match(text, /kimi: has no project config/)
   assert.equal(text.includes('codex'), false)
   assert.deepEqual(
@@ -163,6 +177,18 @@ test('auto mode sets up the agent before it starts, and tells the user', async (
   assert.ok(fake.calls.includes('setup claude --scope project /repo/feat'))
   await tick()
   assert.deepEqual(notices(host), ['hookah: set up for claude'])
+  await worker.deactivate()
+})
+
+test('auto mode resolves the launch hook worktree ID to the workspace list entry', async () => {
+  const { worker, fake } = await setupWorker({ setup: 'auto' })
+  const otherProject = launch('claude', { workspaceId: 'other-project::/repo/feat' })
+  assert.deepEqual(await worker.hooks.fire('agent.launch.before', otherProject), { kind: 'continue', event: otherProject })
+  assert.equal(fake.calls.some((c) => c.startsWith('setup claude')), false)
+
+  const event = launch('claude', { workspaceId: 'p::/repo/feat' })
+  assert.deepEqual(await worker.hooks.fire('agent.launch.before', event), { kind: 'continue', event })
+  assert.ok(fake.calls.includes('setup claude --scope project /repo/feat'))
   await worker.deactivate()
 })
 

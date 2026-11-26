@@ -111,7 +111,7 @@ Per-harness details and the manual snippets:
 | Hermes Agent | [docs/setup/assistants/hermes.md](docs/setup/assistants/hermes.md) |
 | Pi          | [docs/setup/plugins/pi.md](docs/setup/plugins/pi.md) |
 | OpenClaw    | [docs/setup/assistants/openclaw.md](docs/setup/assistants/openclaw.md) |
-| Orca        | [docs/setup/plugins/orca.md](docs/setup/plugins/orca.md) (planned) |
+| Orca        | [docs/setup/plugins/orca.md](docs/setup/plugins/orca.md) |
 
 An agent doing this for you follows [docs/setup/agents.md](docs/setup/agents.md).
 

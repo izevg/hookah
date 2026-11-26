@@ -91,7 +91,9 @@ test('describes a worktree in plain text', () => {
 
 test('maps Orca agent names to hookah harnesses', () => {
   assert.equal(harnessFor('claude'), 'claude')
+  assert.equal(harnessFor('antigravity'), 'antigravity')
   assert.equal(harnessFor('qoder-cn'), 'qoder')
+  assert.equal(harnessFor('zcode'), 'zcode')
   assert.equal(harnessFor('gemini'), null)
 })
 

@@ -18,7 +18,7 @@ import {
 import type { ProjectRow, WorktreeRow } from './protocol'
 
 /** A worktree on this machine, as `workspace.list` reports it. */
-type Worktree = { id: string; name: string; branch: string | null; path: string }
+type Worktree = { id: string; projectId: string | null; name: string; branch: string | null; path: string }
 
 type Settings = { hookahPath: string; setup: 'suggest' | 'auto' | 'off'; checkTimeoutSeconds: number }
 
@@ -58,14 +58,16 @@ export default function activate(orca: OrcaWorkerApi): void {
     const { workspaces } = await orca.host.call('workspace.list')
     return workspaces
       .filter((w) => w.kind === 'worktree' && (w.hostId === null || w.hostId === 'local'))
-      .map((w) => ({ id: w.id, name: w.name, branch: w.branch, path: w.path }))
+      .map((w) => ({ id: w.id, projectId: w.projectId ?? null, name: w.name, branch: w.branch, path: w.path }))
   }
 
-  /** The worktree of an event or of the focused workspace; the ids of the two lists may differ,
-   *  so fall back to a unique branch or name. */
+  /** Launch hooks can identify a worktree by its project ID and path instead of its list ID. */
   function find(list: Worktree[], id: string | null | undefined, branch?: string, name?: string): Worktree | null {
-    const byId = id ? list.find((w) => w.id === id) : undefined
-    if (byId) return byId
+    if (id) {
+      const byId = list.find((w) => w.id === id)
+        ?? list.find((w) => w.projectId !== null && `${w.projectId}::${w.path}` === id)
+      if (byId) return byId
+    }
     const byBranch = branch ? list.filter((w) => w.branch === branch) : []
     if (byBranch.length === 1) return byBranch[0]
     const byName = name ? list.filter((w) => w.name === name) : []

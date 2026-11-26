@@ -2,7 +2,7 @@
   "manifestVersion": 2,
   "id": "hookah",
   "name": "hookah",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Shows the latest hookah verdict of each worktree, checks a worktree on demand, and sets up hookah hooks for the agents Orca hosts.",
   "license": "MIT",
   "repository": "https://github.com/izevg/hookah",

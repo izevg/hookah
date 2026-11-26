@@ -10,7 +10,7 @@ import {
   harnessFor,
   hookahClient,
   label,
-  needsSetup,
+  setupScope,
   summarize,
   type Exec,
   type Hookah
@@ -18,7 +18,7 @@ import {
 import type { ProjectRow, WorktreeRow } from './protocol'
 
 /** A worktree on this machine, as `workspace.list` reports it. */
-type Worktree = { id: string; name: string; branch: string | null; path: string }
+type Worktree = { id: string; projectId: string | null; name: string; branch: string | null; path: string }
 
 type Settings = { hookahPath: string; setup: 'suggest' | 'auto' | 'off'; checkTimeoutSeconds: number }
 
@@ -27,6 +27,10 @@ export const runner: { exec: Exec } = { exec }
 
 const MAX_WORKTREES = 40
 const PARALLEL = 4
+
+function userSetupCommand(harness: string): string {
+  return `\`hookah setup ${harness} --scope user\``
+}
 
 export default function activate(orca: OrcaWorkerApi): void {
   const running = new Set<string>()
@@ -58,14 +62,16 @@ export default function activate(orca: OrcaWorkerApi): void {
     const { workspaces } = await orca.host.call('workspace.list')
     return workspaces
       .filter((w) => w.kind === 'worktree' && (w.hostId === null || w.hostId === 'local'))
-      .map((w) => ({ id: w.id, name: w.name, branch: w.branch, path: w.path }))
+      .map((w) => ({ id: w.id, projectId: w.projectId ?? null, name: w.name, branch: w.branch, path: w.path }))
   }
 
-  /** The worktree of an event or of the focused workspace; the ids of the two lists may differ,
-   *  so fall back to a unique branch or name. */
+  /** Launch hooks can identify a worktree by its project ID and path instead of its list ID. */
   function find(list: Worktree[], id: string | null | undefined, branch?: string, name?: string): Worktree | null {
-    const byId = id ? list.find((w) => w.id === id) : undefined
-    if (byId) return byId
+    if (id) {
+      const byId = list.find((w) => w.id === id)
+        ?? list.find((w) => w.projectId !== null && `${w.projectId}::${w.path}` === id)
+      if (byId) return byId
+    }
     const byBranch = branch ? list.filter((w) => w.branch === branch) : []
     if (byBranch.length === 1) return byBranch[0]
     const byName = name ? list.filter((w) => w.name === name) : []
@@ -179,9 +185,11 @@ export default function activate(orca: OrcaWorkerApi): void {
     const client = await hookah()
     const out: string[] = []
     for (const d of await client.detect(w.path)) {
-      if (!needsSetup(d)) continue
-      if (d.project === 'none') {
-        out.push(`${d.harness}: has no project config; run \`hookah setup ${d.harness}\` yourself to set up your user config`)
+      const scope = setupScope(d)
+      if (scope === null) continue
+      if (scope === 'user') {
+        const reason = d.harness === 'zcode' ? 'the standalone CLI uses user hooks' : 'has no project config'
+        out.push(`${d.harness}: ${reason}. Run ${userSetupCommand(d.harness)} in a terminal.`)
         continue
       }
       await client.setup(w.path, d.harness)
@@ -226,9 +234,10 @@ export default function activate(orca: OrcaWorkerApi): void {
       if (w === null) return
       const client = await hookah()
       const d = (await client.detect(w.path)).find((x) => x.harness === harness)
-      if (d === undefined || !needsSetup(d)) return
+      const scope = d === undefined ? null : setupScope(d)
+      if (scope === null) return
       const key = `${w.path}|${harness}`
-      if (mode === 'auto' && d.project !== 'none') {
+      if (mode === 'auto' && scope === 'project') {
         await client.setup(w.path, harness)
         told.add(key)
         void orca.host.call('notifications.show', {
@@ -239,7 +248,9 @@ export default function activate(orca: OrcaWorkerApi): void {
         told.add(key)
         void orca.host.call('notifications.show', {
           title: `hookah is not set up for ${harness}`,
-          body: `Run "hookah: set up hooks for this worktree" in ${w.name}, or \`hookah setup ${harness}\` in a terminal.`
+          body: scope === 'user'
+            ? `Run ${userSetupCommand(harness)} in a terminal.`
+            : `Run "hookah: set up hooks for this worktree" in ${w.name}, or \`hookah setup ${harness}\` in a terminal.`
         })
       }
     } catch (e) {

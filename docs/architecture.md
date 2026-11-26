@@ -241,6 +241,7 @@ are our own plugins.
 | Qoder | `SessionStart` | verified: the event exists and every payload has `session_id` and `cwd`; its matcher values are not documented |
 | Cursor | `sessionStart` (`session_id` equals `conversation_id`; fire-and-forget) | verified in the docs; not run live, and `cursor-agent` is reported not to send `conversation_id` |
 | Kimi Code | `SessionStart` (matchers `startup`, `resume`) | verified |
+| Antigravity CLI | `SessionStart` | the payload supplies `conversationId` and `workspacePaths` |
 | opencode | the plugin's `session.created` event, sent as `event: "start"` (contract v1, backward compatible) | plugin written against the SDK types; not run live |
 | Hermes Agent | the plugin's `on_session_start` hook (new sessions only), sent as `event: "start"` | verified live against a mock model server |
 | Pi | the extension's `session_start` event (reasons other than `reload`), sent as `event: "start"` (contract v1) | verified live against Pi 0.73.1 (RPC mode, mock model) |

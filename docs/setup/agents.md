@@ -18,7 +18,7 @@ them. Do not ask the user questions unless a step says so. Stop and report if a 
 - Operating system: `uname -s` prints `Linux` or `Darwin`. On Windows (PowerShell) use
   `$env:OS`, which is `Windows_NT`.
 - Harness: you are one of `claude` (Claude Code), `codex` (Codex CLI), `qoder` (Qoder CLI), `cursor`
-  (Cursor IDE or `cursor-agent`), `kimi` (Kimi Code), `opencode`, `hermes` (Hermes Agent), `pi` (Pi coding agent),
+  (Cursor IDE or `cursor-agent`), `kimi` (Kimi Code), `antigravity` (Antigravity CLI), `opencode`, `hermes` (Hermes Agent), `pi` (Pi coding agent),
   `openclaw` (OpenClaw). If you are not sure, skip this: step 3 lists what is installed.
 
 ## 2. Install the binary
@@ -54,7 +54,7 @@ From the project root:
 hookah setup <harness>
 ```
 
-where `<harness>` is `claude`, `codex`, `qoder`, `cursor`, `kimi`, `opencode`, `hermes`, `pi`, or `openclaw`. This edits the
+where `<harness>` is `claude`, `codex`, `qoder`, `cursor`, `kimi`, `antigravity`, `opencode`, `hermes`, `pi`, or `openclaw`. This edits the
 project's config (for `kimi`, `hermes`, and `openclaw`, the user's, because they have no project config; for
 `hermes` it installs a plugin under `~/.hermes` and enables it in `config.yaml`; for `openclaw` it installs a
 plugin under `~/.openclaw/extensions`). Use `--scope user` to

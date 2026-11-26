@@ -1,6 +1,6 @@
 exit: 2
 --- stdout
 --- stderr
-hookah: 1 problem in the files changed in this session - tests or checks are failing, fix before finishing:
+hookah: 1 problem. Fix before finishing.
 test/cart.test.js:5:28: adds up the prices: Error: expect(received).toBe(expected) // Object.is equality
 mutation testing tool stryker not installed: npm i -D @stryker-mutator/core @stryker-mutator/jest-runner

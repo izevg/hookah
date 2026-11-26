@@ -1,7 +1,7 @@
 exit: 2
 --- stdout
 --- stderr
-hookah: 3 problems in the files changed in this session - tests or checks are failing, fix before finishing:
+hookah: 3 problems. Fix before finishing.
 src/test/java/shop/CartTest.java:16: CartTest.totalsItems failed: expected: <1000> but was: <1002>
 src/test/java/shop/CartTest.java:23: CartTest.acceptsFreeItems failed: expected: <0> but was: <1>
 src/test/java/shop/CartTest.java:35: CartTest.freeShippingStartsAtFiftyUnits failed: expected: <false> but was: <true>

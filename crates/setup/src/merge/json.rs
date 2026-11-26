@@ -6,13 +6,7 @@ use super::Unmerged;
 use crate::target::{HookSpec, Target, mentions_hookah};
 
 pub fn merge(target: Target, existing: Option<&str>, command: &str) -> Result<String, String> {
-    let mut root: Value = match existing {
-        None => Value::Object(Map::new()),
-        Some(text) => serde_json::from_str(text).map_err(|e| format!("not valid JSON ({e})"))?,
-    };
-    let top = root
-        .as_object_mut()
-        .ok_or("the top level is not a JSON object")?;
+    let mut top = parse_object(existing)?;
     let hooks = top
         .entry("hooks")
         .or_insert_with(|| Value::Object(Map::new()))
@@ -24,9 +18,33 @@ pub fn merge(target: Target, existing: Option<&str>, command: &str) -> Result<St
             .or_insert_with(|| Value::Array(Vec::new()))
             .as_array_mut()
             .ok_or_else(|| format!("`hooks.{}` is not an array", spec.event))?;
-        upsert(groups, spec, target.name(), command);
+        upsert(
+            groups,
+            spec,
+            |hook| is_ours(hook, target.name()),
+            |hook| {
+                hook.insert("type".into(), json!("command"));
+                hook.insert("command".into(), json!(command));
+                hook.insert("timeout".into(), json!(spec.timeout));
+            },
+        );
     }
-    let mut text = serde_json::to_string_pretty(&root).map_err(|e| e.to_string())?;
+    encode(&top)
+}
+
+pub(super) fn parse_object(text: Option<&str>) -> Result<Map<String, Value>, String> {
+    match text
+        .map(|text| serde_json::from_str(text).map_err(|e| format!("not valid JSON ({e})")))
+        .transpose()?
+    {
+        Some(Value::Object(top)) => Ok(top),
+        Some(_) => Err("the top level is not a JSON object".into()),
+        None => Ok(Map::new()),
+    }
+}
+
+pub(super) fn encode(top: &Map<String, Value>) -> Result<String, String> {
+    let mut text = serde_json::to_string_pretty(top).map_err(|e| e.to_string())?;
     text.push('\n');
     Ok(text)
 }
@@ -34,7 +52,7 @@ pub fn merge(target: Target, existing: Option<&str>, command: &str) -> Result<St
 pub fn unmerge(target: Target, text: &str) -> Result<Unmerged, String> {
     unmerge_with(
         text,
-        |list| strip_groups(list, target.name()),
+        |list| strip_groups(list, |hook| is_ours(hook, target.name())),
         |top| top.is_empty(),
     )
 }
@@ -47,41 +65,42 @@ pub(super) fn unmerge_with(
     strip: impl Fn(&mut Vec<Value>) -> bool,
     is_empty: impl Fn(&Map<String, Value>) -> bool,
 ) -> Result<Unmerged, String> {
-    let mut root: Value =
-        serde_json::from_str(text).map_err(|e| format!("not valid JSON ({e})"))?;
-    let top = root
-        .as_object_mut()
-        .ok_or("the top level is not a JSON object")?;
+    let mut top = parse_object(Some(text))?;
     let Some(hooks) = top.get_mut("hooks").and_then(Value::as_object_mut) else {
         return Ok(Unmerged::Unchanged);
     };
-    let mut changed = false;
-    let events: Vec<String> = hooks.keys().cloned().collect();
-    for event in events {
-        let Some(list) = hooks.get_mut(&event).and_then(Value::as_array_mut) else {
-            continue;
-        };
-        if strip(list) {
-            changed = true;
-            if list.is_empty() {
-                hooks.shift_remove(&event);
-            }
-        }
-    }
-    if !changed {
+    if !strip_events(hooks, strip) {
         return Ok(Unmerged::Unchanged);
     }
     if hooks.is_empty() {
         top.shift_remove("hooks");
     }
-    let empty = is_empty(top);
-    let mut text = serde_json::to_string_pretty(&root).map_err(|e| e.to_string())?;
-    text.push('\n');
-    Ok(Unmerged::Removed { text, empty })
+    Ok(Unmerged::Removed {
+        text: encode(&top)?,
+        empty: is_empty(&top),
+    })
+}
+
+/// Drops event lists that are emptied by removing owned hooks.
+pub(super) fn strip_events(
+    events: &mut Map<String, Value>,
+    strip: impl Fn(&mut Vec<Value>) -> bool,
+) -> bool {
+    let mut changed = false;
+    events.retain(|_, value| {
+        if let Some(list) = value.as_array_mut()
+            && strip(list)
+        {
+            changed = true;
+            return !list.is_empty();
+        }
+        true
+    });
+    changed
 }
 
 /// Drops hookah's hooks from each matcher group, and the groups that this left without any.
-fn strip_groups(groups: &mut Vec<Value>, name: &str) -> bool {
+pub(super) fn strip_groups(groups: &mut Vec<Value>, is_ours: impl Fn(&Value) -> bool) -> bool {
     let mut removed = false;
     let mut emptied = Vec::new();
     for group in groups.iter_mut() {
@@ -91,7 +110,7 @@ fn strip_groups(groups: &mut Vec<Value>, name: &str) -> bool {
             continue;
         };
         let before = hooks.len();
-        hooks.retain(|hook| !is_ours(hook, name));
+        hooks.retain(|hook| !is_ours(hook));
         let touched = hooks.len() != before;
         removed |= touched;
         emptied.push(touched && hooks.is_empty());
@@ -109,7 +128,12 @@ pub(super) fn is_ours(hook: &Value, name: &str) -> bool {
 }
 
 /// Updates every hookah hook of the event in place, or appends a new group when there is none.
-fn upsert(groups: &mut Vec<Value>, spec: &HookSpec, name: &str, command: &str) {
+pub(super) fn upsert(
+    groups: &mut Vec<Value>,
+    spec: &HookSpec,
+    is_ours: impl Fn(&Value) -> bool,
+    configure: impl Fn(&mut Map<String, Value>),
+) {
     let mut found = false;
     for group in groups.iter_mut().filter_map(Value::as_object_mut) {
         let alone = group
@@ -118,15 +142,9 @@ fn upsert(groups: &mut Vec<Value>, spec: &HookSpec, name: &str, command: &str) {
             .is_some_and(|h| h.len() == 1);
         let mut touched = false;
         if let Some(hooks) = group.get_mut("hooks").and_then(Value::as_array_mut) {
-            for hook in hooks.iter_mut().filter_map(Value::as_object_mut) {
-                let ours = hook
-                    .get("command")
-                    .and_then(Value::as_str)
-                    .is_some_and(|c| mentions_hookah(c, name));
-                if ours {
-                    hook.insert("type".into(), json!("command"));
-                    hook.insert("command".into(), json!(command));
-                    hook.insert("timeout".into(), json!(spec.timeout));
+            for hook in hooks.iter_mut().filter(|hook| is_ours(hook)) {
+                if let Some(hook) = hook.as_object_mut() {
+                    configure(hook);
                     touched = true;
                 }
             }
@@ -144,10 +162,9 @@ fn upsert(groups: &mut Vec<Value>, spec: &HookSpec, name: &str, command: &str) {
         if let Some(matcher) = spec.matcher {
             group.insert("matcher".into(), json!(matcher));
         }
-        group.insert(
-            "hooks".into(),
-            json!([{ "type": "command", "command": command, "timeout": spec.timeout }]),
-        );
+        let mut hook = Map::new();
+        configure(&mut hook);
+        group.insert("hooks".into(), json!([hook]));
         groups.push(Value::Object(group));
     }
 }

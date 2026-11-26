@@ -4,7 +4,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use super::env::{Env, Scope};
-use crate::merge::yaml;
+use crate::merge::{yaml, zcode};
 use crate::target::{Target, mentions_hookah};
 
 /// What is known about one harness on this machine.
@@ -37,10 +37,17 @@ pub fn detect(env: &Env) -> Vec<Detection> {
             target,
             binary: find_binary(target, &env.path),
             config_dir: env.user_dir(target).is_some_and(|d| d.is_dir()),
-            project: env
-                .config_path(target, Scope::Project)
-                .ok()
-                .map(|p| configured(target, &p)),
+            project: if target == Target::Zcode {
+                Some(
+                    env.zcode_project_configs()
+                        .iter()
+                        .any(|p| configured(target, p)),
+                )
+            } else {
+                env.config_path(target, Scope::Project)
+                    .ok()
+                    .map(|p| configured(target, &p))
+            },
             user: env
                 .config_path(target, Scope::User)
                 .ok()
@@ -54,11 +61,13 @@ pub fn detect(env: &Env) -> Vec<Detection> {
 fn configured(target: Target, path: &Path) -> bool {
     match fs::read_to_string(path) {
         Ok(text) => match target {
+            Target::Antigravity => crate::merge::agent_hooks::antigravity::configured(&text),
             Target::Opencode | Target::Pi | Target::Openclaw => true,
             Target::Hermes => {
                 let plugin = path.with_file_name("plugins/hookah/__init__.py");
                 plugin.is_file() && yaml::enabled(&text)
             }
+            Target::Zcode => zcode::configured(&text),
             _ => mentions_hookah(&text, target.name()),
         },
         Err(_) => false,
@@ -133,6 +142,24 @@ mod tests {
     }
 
     #[test]
+    fn zcode_detects_native_hooks_and_the_user_cli_config_directory() {
+        let root = root("zcode");
+        let env = env(&root);
+        let config = crate::snippet(Target::Zcode, crate::Program::Executable("hookah")).unwrap();
+        write(&root.join("project/zcode.json"), &config);
+        fs::create_dir_all(root.join("home/.zcode")).unwrap();
+        let found = detect(&env);
+        let zcode = get(&found, Target::Zcode);
+        assert_eq!(zcode.project, Some(true));
+        assert!(!zcode.config_dir);
+
+        write(&root.join("home/.zcode/cli/config.json"), &config);
+        let found = detect(&env);
+        let zcode = get(&found, Target::Zcode);
+        assert!(zcode.config_dir && zcode.user);
+    }
+
+    #[test]
     fn binaries_and_config_dirs_mean_installed() {
         let root = root("installed");
         write(&root.join("bin/claude"), "");
@@ -167,6 +194,24 @@ mod tests {
             .find(|d| d.target == Target::Cursor)
             .unwrap();
         assert!(cursor.binary.is_none() && cursor.config_dir && cursor.installed());
+    }
+
+    #[test]
+    fn antigravity_detects_its_named_group_in_the_correct_scope() {
+        let root = root("antigravity");
+        write(
+            &root.join("project/.agents/hooks.json"),
+            r#"{"other":{"Stop":[{"command":"hookah hook antigravity"}]}}"#,
+        );
+        write(
+            &root.join("home/.gemini/config/hooks.json"),
+            r#"{"hookah":{"PostToolUse":[{"matcher":"write_to_file","hooks":[{"command":"/opt/bin/hookah-dev hook antigravity"}]}]}}"#,
+        );
+        let found = detect(&env(&root));
+        let antigravity = get(&found, Target::Antigravity);
+        assert_eq!(antigravity.project, Some(false));
+        assert!(antigravity.user);
+        assert!(antigravity.config_dir);
     }
 
     #[test]

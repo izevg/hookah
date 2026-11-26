@@ -1,5 +1,7 @@
 //! The supported harnesses and the hooks each one gets, exactly as documented in `docs/setup/`.
 
+use std::borrow::Cow;
+
 /// A harness `hookah setup` can configure.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Target {
@@ -9,8 +11,12 @@ pub enum Target {
     Codex,
     /// Qoder CLI: `settings.json`.
     Qoder,
+    /// ZCode: `config.json`.
+    Zcode,
     /// Kimi Code: `config.toml`, user-level only.
     Kimi,
+    /// Antigravity CLI: `hooks.json`.
+    Antigravity,
     /// Cursor (the IDE agent and `cursor-agent`): `hooks.json`.
     Cursor,
     /// opencode: a plugin file.
@@ -58,9 +64,25 @@ const QODER: &[HookSpec] = &[
     hook("PostToolUse", Some("Write|Edit"), 30),
     hook("Stop", None, 120),
 ];
+const ZCODE: &[HookSpec] = &[
+    hook("SessionStart", Some("startup|resume"), 30),
+    hook("PostToolUse", Some("Write|Edit|ApplyPatch"), 30),
+    hook("Stop", None, 120),
+];
 const KIMI: &[HookSpec] = &[
     hook("SessionStart", Some("startup|resume"), 30),
     hook("PostToolUse", Some("Write|Edit"), 30),
+];
+
+const ANTIGRAVITY: &[HookSpec] = &[
+    hook("SessionStart", None, 30),
+    hook(
+        "PostToolUse",
+        Some(hookah_harness::antigravity::EDIT_TOOLS),
+        30,
+    ),
+    hook("PreInvocation", None, 5),
+    hook("Stop", None, 120),
 ];
 
 const CURSOR: &[HookSpec] = &[
@@ -71,11 +93,13 @@ const CURSOR: &[HookSpec] = &[
 
 impl Target {
     /// Every harness, in the order `hookah setup --detect` lists them.
-    pub const ALL: [Self; 9] = [
+    pub const ALL: [Self; 11] = [
         Self::Claude,
         Self::Codex,
         Self::Qoder,
+        Self::Zcode,
         Self::Kimi,
+        Self::Antigravity,
         Self::Cursor,
         Self::Opencode,
         Self::Hermes,
@@ -89,7 +113,9 @@ impl Target {
             Self::Claude => "claude",
             Self::Codex => "codex",
             Self::Qoder => "qoder",
+            Self::Zcode => "zcode",
             Self::Kimi => "kimi",
+            Self::Antigravity => "antigravity",
             Self::Cursor => "cursor",
             Self::Opencode => "opencode",
             Self::Hermes => "hermes",
@@ -105,7 +131,9 @@ impl Target {
             Self::Claude => CLAUDE,
             Self::Codex => CODEX,
             Self::Qoder => QODER,
+            Self::Zcode => ZCODE,
             Self::Kimi => KIMI,
+            Self::Antigravity => ANTIGRAVITY,
             Self::Cursor => CURSOR,
             Self::Opencode | Self::Hermes | Self::Pi | Self::Openclaw => &[],
         }
@@ -117,7 +145,9 @@ impl Target {
             Self::Claude => &["claude"],
             Self::Codex => &["codex"],
             Self::Qoder => &["qodercli", "qoder"],
+            Self::Zcode => &["zcode"],
             Self::Kimi => &["kimi", "kimi-code"],
+            Self::Antigravity => &["agy"],
             Self::Cursor => &["cursor-agent", "cursor"],
             Self::Opencode => &["opencode"],
             Self::Hermes => &["hermes"],
@@ -132,7 +162,9 @@ impl Target {
             Self::Claude => "Claude Code",
             Self::Codex => "Codex",
             Self::Qoder => "Qoder",
+            Self::Zcode => "ZCode",
             Self::Kimi => "Kimi Code",
+            Self::Antigravity => "Antigravity CLI",
             Self::Cursor => "Cursor",
             Self::Opencode => "opencode",
             Self::Hermes => "Hermes",
@@ -151,7 +183,11 @@ impl Target {
                 "Restart Codex, then run /hooks in it to review and trust the new hooks."
             }
             Self::Qoder => "Restart Qoder so it loads the new hooks.",
+            Self::Zcode => {
+                "Enable Hookah in ZCode Settings → Hooks and trust workspace hooks if prompted. Restart ZCode or run /reload."
+            }
             Self::Kimi => "Restart Kimi Code so it loads the new hooks.",
+            Self::Antigravity => "Restart Antigravity CLI and run /hooks to check the new hooks.",
             Self::Cursor => {
                 "Restart Cursor (or the cursor-agent session), then check the Hooks tab in Cursor Settings."
             }
@@ -170,6 +206,31 @@ impl Target {
                  OpenClaw Gateway. The plugin runs `hookah` from PATH, or from HOOKAH_BIN if set."
             }
         }
+    }
+}
+
+/// How setup invokes the Hookah binary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Program<'a> {
+    /// A plain executable path that a process runner can use directly.
+    Executable(&'a str),
+    /// An explicit shell command prefix, for example `mise exec -- hookah`.
+    Shell(&'a str),
+}
+
+impl<'a> Program<'a> {
+    /// The shell representation, used by harnesses that do not accept an argument list.
+    pub fn shell_command(self) -> Cow<'a, str> {
+        match self {
+            Self::Executable(exe) => Cow::Owned(shell_program(exe)),
+            Self::Shell(command) => Cow::Borrowed(command),
+        }
+    }
+}
+
+impl<'a> From<&'a str> for Program<'a> {
+    fn from(command: &'a str) -> Self {
+        Self::Shell(command)
     }
 }
 
@@ -304,13 +365,23 @@ mod tests {
         assert_eq!(
             names,
             [
-                "claude", "codex", "qoder", "kimi", "cursor", "opencode", "hermes", "pi",
+                "claude",
+                "codex",
+                "qoder",
+                "zcode",
+                "kimi",
+                "antigravity",
+                "cursor",
+                "opencode",
+                "hermes",
+                "pi",
                 "openclaw"
             ]
         );
         assert_eq!(Target::Claude.hooks().len(), 4);
         assert_eq!(Target::Codex.hooks().len(), 3);
         assert_eq!(Target::Qoder.hooks().len(), 3);
+        assert_eq!(Target::Zcode.hooks().len(), 3);
         assert_eq!(Target::Kimi.hooks().len(), 2);
         assert_eq!(Target::Cursor.hooks().len(), 3);
         assert!(Target::Opencode.hooks().is_empty());

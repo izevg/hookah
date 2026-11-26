@@ -1,5 +1,5 @@
 exit: 2
 --- stdout
 --- stderr
-hookah: 1 problem after editing src/lib.rs - fix before continuing:
+hookah: 1 problem. Fix before continuing.
 src/lib.rs:28:5: warning: length comparison to zero [clippy::len_zero]

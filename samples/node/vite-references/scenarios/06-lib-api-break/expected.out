@@ -1,5 +1,5 @@
 exit: 2
 --- stdout
 --- stderr
-hookah: 1 problem after editing lib/money.ts - fix before continuing:
+hookah: 1 problem. Fix before continuing.
 src/cart.ts:4:40: [typecheck] No overload matches this call. [TS2769]

@@ -3,4 +3,5 @@
 
 pub mod baseline;
 pub mod cache_dir;
+pub mod hook_feedback;
 pub mod status;

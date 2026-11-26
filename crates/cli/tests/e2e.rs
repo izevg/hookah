@@ -243,7 +243,7 @@ fn claude_edit_hook_blocks_on_a_broken_file() {
     );
     let err = stderr(&out);
     assert!(err.starts_with("hookah: "), "{err}");
-    assert!(err.contains("after editing"), "{err}");
+    assert!(err.contains("Fix before continuing."), "{err}");
     assert!(err.contains("src/lib.rs:2"), "{err}");
 }
 

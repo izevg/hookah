@@ -13,11 +13,12 @@
 //!   `additional_context` would go to the model).
 
 use hookah_application::Outcome;
+use hookah_domain::session::Phase;
 use serde_json::json;
 
 use crate::protocol::{
-    Invocation, Response, blocking_report, degraded_warnings, edit_context, problems, report_text,
-    start_response,
+    Invocation, Response, blocking_report, degraded_warnings, edit_context, problems,
+    report_feedback, report_text, start_response,
 };
 
 /// Renders `outcome` for Cursor.
@@ -44,12 +45,7 @@ pub fn render(invocation: &Invocation, outcome: &Outcome) -> Response {
             already_continuing, ..
         } => match blocking_report(outcome) {
             Some(report) if !already_continuing => {
-                let message = format!(
-                    "hookah: {} in the files changed in this session - tests or checks are \
-                     failing, fix before finishing:\n{}",
-                    problems(report),
-                    report_text(report, outcome)
-                );
+                let message = report_feedback(Phase::Stop, report, outcome);
                 Response {
                     exit_code: 0,
                     stdout: format!("{}\n", json!({ "followup_message": message })),
@@ -164,7 +160,7 @@ mod tests {
         assert!(r.stderr.is_empty());
         let v: Value = serde_json::from_str(&r.stdout).unwrap();
         let message = v["followup_message"].as_str().unwrap();
-        assert!(message.contains("fix before finishing"));
+        assert!(message.contains("Fix before finishing"));
         assert!(message.contains("a.rs:3: unused variable"));
     }
 

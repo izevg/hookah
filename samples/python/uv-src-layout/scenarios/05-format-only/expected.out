@@ -3,7 +3,7 @@ exit: 0
 {
   "hookSpecificOutput": {
     "hookEventName": "PostToolUse",
-    "additionalContext": "hookah reformatted src/shop/domain/cart.py. Re-read the file before editing it again."
+    "additionalContext": "hookah reformatted src/shop/domain/cart.py. Re-read before editing."
   }
 }
 --- stderr

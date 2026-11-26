@@ -1,7 +1,7 @@
 exit: 2
 --- stdout
 --- stderr
-hookah: 3 problems in the files changed in this session - tests or checks are failing, fix before finishing:
+hookah: 3 problems. Fix before finishing.
 src/main/java/shop/Cart.java:12: [mutation] mutant survived: changed conditional boundary [ConditionalsBoundary]
 src/main/java/shop/Cart.java:29: [mutation] mutant survived: replaced boolean return with true for shop/Cart::freeShipping [BooleanTrueReturnVals]
 src/main/java/shop/Cart.java:29: [mutation] mutant survived: changed conditional boundary [ConditionalsBoundary]

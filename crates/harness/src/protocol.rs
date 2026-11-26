@@ -13,6 +13,7 @@ use std::path::{Path, PathBuf};
 
 use hookah_application::{EditRequest, Outcome, StartRequest, StopRequest};
 use hookah_domain::path::normalize;
+use hookah_domain::session::Phase;
 use hookah_domain::toolchain::MissingTool;
 use hookah_domain::verdict::{Notice, Report, Verdict};
 
@@ -172,7 +173,7 @@ pub fn blocking_report(outcome: &Outcome) -> Option<&Report> {
 }
 
 /// Merges per-file outcomes into one. A `Fail` in any file wins and combines all findings;
-/// otherwise a `Degraded` reason wins over `Pass`. Notices are concatenated.
+/// otherwise a `Degraded` reason wins over `Pass`. Notices are deduplicated in input order.
 pub fn merge_outcomes(outcomes: Vec<Outcome>, limit: usize) -> Outcome {
     let mut findings = Vec::new();
     let mut degraded = None;
@@ -183,7 +184,11 @@ pub fn merge_outcomes(outcomes: Vec<Outcome>, limit: usize) -> Outcome {
             Verdict::Degraded(reason) => degraded = degraded.or(Some(reason)),
             Verdict::Pass => {}
         }
-        notices.extend(outcome.notices);
+        for notice in outcome.notices {
+            if !notices.contains(&notice) {
+                notices.push(notice);
+            }
+        }
     }
     let verdict = match (Report::new(findings, limit), degraded) {
         (Some(report), _) => Verdict::Fail(report),
@@ -216,29 +221,15 @@ fn missing_tools(outcome: &Outcome) -> Vec<&MissingTool> {
         .collect()
 }
 
-/// Model context for a non-blocking edit-phase result: re-read hints for rewritten files and
-/// missing-tool notices (the agent should tell the user; `hookah` never installs anything).
+/// Model context for a non-blocking edit: re-read any files the formatter rewrote.
 pub fn edit_context(outcome: &Outcome) -> Option<String> {
-    let mut parts = Vec::new();
     let files = rewritten_files(outcome);
-    if !files.is_empty() {
-        parts.push(format!(
-            "hookah reformatted {}. Re-read the file before editing it again.",
+    (!files.is_empty()).then(|| {
+        format!(
+            "hookah reformatted {}. Re-read before editing.",
             files.join(", ")
-        ));
-    }
-    let missing = missing_tools(outcome);
-    if !missing.is_empty() {
-        let lines: Vec<String> = missing
-            .iter()
-            .map(|t| Notice::MissingTool((*t).clone()).to_string())
-            .collect();
-        parts.push(format!(
-            "hookah skipped some checks: {}. hookah never installs tools; tell the user.",
-            lines.join("; ")
-        ));
-    }
-    (!parts.is_empty()).then(|| parts.join(" "))
+        )
+    })
 }
 
 /// One user-facing line per missing tool: `name (kind): hint`.
@@ -285,6 +276,19 @@ pub fn problems(report: &Report) -> String {
         1 => "1 problem".into(),
         n => format!("{n} problems"),
     }
+}
+
+/// Model-facing failure feedback. Findings and rewrite notices already carry their paths.
+pub fn report_feedback(phase: Phase, report: &Report, outcome: &Outcome) -> String {
+    let next = match phase {
+        Phase::Edit => "continuing",
+        Phase::Stop => "finishing",
+    };
+    format!(
+        "hookah: {}. Fix before {next}.\n{}",
+        problems(report),
+        report_text(report, outcome)
+    )
 }
 
 /// The report followed by every notice, one per line.
@@ -368,7 +372,26 @@ mod tests {
     }
 
     #[test]
-    fn missing_tool_reaches_model_context_and_user_warning() {
+    fn batch_reports_each_notice_once_in_order() {
+        let missing = Notice::MissingTool(MissingTool::new(
+            "ruff",
+            CheckKind::Lint,
+            "pip install ruff",
+        ));
+        let rewrite_a = Notice::FileRewritten("a.py".into());
+        let rewrite_b = Notice::FileRewritten("b.py".into());
+
+        let mut first = failing("a.py");
+        first.notices = vec![missing.clone(), rewrite_a.clone()];
+        let mut second = Outcome::pass();
+        second.notices = vec![rewrite_b.clone(), missing.clone()];
+
+        let merged = merge_outcomes(vec![first, second], 20);
+        assert_eq!(merged.notices, [missing, rewrite_a, rewrite_b]);
+    }
+
+    #[test]
+    fn missing_tool_stays_out_of_edit_context() {
         let o = Outcome {
             verdict: Verdict::Pass,
             notices: vec![Notice::MissingTool(MissingTool::new(
@@ -377,8 +400,7 @@ mod tests {
                 "pip install ruff",
             ))],
         };
-        let ctx = edit_context(&o).unwrap();
-        assert!(ctx.contains("ruff") && ctx.contains("tell the user"));
+        assert_eq!(edit_context(&o), None);
         assert_eq!(
             degraded_warnings(&o),
             ["hookah: tool not installed: ruff (lint): pip install ruff"]

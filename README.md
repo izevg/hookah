@@ -44,14 +44,14 @@ harness calls `hookah`, which runs the project's own tools on that change and an
 lines. What the agent sees after an edit that breaks a call site:
 
 ```text
-hookah: 1 problem after editing src/lib.rs - fix before continuing:
+hookah: 1 problem. Fix before continuing.
 src/lib.rs:28:5: cannot find function `sum_all` in this scope [E0425]
 ```
 
 And when the agent finishes with tests that no longer prove anything (mutation testing at stop):
 
 ```text
-hookah: 9 problems in the files changed in this session - tests or checks are failing, fix before finishing:
+hookah: 9 problems. Fix before finishing.
 src/lib.rs:17: [mutation] mutant survived: replace < with <= in clamp
 src/lib.rs:17: [mutation] mutant survived: replace clamp -> i64 with 0
 src/lib.rs:19: [mutation] mutant survived: replace > with < in clamp

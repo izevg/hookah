@@ -15,6 +15,7 @@
 - [Cursor](setup/hooks/ide/cursor.md)
 - [Qoder](setup/hooks/cli/qoder.md)
 - [Kimi Code](setup/hooks/cli/kimi.md)
+- [Antigravity CLI](setup/hooks/cli/antigravity/index.md)
 - [opencode](setup/plugins/opencode.md)
 - [Hermes Agent](setup/assistants/hermes.md)
 - [OpenClaw](setup/assistants/openclaw.md)

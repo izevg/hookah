@@ -4,7 +4,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use super::env::{Env, Scope};
-use crate::merge::yaml;
+use crate::merge::{yaml, zcode};
 use crate::target::{Target, mentions_hookah};
 
 /// What is known about one harness on this machine.
@@ -37,10 +37,17 @@ pub fn detect(env: &Env) -> Vec<Detection> {
             target,
             binary: find_binary(target, &env.path),
             config_dir: env.user_dir(target).is_some_and(|d| d.is_dir()),
-            project: env
-                .config_path(target, Scope::Project)
-                .ok()
-                .map(|p| configured(target, &p)),
+            project: if target == Target::Zcode {
+                Some(
+                    env.zcode_project_configs()
+                        .iter()
+                        .any(|p| configured(target, p)),
+                )
+            } else {
+                env.config_path(target, Scope::Project)
+                    .ok()
+                    .map(|p| configured(target, &p))
+            },
             user: env
                 .config_path(target, Scope::User)
                 .ok()
@@ -60,6 +67,7 @@ fn configured(target: Target, path: &Path) -> bool {
                 let plugin = path.with_file_name("plugins/hookah/__init__.py");
                 plugin.is_file() && yaml::enabled(&text)
             }
+            Target::Zcode => zcode::configured(&text),
             _ => mentions_hookah(&text, target.name()),
         },
         Err(_) => false,
@@ -131,6 +139,24 @@ mod tests {
         assert_eq!(get(&found, Target::Kimi).project, None);
         assert_eq!(get(&found, Target::Hermes).project, None);
         assert_eq!(get(&found, Target::Claude).project, Some(false));
+    }
+
+    #[test]
+    fn zcode_detects_native_hooks_and_the_user_cli_config_directory() {
+        let root = root("zcode");
+        let env = env(&root);
+        let config = crate::snippet(Target::Zcode, crate::Program::Executable("hookah")).unwrap();
+        write(&root.join("project/zcode.json"), &config);
+        fs::create_dir_all(root.join("home/.zcode")).unwrap();
+        let found = detect(&env);
+        let zcode = get(&found, Target::Zcode);
+        assert_eq!(zcode.project, Some(true));
+        assert!(!zcode.config_dir);
+
+        write(&root.join("home/.zcode/cli/config.json"), &config);
+        let found = detect(&env);
+        let zcode = get(&found, Target::Zcode);
+        assert!(zcode.config_dir && zcode.user);
     }
 
     #[test]

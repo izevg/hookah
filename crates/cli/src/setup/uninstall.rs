@@ -192,6 +192,9 @@ fn next(removal: &Removal) -> String {
         Some(Target::Openclaw) => out.push_str(
             "next: run `openclaw plugins disable hookah` (hookah does not edit OpenClaw's own config), then restart the OpenClaw Gateway. An entry plugins.entries.hookah may remain in OpenClaw's config; delete it there if you want it gone.\n",
         ),
+        Some(Target::Zcode) => {
+            out.push_str("next: start a new ZCode session or run /reload.\n");
+        }
         Some(t) => out.push_str(&format!(
             "next: restart {} so it stops loading hookah.\n",
             t.title()

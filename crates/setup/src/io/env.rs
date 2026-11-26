@@ -257,6 +257,22 @@ mod tests {
     }
 
     #[test]
+    fn antigravity_uses_project_agents_and_the_shared_gemini_directory() {
+        assert_eq!(
+            env().user_dir(Target::Antigravity),
+            Some(PathBuf::from("/h/.gemini/config"))
+        );
+        assert_eq!(
+            path(Target::Antigravity, Scope::User),
+            Path::new("/h/.gemini/config/hooks.json")
+        );
+        assert_eq!(
+            path(Target::Antigravity, Scope::Project),
+            Path::new("/p/.agents/hooks.json")
+        );
+    }
+
+    #[test]
     fn project_paths_follow_the_setup_docs() {
         let p = |t| path(t, Scope::Project);
         assert_eq!(p(Target::Claude), Path::new("/p/.claude/settings.json"));

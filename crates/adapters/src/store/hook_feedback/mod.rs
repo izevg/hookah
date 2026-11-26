@@ -99,6 +99,37 @@ mod tests {
     use super::*;
 
     #[test]
+    fn clean_conversations_leave_no_feedback_files() {
+        let dir =
+            std::env::temp_dir().join(format!("hookah-no-feedback-test-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let feedback = HookFeedback {
+            path: dir.join("messages.json"),
+        };
+        assert!(!feedback.claim_continuation("prompt", false).unwrap());
+        assert!(feedback.take().unwrap().is_empty());
+        assert_eq!(fs::read_dir(&dir).unwrap().count(), 0);
+        assert!(feedback.claim_continuation("prompt", true).unwrap());
+        assert!(!feedback.claim_continuation("prompt", true).unwrap());
+        assert!(!feedback.claim_continuation("prompt", false).unwrap());
+        assert!(feedback.claim_continuation("prompt", true).unwrap());
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn unreadable_state_is_reported_to_the_caller() {
+        let dir = std::env::temp_dir().join(format!("hookah-bad-feedback-{}", std::process::id()));
+        let feedback = HookFeedback {
+            path: dir.join("messages.json"),
+        };
+        fs::create_dir_all(&feedback.path).unwrap();
+        assert!(feedback.take().is_err());
+        assert!(feedback.push("message".into()).is_err());
+        assert!(feedback.claim_continuation("prompt", true).is_err());
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
     fn concurrent_writers_deliver_one_copy_of_each_message() {
         let dir = std::env::temp_dir().join(format!("hookah-feedback-test-{}", std::process::id()));
         fs::create_dir_all(&dir).unwrap();

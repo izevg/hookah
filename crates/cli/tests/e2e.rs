@@ -834,19 +834,80 @@ fn antigravity_only_continues_a_fully_idle_stop_once_per_prompt() {
         });
         let out = fixture.hookah(&["hook", "antigravity"], &payload.to_string());
         assert!(out.status.success());
-        serde_json::from_str::<serde_json::Value>(&stdout(&out)).unwrap()
+        (
+            serde_json::from_str::<serde_json::Value>(&stdout(&out)).unwrap(),
+            stderr(&out),
+        )
     };
 
-    assert_eq!(stop(false, "model_stop", "First")["decision"], "allow");
-    assert_eq!(stop(true, "error", "First")["decision"], "allow");
-    let first = stop(true, "NO_TOOL_CALL", "First");
+    assert_eq!(stop(false, "model_stop", "First").0["decision"], "allow");
+    assert_eq!(stop(true, "error", "First").0["decision"], "allow");
+    let (first, _) = stop(true, "NO_TOOL_CALL", "First");
     assert_eq!(first["decision"], "continue");
     assert!(first["reason"].as_str().unwrap().contains("answers"));
-    assert_eq!(stop(true, "model_stop", "First")["decision"], "allow");
-    assert_eq!(stop(true, "model_stop", "Second")["decision"], "continue");
+    let repeated = stop(true, "model_stop", "First");
+    assert_eq!(repeated.0["decision"], "allow");
+    assert!(repeated.1.contains("answers"));
+    assert_eq!(stop(true, "model_stop", "Second").0["decision"], "continue");
 
     fixture.write("src/lib.rs", CLEAN_LIB);
-    assert_eq!(stop(true, "model_stop", "Second")["decision"], "allow");
+    assert_eq!(stop(true, "model_stop", "Second").0["decision"], "allow");
     fixture.write("src/lib.rs", FAILING_TEST_LIB);
-    assert_eq!(stop(true, "model_stop", "Second")["decision"], "continue");
+    assert_eq!(stop(true, "model_stop", "Second").0["decision"], "continue");
+}
+
+#[test]
+fn antigravity_warns_and_allows_progress_when_feedback_storage_fails() {
+    let fixture = Fixture::new("antigravity-cache-error", CLEAN_LIB);
+    let invoke = |fields: serde_json::Value| {
+        let mut payload = serde_json::json!({
+            "conversationId": "cache-test", "workspacePaths": [fixture.root]
+        });
+        payload
+            .as_object_mut()
+            .unwrap()
+            .extend(fields.as_object().unwrap().clone());
+        fixture.hookah(&["hook", "antigravity"], &payload.to_string())
+    };
+    let edit = serde_json::json!({
+        "toolCall": {"name": "edit_file", "args": {"Path": "src/lib.rs"}}
+    });
+    let before = serde_json::json!({"invocationNum": 1});
+    fixture.write("src/lib.rs", "pub fn answer() -> i32 {\n    43\n}\n");
+    assert_eq!(stdout(&invoke(edit.clone())).trim(), "{}");
+    assert_eq!(stdout(&invoke(before.clone())).trim(), "{}");
+
+    fixture.write("src/lib.rs", "pub fn answer()->i32{43}\n");
+    assert_eq!(stdout(&invoke(edit.clone())).trim(), "{}");
+    let cache_file = fs::read_dir(fixture.cache())
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .filter(|p| p.is_dir())
+        .flat_map(|p| fs::read_dir(p).unwrap().map(|entry| entry.unwrap().path()))
+        .find(|p| {
+            p.extension().is_some_and(|e| e == "json")
+                && p.file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .starts_with("antigravity-")
+        })
+        .unwrap();
+    fs::remove_file(&cache_file).unwrap();
+    fs::create_dir(&cache_file).unwrap();
+
+    fixture.write("src/lib.rs", "pub fn answer()->i32{44}\n");
+    for fields in [edit, before] {
+        let result = invoke(fields);
+        assert!(result.status.success());
+        assert_eq!(stdout(&result).trim(), "{}");
+        assert!(stderr(&result).contains("antigravity could not relay feedback"));
+    }
+
+    fixture.write("src/lib.rs", FAILING_TEST_LIB);
+    let result = invoke(serde_json::json!({
+        "fullyIdle": true, "executionNum": 0, "terminationReason": "NO_TOOL_CALL"
+    }));
+    assert!(result.status.success());
+    assert_eq!(stdout(&result).trim(), r#"{"decision":"allow"}"#);
+    assert!(stderr(&result).contains("antigravity could not relay feedback"));
 }

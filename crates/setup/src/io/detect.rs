@@ -171,6 +171,24 @@ mod tests {
     }
 
     #[test]
+    fn antigravity_detects_its_named_group_in_the_correct_scope() {
+        let root = root("antigravity");
+        write(
+            &root.join("project/.agents/hooks.json"),
+            r#"{"other":{"Stop":[{"command":"hookah hook antigravity"}]}}"#,
+        );
+        write(
+            &root.join("home/.gemini/config/hooks.json"),
+            r#"{"hookah":{"PostToolUse":[{"matcher":"write_to_file","hooks":[{"command":"/opt/bin/hookah-dev hook antigravity"}]}]}}"#,
+        );
+        let found = detect(&env(&root));
+        let antigravity = get(&found, Target::Antigravity);
+        assert_eq!(antigravity.project, Some(false));
+        assert!(antigravity.user);
+        assert!(antigravity.config_dir);
+    }
+
+    #[test]
     fn a_cursor_hooks_json_with_hookah_is_configured() {
         let root = root("cursor-cfg");
         write(

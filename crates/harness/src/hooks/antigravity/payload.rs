@@ -160,6 +160,40 @@ mod tests {
     }
 
     #[test]
+    fn only_absolute_workspaces_and_identified_conversations_are_checked() {
+        let start = parse(&os_json(
+            r#"{"conversationId":"s","workspacePaths":["/w","rel","/w"]}"#,
+        ))
+        .unwrap();
+        assert_eq!(start.event, Event::Start);
+        assert_eq!(start.roots, [abs("/w")]);
+
+        let unidentified = parse(&os_json(r#"{"workspacePaths":["/w"]}"#)).unwrap();
+        assert_eq!(unidentified.event, Event::Ignore);
+        let relative = parse(r#"{"conversationId":"s","workspacePaths":["rel"]}"#).unwrap();
+        assert_eq!(relative.event, Event::Ignore);
+    }
+
+    #[test]
+    fn idle_stop_without_a_conversation_is_ineligible() {
+        let input = os_json(
+            r#"{"workspacePaths":["/w"],"fullyIdle":true,"terminationReason":"model_stop"}"#,
+        );
+        assert_eq!(
+            parse(&input).unwrap().event,
+            Event::Stop { eligible: false }
+        );
+    }
+
+    #[test]
+    fn tool_call_and_model_invocation_use_distinct_payload_fields() {
+        let edit = decode(r#""toolCall":{"name":"edit_file","args":{"Path":"a.rs"}}"#);
+        assert!(matches!(edit.event, Event::Edit(_)));
+        let before = decode(r#""invocationNum":0"#);
+        assert_eq!(before.event, Event::BeforeModel);
+    }
+
+    #[test]
     fn documented_and_current_tools_resolve_paths_in_the_owning_workspace() {
         for (name, field, path, root) in [
             ("write_file", "Path", "a.rs", "/w"),

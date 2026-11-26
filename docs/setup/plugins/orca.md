@@ -8,13 +8,14 @@ protocol of its own for `hookah` to speak, so there are two layers, and they do 
 
 1. **Per-edit feedback comes from the agent Orca hosts.** An agent in an Orca worktree runs its own
    hooks, so `hookah setup <harness>` is all it takes. See the guide of that harness:
-   [Claude Code](../hooks/cli/claude-code.md), [Codex](../hooks/cli/codex.md), [Qoder](../hooks/cli/qoder.md),
-   [Kimi Code](../hooks/cli/kimi.md), [opencode](opencode.md). Nothing about Orca is needed for this.
+   [Antigravity](../hooks/cli/antigravity/index.md), [Claude Code](../hooks/cli/claude-code.md),
+   [Codex](../hooks/cli/codex.md), [Qoder](../hooks/cli/qoder.md), [Kimi Code](../hooks/cli/kimi.md),
+   [opencode](opencode.md), and [ZCode](../hooks/zcode.md).
 2. **The Orca plugin adds what only Orca knows.** It is a small Orca plugin that ships inside the
    `hookah` binary. It never touches your code. It does three things:
    - shows the latest `hookah` verdict of every worktree, in a sidebar panel and in the status bar;
    - adds palette commands to check a worktree and to set up hooks for it;
-   - can set `hookah` up for an agent right before Orca starts that agent (off by default).
+   - suggests hook setup by default and can set up `hookah` right before Orca starts an agent.
 
 The plugin only runs the `hookah` binary: `hookah status --json` to read, `hookah check --changed`
 to check, `hookah setup` to configure. Every rule stays in `hookah` itself.
@@ -41,7 +42,7 @@ fixed problem disappears once the worktree is checked again.
 | Command | What it does |
 | --- | --- |
 | `hookah: check this worktree` | Runs `hookah check --changed` in the focused worktree in the background, then shows the result as a notification. This is the stop phase: static checks over every changed file, then related tests and mutation testing. |
-| `hookah: set up hooks for this worktree` | For each installed agent that has no `hookah` hooks yet, writes its **project** config into the worktree (`hookah setup <harness> --scope project`). Agents without a project config (Kimi Code) are reported, never touched. |
+| `hookah: set up hooks for this worktree` | Writes missing **project** hooks for installed agents that can use them. For Kimi Code and ZCode, it prints the user-scope setup command. |
 | `hookah: show status of this worktree` | Shows the latest status as a message. The status bar item runs it. |
 
 ### Setting hookah up for hosted agents
@@ -53,14 +54,15 @@ hosted agents** decides:
 | Value | What happens when Orca is about to start an agent in a worktree where `hookah` is not set up for it |
 | --- | --- |
 | `suggest` (default) | A notification, once per worktree and agent: "hookah is not set up for claude". Nothing is written. |
-| `auto` | `hookah setup <agent> --scope project` runs *before* the agent starts, so the agent reads the hooks at startup, and a notification says what was written. Agents without a project config (Kimi Code) only get the suggestion. |
+| `auto` | Runs `hookah setup <agent> --scope project` before agents that can use project hooks start. Kimi Code and ZCode get a notification with the user-scope setup command. |
 | `off` | Nothing. |
 
-"Not set up" means the agent is installed and has no `hookah` hooks in its project config or in
-the user's config. If you ran `hookah setup <harness> --scope user` once, the plugin sees it and
-stays silent. That is the quieter route: it needs no file in any repository. Review and commit (or
-git-ignore) the project config when you use `auto`; some agents ask you to approve new hooks the
-first time (Claude Code: `/hooks`).
+When an installed agent is missing hooks, the plugin checks which scope the agent can use.
+Orca launches the standalone ZCode CLI, which reads user hooks. Run
+`hookah setup zcode --scope user` in a terminal, even if ZCode Desktop uses hooks in the same
+worktree. The plugin leaves user settings to you. When user hooks are already configured, the
+plugin stays silent. When you use `auto` with project hooks, review the project config and choose
+whether to commit it or ignore it. Some agents ask you to approve new hooks the first time.
 
 The launch hook only prepares. It never blocks or changes the launch, it passes on any error
 (Orca also passes after 2 s), and it never installs anything.
@@ -111,6 +113,10 @@ Under the plugin in Orca's Settings:
 
 ### Verify
 
+The plugin was verified on Orca 1.4.277 for macOS. The live checks covered installation and
+upgrade, worktree verdicts in the sidebar and status bar, and project hook setup before the
+Antigravity launch command.
+
 1. In a worktree, ask an agent to edit a file with a problem. The status bar item turns red.
 2. Open the **hookah** panel from the right sidebar: the worktree row says `failing`.
 3. Run **hookah: check this worktree** from the palette. A notification shows the report.
@@ -136,11 +142,9 @@ have a record, and `null` when none has. It runs no checks and always exits 0.
   each other's record.
 - **No inline results.** The plugin reports; the hooks of the hosted agent still feed findings to
   the agent. A verdict never travels through Orca.
-- **Agents Orca cannot map.** Setup on launch covers `claude`, `codex`, `qoder`, `kimi`, and
-  `opencode`. Other agents Orca can host are ignored.
-- **Written against the published plugin API, tested without Orca.** The plugin's type-check and
-  its worker and pure-function tests pass, and the manifest validates with `orca plugin validate`.
-  It has not been loaded into a running Orca desktop.
+- **Agents supported at launch.** Setup on launch covers `antigravity`, `claude`, `codex`, `qoder`,
+  `kimi`, `opencode`, and `zcode`. Launching ZCode through Orca requires a working `zcode` terminal
+  launcher on `PATH`.
 
 ## Development
 

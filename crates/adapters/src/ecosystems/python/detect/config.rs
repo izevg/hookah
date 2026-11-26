@@ -112,6 +112,11 @@ impl Config {
             || has_section(&self.setup_cfg, "importlinter")
     }
 
+    /// The project opts into Vulture by supplying its own configuration.
+    pub fn vulture_configured(&self) -> bool {
+        has_table(&self.pyproject, "tool.vulture")
+    }
+
     /// Whether `package` is named as a dependency in `pyproject.toml`, `setup.cfg`, or
     /// `tox.ini`, in any group (project, optional, dependency group, Poetry, uv, extras).
     pub fn declares(&self, package: &str) -> bool {

@@ -5,6 +5,7 @@
 //! - [`style`]: `ruff check --output-format json`, `ruff format` and `black` errors.
 //! - [`mypy`]: mypy's `-O json` lines or its `path:line:col: error: message  [code]` text.
 //! - [`imports`]: import-linter's "Broken contracts" report.
+//! - [`unused`]: Vulture unused-code diagnostics.
 //! - [`dynamic`]: pytest failures and mutmut survivors.
 //!
 //! Every parser follows the fail-open rule: output it cannot understand, or a tool that fails
@@ -15,6 +16,7 @@ pub mod dynamic;
 pub mod imports;
 pub mod mypy;
 pub mod style;
+mod unused;
 
 use std::path::{Path, PathBuf};
 
@@ -40,6 +42,7 @@ pub fn parse(
         detect::RUFF => style::ruff_check(&root, out),
         detect::MYPY => mypy::parse(&root, out),
         detect::IMPORT_LINTER => imports::parse(&root, out),
+        detect::VULTURE => unused::parse(&root, out),
         detect::PYTEST => dynamic::pytest(&root, out),
         detect::MUTMUT => dynamic::mutmut(&root, out),
         other => Err(PortError::new(format!("unknown Python tool `{other}`"))),
@@ -235,6 +238,80 @@ mod tests {
         );
         let e = parse(&project, &tool("flake8"), &ruff).unwrap_err();
         assert_eq!(e.message(), "unknown Python tool `flake8`");
+    }
+
+    #[test]
+    fn vulture_parses_findings_and_skips_verbose_output() {
+        use hookah_domain::finding::Severity;
+        use hookah_domain::project::Ecosystem;
+        use hookah_domain::toolchain::CheckKind;
+
+        let root = abs("/proj");
+        let absolute = root.join("src/cart.py");
+        let project = Project {
+            root,
+            ecosystem: Ecosystem::Python,
+            manifests: vec![],
+        };
+        let stdout = format!(
+            "Scanning: src/cart.py\n{}:7: unused function 'lost' (60% confidence, 3 lines)\n./folder: note.py:19: unsatisfiable 'if' condition (100% confidence)\n",
+            absolute.display()
+        );
+        let got = parse(&project, &tool("vulture"), &testing::out(3, &stdout, "")).unwrap();
+
+        assert_eq!(got.len(), 2);
+        assert_eq!(got[0].kind, CheckKind::Unused);
+        assert_eq!(got[0].severity, Severity::Warning);
+        assert_eq!(got[0].location.path, Path::new("src/cart.py"));
+        assert_eq!(got[0].location.line, Some(7));
+        assert_eq!(got[0].message, "unused function 'lost' (60% confidence)");
+        assert_eq!(got[1].location.path, Path::new("folder: note.py"));
+        assert_eq!(got[1].location.line, Some(19));
+        assert_eq!(
+            got[1].message,
+            "unsatisfiable 'if' condition (100% confidence)"
+        );
+    }
+
+    #[test]
+    fn vulture_only_accepts_complete_reports() {
+        use hookah_domain::project::Ecosystem;
+
+        let project = Project {
+            root: abs("/proj"),
+            ecosystem: Ecosystem::Python,
+            manifests: vec![],
+        };
+        let parse_report = |output| parse(&project, &tool("vulture"), &output);
+        let report = "src/cart.py:7: unused function 'lost' (60% confidence)\n";
+
+        assert!(
+            parse_report(testing::out(0, "Scanning: src/cart.py\n", ""))
+                .unwrap()
+                .is_empty()
+        );
+        for output in [
+            testing::out(1, "", "src/cart.py:1: invalid syntax"),
+            testing::out(2, "", "Please pass at least one file or directory"),
+            testing::out(3, report, "src/broken.py:1: invalid syntax"),
+            testing::out(3, "lost  # unused function (src/cart.py:7)\n", ""),
+            testing::out(
+                3,
+                "src/cart.py:7: unused function 'lost' (bad% confidence)\n",
+                "",
+            ),
+            testing::out(
+                3,
+                "bad location: unused function 'lost' (60% confidence)\n",
+                "",
+            ),
+            ProcessOutput {
+                timed_out: true,
+                ..testing::out(3, report, "")
+            },
+        ] {
+            assert!(parse_report(output).is_err());
+        }
     }
 
     #[test]

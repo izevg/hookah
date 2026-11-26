@@ -286,6 +286,7 @@ files (edit hook) or all changed files of the project (stop hook).
 | lint         | `ruff`        | `ruff check --output-format json --force-exclude --no-fix {files}`                   | 30 s    |
 | typecheck    | `mypy`        | `mypy [-O json] --show-column-numbers --show-error-codes --no-error-summary --no-color-output [{packages} {files outside them}]` | 120 s |
 | architecture | `lint-imports`| `lint-imports` (project-wide; `PYTHONPATH=src` is set in the src layout)   | 60 s    |
+| unused       | `vulture`     | `vulture` (configured paths, stop phase only)                                         | 60 s    |
 | test         | `pytest`      | `pytest [--testmon --ignore-glob=<heavy>...] [-m "not (<heavy markers>)"] -rfE --tb=short -q --color=no --rootdir=. {tests}` | 300 s |
 | mutation     | `mutmut`      | `mutmut run {globs}` (mutmut 3 only)                                                 | 480 s   |
 
@@ -312,6 +313,22 @@ files (edit hook) or all changed files of the project (stop hook).
   import infra]`: located at the first importing module's file and line (`(l.N)`), message the
   chain, rule the contract name. Module names map to files in the src or flat layout. The root
   package must be importable; the src layout gets `PYTHONPATH=src` for that.
+- **Vulture** runs when the Python project has a `[tool.vulture]` table in `pyproject.toml`.
+  Set `paths` to all sources and tests that should count as uses. For a src layout, include
+  the source and test directories.
+
+  ```toml
+  [tool.vulture]
+  paths = ["src", "tests"]
+  ```
+
+  Vulture reads its own exclusions, minimum confidence, name and decorator ignores, and any
+  whitelist files included in `paths`. Leave `make_whitelist` disabled for Hookah to read the
+  diagnostic output. Findings are unused-code warnings. Vulture compares names across all
+  configured files, so it scans those paths together at session start and in the light stop phase.
+  The session baseline keeps only new findings, including when a removed use makes a symbol
+  unused in another file. Without a ready baseline, only warnings on changed lines are reported.
+  An invalid configuration, unreadable input, or timeout produces a non-blocking warning.
 - **pytest** runs `-rfE --tb=short -q`; no JUnit file is written. Failures come from the
   `short test summary info` lines plus the short tracebacks: a failing test is located at the last
   traceback frame inside its own test file, so an exception raised deep in the code under test is
@@ -328,7 +345,7 @@ files (edit hook) or all changed files of the project (stop hook).
 ### Missing tools
 
 A `MissingTool` notice (never an install) is raised for: mutmut, when pytest is available but
-mutmut is not (or is older than 3); and ruff, mypy, or import-linter, when the project configures
+mutmut is not (or is older than 3); and ruff, mypy, import-linter, or Vulture, when the project configures
 it but the environment lacks it. The hint matches the package manager, judged by lock files:
 `uv add --dev <pkg>`, `poetry add --group dev <pkg>`, or `pip install <pkg>`.
 

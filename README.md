@@ -125,7 +125,7 @@ installs anything.
 | Ecosystem | Format | Lint | Typecheck | Architecture | Test | Mutation |
 |-----------|--------|------|-----------|--------------|------|----------|
 | TypeScript / JavaScript | Biome, Prettier | Biome, ESLint | `tsc` | dependency-cruiser; Knip for unused code (stop only) | Vitest (with Storybook stories), Jest | Stryker |
-| Python | Ruff, Black | Ruff | mypy | import-linter | pytest | mutmut |
+| Python | Ruff, Black | Ruff | mypy | import-linter, Vulture (unused code, stop only) | pytest | mutmut |
 | Rust | rustfmt | Clippy | (compiler errors via Clippy) | n/a | `cargo test` | cargo-mutants |
 | Java (Maven, Gradle) | Spotless | Checkstyle, PMD, SpotBugs | `javac` (through the build) | ArchUnit (runs with the tests) | JUnit (light unit tests only) | PIT |
 

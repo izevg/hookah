@@ -13,8 +13,8 @@ pub enum CheckKind {
     Typecheck,
     /// Checks module dependency rules (`dependency-cruiser`, `import-linter`).
     Architecture,
-    /// Finds unused files, exports, and dependencies across the whole project (`knip`). It needs
-    /// the whole import graph, so it runs in the stop phase only.
+    /// Finds unused code, files, or dependencies across the paths the project configures.
+    /// Runs for the baseline and stop phase.
     Unused,
     /// Runs tests related to the changed files.
     Test,

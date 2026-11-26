@@ -12,6 +12,7 @@
 //! | lint         | `ruff`        | `ruff check --output-format json --force-exclude --no-fix {files}` | 30 s |
 //! | typecheck    | `mypy`        | `mypy [-O json] --show-column-numbers --show-error-codes --no-error-summary --no-color-output {files}` (see below) | 120 s |
 //! | architecture | `lint-imports`| `lint-imports` (project-wide; `PYTHONPATH=src` in the src layout) | 60 s  |
+//! | unused       | `vulture`     | `vulture` (configured paths, stop phase only)                    | 60 s    |
 //! | test         | `pytest`      | `pytest [--testmon --ignore-glob=<heavy>...] [-m "not (<heavy markers>)"] -rfE --tb=short -q --color=no --rootdir=. {tests}` | 300 s |
 //! | mutation     | `mutmut`      | `mutmut run {globs}` (mutmut 3 only)                            | 480 s   |
 //!
@@ -28,7 +29,7 @@
 //! [`select::heavy_ignores`]).
 //!
 //! Tools the project configures or implies but the environment lacks become [`MissingTool`]s:
-//! mutmut when pytest is available, and ruff, mypy, or import-linter when configured. The hint
+//! mutmut when pytest is available, and ruff, mypy, import-linter, or Vulture when configured. The hint
 //! matches the package manager (`uv add --dev`, `poetry add --group dev`, `pip install`).
 
 pub mod config;
@@ -54,6 +55,8 @@ pub const RUFF: &str = "ruff";
 pub const MYPY: &str = "mypy";
 /// Name of the import-linter tool.
 pub const IMPORT_LINTER: &str = "import-linter";
+/// Name of the Vulture tool.
+pub const VULTURE: &str = "vulture";
 /// Name of the pytest tool.
 pub const PYTEST: &str = "pytest";
 /// Name of the mutmut tool.
@@ -75,6 +78,10 @@ const IMPORT_LINTER_REF: ToolRef = ToolRef {
     exe: "lint-imports",
     package: "import-linter",
 };
+const VULTURE_REF: ToolRef = ToolRef {
+    exe: VULTURE,
+    package: VULTURE,
+};
 const PYTEST_REF: ToolRef = ToolRef {
     exe: "pytest",
     package: "pytest",
@@ -88,6 +95,7 @@ const FORMAT_TIMEOUT: Duration = Duration::from_secs(30);
 const LINT_TIMEOUT: Duration = Duration::from_secs(30);
 const MYPY_TIMEOUT: Duration = Duration::from_secs(120);
 const IMPORT_LINTER_TIMEOUT: Duration = Duration::from_secs(60);
+const VULTURE_TIMEOUT: Duration = Duration::from_secs(60);
 const PYTEST_TIMEOUT: Duration = Duration::from_secs(300);
 const MUTMUT_TIMEOUT: Duration = Duration::from_secs(480);
 
@@ -284,6 +292,18 @@ pub fn toolchain(setup: &Setup, root: &Path) -> Toolchain {
         }
     }
 
+    // Vulture scans all configured files together to resolve cross-file symbol usage.
+    if config.vulture_configured() {
+        match env.tool(VULTURE_REF) {
+            Some(inv) => tools.push(tool(
+                VULTURE,
+                CheckKind::Unused,
+                spec(inv, &[], vec![], root, VULTURE_TIMEOUT),
+            )),
+            None => missing.push(missing_tool(VULTURE, CheckKind::Unused, manager)),
+        }
+    }
+
     // Tests and mutation testing.
     let pytest = env.tool(PYTEST_REF);
     if let Some(inv) = pytest.clone() {
@@ -394,6 +414,63 @@ mod tests {
         let t = tc.tools().iter().find(|t| t.name == name).unwrap();
         let targets: Vec<String> = targets.iter().map(|s| (*s).to_string()).collect();
         (t.command.program.clone(), t.command.expand_args(&targets))
+    }
+
+    #[test]
+    fn vulture_uses_configured_paths_and_the_project_environment() {
+        let (scratch, tc) = project(
+            "vulture-configured",
+            &["vulture"],
+            &[],
+            &[(
+                "pyproject.toml",
+                "[tool.vulture]\npaths = ['src', 'whitelist.py']\n",
+            )],
+        );
+        let t = tc.of_kind(CheckKind::Unused).next().unwrap();
+        assert_eq!(t.name, "vulture");
+        assert_eq!(t.command.cwd, scratch.root());
+        assert_eq!(t.command.timeout, Duration::from_secs(60));
+        let (program, args) = argv(&tc, "vulture", &["only_changed.py"]);
+        assert_eq!(
+            Path::new(&program),
+            scratch.root().join(".venv/bin/vulture")
+        );
+        assert!(args.is_empty());
+        assert!(tc.missing().is_empty());
+    }
+
+    #[test]
+    fn vulture_on_path_without_project_configuration_is_ignored() {
+        let scratch = Scratch::new("vulture-unconfigured");
+        scratch.write("pyproject.toml", "[project]\nname = 'vulture'\n");
+        scratch.executable("bin/vulture");
+        let setup = Setup::with_path(scratch.root(), vec![scratch.root().join("bin")]);
+        let tc = toolchain(&setup, scratch.root());
+        assert!(tc.of_kind(CheckKind::Unused).next().is_none());
+        assert!(tc.missing().is_empty());
+    }
+
+    #[test]
+    fn vulture_missing_from_the_configured_environment_is_a_notice() {
+        let (_, tc) = project(
+            "vulture-missing",
+            &[],
+            &[],
+            &[
+                ("pyproject.toml", "[tool.vulture]\npaths = ['src']\n"),
+                ("uv.lock", ""),
+            ],
+        );
+        assert!(tc.of_kind(CheckKind::Unused).next().is_none());
+        assert_eq!(
+            tc.missing(),
+            [MissingTool::new(
+                "vulture",
+                CheckKind::Unused,
+                "uv add --dev vulture"
+            )]
+        );
     }
 
     #[test]

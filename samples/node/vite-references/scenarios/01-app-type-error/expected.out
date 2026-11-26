@@ -1,5 +1,5 @@
 exit: 2
 --- stdout
 --- stderr
-hookah: 1 problem after editing src/cart.ts - fix before continuing:
+hookah: 1 problem. Fix before continuing.
 src/cart.ts:7:14: [typecheck] Type 'number' is not assignable to type 'string'. [TS2322]

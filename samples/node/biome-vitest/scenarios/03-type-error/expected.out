@@ -1,5 +1,5 @@
 exit: 2
 --- stdout
 --- stderr
-hookah: 1 problem after editing src/domain/order.ts - fix before continuing:
+hookah: 1 problem. Fix before continuing.
 src/domain/order.ts:11:29: [typecheck] Argument of type 'string' is not assignable to parameter of type 'number'. [TS2345]

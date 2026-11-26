@@ -14,11 +14,12 @@
 //! - Anything else: exit 0, no output.
 
 use hookah_application::Outcome;
+use hookah_domain::session::Phase;
 use serde_json::json;
 
 use crate::protocol::{
-    Invocation, Response, blocking_report, degraded_warnings, edit_context, problems, report_text,
-    start_response,
+    Invocation, Response, blocking_report, degraded_warnings, edit_context, problems,
+    report_feedback, start_response,
 };
 
 /// Renders `outcome` for Qoder CLI.
@@ -26,13 +27,8 @@ pub fn render(invocation: &Invocation, outcome: &Outcome) -> Response {
     match invocation {
         Invocation::Ignore | Invocation::EditBatch(_) => Response::silent(),
         Invocation::Start(_) => start_response(outcome),
-        Invocation::Edit(request) => match blocking_report(outcome) {
-            Some(report) => context(format!(
-                "hookah: {} after editing {} - fix before continuing:\n{}",
-                problems(report),
-                request.shown_file().display(),
-                report_text(report, outcome)
-            )),
+        Invocation::Edit(_) => match blocking_report(outcome) {
+            Some(report) => context(report_feedback(Phase::Edit, report, outcome)),
             None => match edit_context(outcome) {
                 Some(text) => context(text).with_warnings(outcome),
                 None => warnings(outcome),
@@ -44,12 +40,7 @@ pub fn render(invocation: &Invocation, outcome: &Outcome) -> Response {
             Some(report) if !already_continuing => Response {
                 exit_code: 2,
                 stdout: String::new(),
-                stderr: format!(
-                    "hookah: {} in the files changed in this session - tests or checks are \
-                     failing, fix before finishing:\n{}",
-                    problems(report),
-                    report_text(report, outcome)
-                ),
+                stderr: report_feedback(Phase::Stop, report, outcome),
             },
             Some(report) => Response {
                 exit_code: 0,
@@ -145,7 +136,7 @@ mod tests {
         let ctx = v["hookSpecificOutput"]["additionalContext"]
             .as_str()
             .unwrap();
-        assert!(ctx.starts_with("hookah: 1 problem after editing a.rs"));
+        assert!(ctx.starts_with("hookah: 1 problem. Fix before continuing."));
         assert!(ctx.contains("a.rs:3: unused variable"));
     }
 
@@ -188,7 +179,7 @@ mod tests {
     fn stop_fail_blocks_once() {
         let r = render(&stop(false), &failing(vec![]));
         assert_eq!(r.exit_code, 2);
-        assert!(r.stderr.contains("fix before finishing"));
+        assert!(r.stderr.contains("Fix before finishing"));
         assert!(r.stderr.contains("a.rs:3: unused variable"));
     }
 

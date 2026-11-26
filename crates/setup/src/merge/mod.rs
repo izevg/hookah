@@ -8,6 +8,7 @@
 //!
 //! An error is a plain reason string; the caller adds the path.
 
+pub(crate) mod agent_hooks;
 mod cursor;
 mod json;
 mod toml;
@@ -32,6 +33,7 @@ pub fn merge(target: Target, existing: Option<&str>, program: &str) -> Result<St
     match target {
         Target::Claude | Target::Qoder => json::merge(target, existing, &command),
         Target::Codex => toml::codex::merge(target, existing, &command),
+        Target::Antigravity => agent_hooks::antigravity::merge(existing, &command),
         Target::Kimi => toml::kimi::merge(target, existing, &command),
         Target::Cursor => cursor::merge(target, existing, &command),
         Target::Hermes => yaml::merge(existing),
@@ -79,6 +81,7 @@ pub fn unmerge(target: Target, existing: &str) -> Result<Unmerged, String> {
     match target {
         Target::Claude | Target::Qoder => json::unmerge(target, existing),
         Target::Codex => toml::codex::unmerge(target, existing),
+        Target::Antigravity => agent_hooks::antigravity::unmerge(existing),
         Target::Kimi => toml::kimi::unmerge(target, existing),
         Target::Cursor => cursor::unmerge(target, existing),
         Target::Hermes => yaml::unmerge(existing),

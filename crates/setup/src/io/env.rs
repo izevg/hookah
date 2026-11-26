@@ -136,6 +136,7 @@ impl Env {
     /// The harness's user-level config directory, for detection. `None` without a home.
     pub fn user_dir(&self, target: Target) -> Option<PathBuf> {
         match target {
+            Target::Antigravity => self.home().ok().map(|h| h.join(".gemini").join("config")),
             Target::Opencode => self.opencode_dir().ok(),
             Target::Hermes => self.hermes_dir().ok(),
             Target::Pi => self.pi_dir().ok(),
@@ -177,6 +178,11 @@ impl Env {
             (Target::Opencode, Scope::User) => Ok(self.opencode_dir()?.join(PLUGIN_PATH)),
             (Target::Pi, Scope::Project) => Ok(self.cwd.join(".pi").join(PI_EXTENSION_PATH)),
             (Target::Pi, Scope::User) => Ok(self.pi_dir()?.join(PI_EXTENSION_PATH)),
+            (Target::Antigravity, Scope::User) => Ok(self
+                .home()?
+                .join(".gemini")
+                .join("config")
+                .join("hooks.json")),
             (_, Scope::Project) => Ok(self.cwd.join(dir_name(target)).join(file_name(target))),
             (_, Scope::User) => Ok(self.home()?.join(dir_name(target)).join(file_name(target))),
         }
@@ -208,6 +214,7 @@ fn dir_name(target: Target) -> &'static str {
         Target::Codex => ".codex",
         Target::Qoder => ".qoder",
         Target::Kimi => ".kimi-code",
+        Target::Antigravity => ".agents",
         Target::Cursor => ".cursor",
         Target::Opencode => ".opencode",
         Target::Hermes => ".hermes",
@@ -220,7 +227,7 @@ fn file_name(target: Target) -> &'static str {
     match target {
         Target::Claude | Target::Qoder => "settings.json",
         Target::Codex | Target::Kimi => "config.toml",
-        Target::Cursor => "hooks.json",
+        Target::Cursor | Target::Antigravity => "hooks.json",
         Target::Opencode => "plugins/hookah.ts",
         Target::Hermes => "config.yaml",
         Target::Pi => PI_EXTENSION_PATH,

@@ -783,3 +783,70 @@ fn config_prints_the_effective_environment_and_where_it_came_from() {
     let none = Fixture::new("envnone", CLEAN_LIB);
     assert!(stdout(&none.hookah(&["config", "src/lib.rs"], "")).contains("env: none"));
 }
+
+#[test]
+fn antigravity_delivers_format_feedback_once_to_its_conversation() {
+    let fixture = Fixture::new("antigravity-format", CLEAN_LIB);
+    let file = "src/lib.rs";
+    fixture.write(file, "pub fn answer()->i32{43}\n");
+    let event = |session: &str, fields: serde_json::Value| {
+        let mut json = serde_json::json!({
+            "conversationId": session,
+            "workspacePaths": [fixture.root],
+            "lastUserInput": "Update the answer.",
+        });
+        json.as_object_mut()
+            .unwrap()
+            .extend(fields.as_object().unwrap().clone());
+        fixture.hookah(&["hook", "antigravity"], &json.to_string())
+    };
+    let args = serde_json::json!({"name": "edit_file", "args": {"Path": file}});
+    let edit = event("s", serde_json::json!({"stepIdx": 1, "toolCall": args}));
+    assert!(edit.status.success());
+    assert_eq!(stdout(&edit).trim(), "{}");
+    assert_eq!(fixture.read(file), "pub fn answer() -> i32 {\n    43\n}\n");
+
+    let before_model = serde_json::json!({"invocationNum": 1, "initialNumSteps": 2});
+    let other = event("other", before_model.clone());
+    assert_eq!(stdout(&other).trim(), "{}");
+    let feedback = event("s", before_model.clone());
+    let value: serde_json::Value = serde_json::from_str(&stdout(&feedback)).unwrap();
+    let message = value["injectSteps"][0]["systemMessage"]["systemMessage"]
+        .as_str()
+        .unwrap();
+    assert!(message.contains("src/lib.rs") && message.contains("Re-read"));
+    let repeat = event("s", before_model);
+    assert_eq!(stdout(&repeat).trim(), "{}");
+}
+
+#[test]
+fn antigravity_only_continues_a_fully_idle_stop_once_per_prompt() {
+    let fixture = Fixture::new("antigravity-stop", CLEAN_LIB);
+    fixture.write("src/lib.rs", FAILING_TEST_LIB);
+    let stop = |idle: bool, reason: &str, prompt: &str| {
+        let payload = serde_json::json!({
+            "conversationId": "stop-session",
+            "workspacePaths": [fixture.root],
+            "lastUserInput": prompt,
+            "executionNum": 0,
+            "terminationReason": reason,
+            "fullyIdle": idle,
+        });
+        let out = fixture.hookah(&["hook", "antigravity"], &payload.to_string());
+        assert!(out.status.success());
+        serde_json::from_str::<serde_json::Value>(&stdout(&out)).unwrap()
+    };
+
+    assert_eq!(stop(false, "model_stop", "First")["decision"], "allow");
+    assert_eq!(stop(true, "error", "First")["decision"], "allow");
+    let first = stop(true, "NO_TOOL_CALL", "First");
+    assert_eq!(first["decision"], "continue");
+    assert!(first["reason"].as_str().unwrap().contains("answers"));
+    assert_eq!(stop(true, "model_stop", "First")["decision"], "allow");
+    assert_eq!(stop(true, "model_stop", "Second")["decision"], "continue");
+
+    fixture.write("src/lib.rs", CLEAN_LIB);
+    assert_eq!(stop(true, "model_stop", "Second")["decision"], "allow");
+    fixture.write("src/lib.rs", FAILING_TEST_LIB);
+    assert_eq!(stop(true, "model_stop", "Second")["decision"], "continue");
+}

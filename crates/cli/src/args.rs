@@ -212,6 +212,9 @@ pub enum UninstallKind {
     Qoder,
     /// Kimi Code.
     Kimi,
+    /// Google Antigravity CLI (agy).
+    #[value(alias = "agy")]
+    Antigravity,
     /// Cursor.
     Cursor,
     /// opencode.
@@ -234,6 +237,7 @@ impl UninstallKind {
             Self::Codex => HarnessKind::Codex,
             Self::Qoder => HarnessKind::Qoder,
             Self::Kimi => HarnessKind::Kimi,
+            Self::Antigravity => HarnessKind::Antigravity,
             Self::Cursor => HarnessKind::Cursor,
             Self::Opencode => HarnessKind::Opencode,
             Self::Hermes => HarnessKind::Hermes,
@@ -264,6 +268,9 @@ pub enum HarnessKind {
     Qoder,
     /// Kimi Code command hooks.
     Kimi,
+    /// Google Antigravity CLI (agy).
+    #[value(alias = "agy")]
+    Antigravity,
     /// Cursor (the IDE agent and `cursor-agent`) command hooks.
     Cursor,
     /// opencode, through the bundled plugin (`hookah plugin opencode`).

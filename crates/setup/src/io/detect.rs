@@ -54,6 +54,7 @@ pub fn detect(env: &Env) -> Vec<Detection> {
 fn configured(target: Target, path: &Path) -> bool {
     match fs::read_to_string(path) {
         Ok(text) => match target {
+            Target::Antigravity => crate::merge::agent_hooks::antigravity::configured(&text),
             Target::Opencode | Target::Pi | Target::Openclaw => true,
             Target::Hermes => {
                 let plugin = path.with_file_name("plugins/hookah/__init__.py");

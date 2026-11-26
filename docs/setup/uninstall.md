@@ -111,6 +111,13 @@ File: `~/.kimi-code/config.toml` (user scope only).
 Delete each `[[hooks]]` table whose `command` contains `hookah hook kimi` (two of them: events
 `SessionStart` and `PostToolUse`).
 
+### Antigravity CLI
+
+Files: `.agents/hooks.json` or `~/.gemini/config/hooks.json`.
+
+In the `hookah` group, delete the commands containing `hookah hook antigravity` and any
+matcher groups or events this empties. Remove the `hookah` group if it is empty.
+
 ### Cursor
 
 Files: `.cursor/hooks.json` or `~/.cursor/hooks.json`.

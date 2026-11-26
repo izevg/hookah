@@ -26,7 +26,7 @@ nothing and loses time. So the default is light: cheap checks on what changed, a
 | ----- | ---- | ------- |
 | Edit  | Format, Lint, Typecheck, Architecture | the edited file; about 1-3 s |
 | Stop  | Lint, Typecheck, Architecture | all files changed in the session |
-|       | Unused | whole project (Knip), reported when new; never at edit |
+|       | Unused | configured project paths (Knip, Vulture), reported when new; never at edit |
 |       | Test | the **light** tests related to the changes, only up to the test budget |
 |       | Mutation | only when a test changed **and** the change is small (mutation budget) |
 
@@ -82,7 +82,7 @@ defaults, not policy: raise them in CI or on a fast machine, lower them on a slo
 ## Request flow
 
 Check kinds: `Format`, `Lint`, `Typecheck` (tsc, mypy), `Architecture` (dependency-cruiser,
-import-linter), `Unused` (knip: whole-project analysis), `Test`, `Mutation`. The phase decides which run and in what order
+import-linter), `Unused` (Knip, Vulture), `Test`, `Mutation`. The phase decides which run and in what order
 (`Phase::check_kinds`):
 
 | Phase | Kinds, in order                                                        |

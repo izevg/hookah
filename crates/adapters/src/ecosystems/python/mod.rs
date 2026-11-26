@@ -2,9 +2,9 @@
 //!
 //! [`PythonEcosystem`] implements [`ToolchainDetector`] for projects with a `pyproject.toml`:
 //! `ruff` (or `black`) for format, `ruff` for lint, `mypy` for typecheck, `import-linter` for
-//! architecture, `pytest` for tests, and `mutmut` for mutation testing. Tools run from the
-//! project's own environment (a virtual environment, `poetry run`, or `PATH`); nothing is ever
-//! installed. The details are in [`detect`], [`parse`], and [`select`], and in
+//! architecture, Vulture for unused code, `pytest` for tests, and `mutmut` for mutation testing.
+//! Tools run from the project's own environment (a virtual environment, `poetry run`, or `PATH`).
+//! The details are in [`detect`], [`parse`], and [`select`], and in
 //! `docs/ecosystems.md`.
 //!
 //! The adapter keeps no state: the environment and configuration are cheap to read from disk, so

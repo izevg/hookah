@@ -70,6 +70,30 @@ impl<'a> CheckSession<'a> {
         self.allow_dir.is_none_or(|allow| allow(dir))
     }
 
+    /// Read-only discovery of the changed-file config directories `run` evaluates for `root`
+    /// (before filtering). Falls back to `[root]` when there are no changed checkable files.
+    pub fn discover_scopes(&self, root: &Path) -> Vec<std::path::PathBuf> {
+        let Ok(files) = self.ports.changes.changed_files(root) else {
+            return vec![root.to_path_buf()];
+        };
+        let mut scopes = Vec::new();
+        for file in &files {
+            if let Ok(manifests) = self.ports.locator.manifests_above(file)
+                && let Some(p) = locate_project(file, &manifests)
+                && p.ecosystem.can_check(file)
+            {
+                let dir = file.parent().unwrap_or(&p.root).to_path_buf();
+                if !scopes.contains(&dir) {
+                    scopes.push(dir);
+                }
+            }
+        }
+        if scopes.is_empty() {
+            scopes.push(root.to_path_buf());
+        }
+        scopes
+    }
+
     /// Runs the stop phase. Never panics and never fails on a port error.
     pub fn run(&self, request: &StopRequest) -> Outcome {
         let files = match self.ports.changes.changed_files(&request.root) {

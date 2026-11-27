@@ -33,6 +33,7 @@ CONTRACT = 1
 EDIT_TIMEOUT_S = 30
 STOP_TIMEOUT_S = 120
 START_TIMEOUT_S = 10
+MAX_SESSIONS = 256
 
 log = logging.getLogger("hookah")
 
@@ -154,11 +155,21 @@ def register(ctx):
         if isinstance(raw, str) and raw.strip():
             model = raw.strip()
             if session_id:
-                if len(models) > 64:
-                    models.clear()
+                models.pop(session_id, None)
                 models[session_id] = model
+                while len(models) > MAX_SESSIONS:
+                    models.pop(next(iter(models)))
             return model
-        return models.get(session_id) if session_id else None
+        if session_id and session_id in models:
+            model = models.pop(session_id)
+            models[session_id] = model
+            return model
+        return None
+
+    def on_session_end(session_id="", task_id="", **_kwargs):
+        sid = session_id or task_id or ""
+        if sid:
+            models.pop(sid, None)
 
     def on_llm_call(session_id="", task_id="", **kwargs):
         try:
@@ -229,6 +240,10 @@ def register(ctx):
         return None
 
     ctx.register_hook("on_session_start", on_session_start)
+    try:
+        ctx.register_hook("on_session_end", on_session_end)
+    except Exception:
+        pass
     try:
         ctx.register_hook("pre_llm_call", on_llm_call)
     except Exception:

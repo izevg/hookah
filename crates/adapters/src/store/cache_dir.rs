@@ -105,17 +105,20 @@ fn purge_in(base: PathBuf, shared: bool) -> CachePurge {
     }
 }
 
-/// True for the 16 lowercase hex digits of [`root_hash`], or the name of the updater's directory:
-/// the directories hookah itself creates inside a user-chosen cache directory.
+/// True for the 16 lowercase hex digits of [`root_hash`], or hookah's own top-level cache
+/// directories (`update`, `sessions`): the directories hookah creates inside a user-chosen cache.
 fn is_project_dir_name(name: &std::ffi::OsStr) -> bool {
     name.to_str().is_some_and(|n| {
         n == UPDATE_DIR
+            || n == SESSIONS_DIR
             || (n.len() == 16 && n.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')))
     })
 }
 
 /// The updater's directory inside the hookah cache.
 const UPDATE_DIR: &str = "update";
+/// The per-session model cache directory inside the hookah cache.
+const SESSIONS_DIR: &str = "sessions";
 
 /// The directory where the updater keeps its state and lock: `<hookah cache>/update`; created
 /// when missing.
@@ -129,6 +132,19 @@ pub fn update_cache_dir() -> Result<PathBuf, PortError> {
 /// `<base>/update`, created private to the user.
 fn update_dir_in(base: &Path) -> Result<PathBuf, PortError> {
     private_dir(&base.join(UPDATE_DIR))
+}
+
+/// Side-effect-free path of `<hookah cache>/sessions` (creates nothing on disk).
+pub fn sessions_cache_path() -> Result<PathBuf, PortError> {
+    let base = cache_base(|key| std::env::var_os(key), Platform::current()).ok_or_else(|| {
+        PortError::new("no cache directory: no home or local application data directory is set")
+    })?;
+    Ok(base.join(SESSIONS_DIR))
+}
+
+/// `<hookah cache>/sessions`, created private to the user when missing.
+pub fn sessions_cache_dir() -> Result<PathBuf, PortError> {
+    private_dir(&sessions_cache_path()?)
 }
 
 /// The cache directory of the project at `project_root`; created when missing.
@@ -410,6 +426,7 @@ mod tests {
             fs::create_dir_all(base.join(name)).unwrap();
         }
         fs::create_dir_all(base.join("update")).unwrap();
+        fs::create_dir_all(base.join("sessions")).unwrap();
         fs::write(base.join("aaaaaaaaaaaaaaaa"), "a file named like a project").unwrap();
         fs::write(base.join("notes.txt"), "mine").unwrap();
         let purge = purge_in(base.clone(), true);
@@ -418,6 +435,7 @@ mod tests {
             [
                 base.join("0123456789abcdef"),
                 base.join("fedcba9876543210"),
+                base.join("sessions"),
                 base.join("update")
             ]
         );
@@ -428,6 +446,7 @@ mod tests {
         assert!(base.join("aaaaaaaaaaaaaaaa").is_file());
         assert!(!base.join("0123456789abcdef").exists());
         assert!(!base.join("fedcba9876543210").exists());
+        assert!(!base.join("sessions").exists());
         assert!(!base.join("update").exists());
     }
 

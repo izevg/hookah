@@ -29,6 +29,7 @@ const EDIT_TIMEOUT_MS = 30_000
 const STOP_TIMEOUT_MS = 120_000
 const START_TIMEOUT_MS = 10_000
 const NEXT_TURN_TTL_MS = 24 * 60 * 60 * 1000
+const MAX_SESSIONS = 256
 const FILE_TOOLS = new Set(["write", "edit"])
 
 /** Added, updated, and moved-to files of an `apply_patch` text; deletions are skipped. */
@@ -121,17 +122,39 @@ export default {
       const prefix = `${prov}/`
       return id.toLowerCase().startsWith(prefix.toLowerCase()) ? id : `${prefix}${id}`
     }
+    const isActive = (session) => dirty.has(session) || continuing.has(session)
+    const evictOldest = (map) => {
+      while (map.size > MAX_SESSIONS) {
+        let victim
+        for (const key of map.keys()) {
+          if (!isActive(key)) {
+            victim = key
+            break
+          }
+        }
+        victim ??= map.keys().next().value
+        if (victim === undefined) break
+        map.delete(victim)
+      }
+    }
     const rememberModel = (session, provider, model) => {
       const name = formatModel(provider, model)
       if (!name || !session) return
-      if (models.size > 64) models.clear()
+      models.delete(session)
       models.set(session, name)
+      evictOldest(models)
     }
     const modelOf = (event, ctx) => {
       const direct = formatModel(event?.provider ?? ctx?.provider, event?.model ?? ctx?.model)
       if (direct) return direct
       const session = sessionOf(ctx) || event?.sessionKey || event?.sessionId
-      return session ? models.get(session) : undefined
+      if (!session) return undefined
+      const cached = models.get(session)
+      if (cached !== undefined) {
+        models.delete(session)
+        models.set(session, cached)
+      }
+      return cached
     }
 
     api.on("before_model_resolve", (event, ctx) => {
@@ -139,12 +162,27 @@ export default {
       rememberModel(session, event?.provider ?? ctx?.provider, event?.model ?? ctx?.model)
       if (!ctx?.workspaceDir) return
       state.lastWorkspace = ctx.workspaceDir
-      if (session) workspaces.set(session, ctx.workspaceDir)
+      if (session) {
+        workspaces.delete(session)
+        workspaces.set(session, ctx.workspaceDir)
+        evictOldest(workspaces)
+      }
     })
 
     api.on("llm_input", (event, ctx) => {
       rememberModel(sessionOf(ctx) || event?.sessionKey || event?.sessionId, event?.provider ?? ctx?.provider, event?.model ?? ctx?.model)
     })
+
+    try {
+      api.on("session_end", (event, ctx) => {
+        const id = sessionOf(ctx) || event?.sessionKey || event?.sessionId
+        if (!id) return
+        models.delete(id)
+        workspaces.delete(id)
+        dirty.delete(id)
+        continuing.delete(id)
+      })
+    } catch {}
 
     api.on("session_start", async (event, ctx) => {
       try {

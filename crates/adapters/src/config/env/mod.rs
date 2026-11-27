@@ -225,6 +225,115 @@ pub fn resolve(dir: &Path, host: &Host) -> ProjectEnv {
     out
 }
 
+/// True if `dir` itself, the user config, `HOOKAH_MODELS`, or any nested `.hookah.toml` /
+/// `.hookah.local.toml` below `dir` currently restricts models (i.e. resolves to something other
+/// than [`ModelFilter::All`]).
+///
+/// When `HOOKAH_MODELS` is set in the environment it overrides every config file, so
+/// `HOOKAH_MODELS="*"` immediately returns `false` without walking the tree.
+pub fn has_model_filter_in_tree(dir: &Path, host: &Host) -> bool {
+    if let Some(raw) = (host.var)(MODELS_VAR) {
+        let parts: Vec<String> = raw
+            .split(',')
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_owned)
+            .collect();
+        if !parts.is_empty() {
+            return !ModelFilter::from_patterns(parts).is_all();
+        }
+    }
+    if !resolve(dir, host).models.filter.is_all() {
+        return true;
+    }
+    if let Some(user) = host.user_config()
+        && let Ok(text_of) = std::fs::read_to_string(&user)
+        && let Ok(parsed) = file::parse(&text_of)
+    {
+        if parsed
+            .models
+            .is_some_and(|list| !ModelFilter::from_patterns(list).is_all())
+        {
+            return true;
+        }
+        if parsed.project.into_iter().any(|section| {
+            section
+                .models
+                .is_some_and(|list| !ModelFilter::from_patterns(list).is_all())
+        }) {
+            return true;
+        }
+    }
+    scan_nested_model_filter(dir, host, 0, &mut 0)
+}
+
+const MAX_CONFIG_SCAN_DEPTH: usize = 16;
+const MAX_CONFIG_SCAN_DIRS: usize = 2_048;
+const SKIP_SCAN_DIRS: &[&str] = &[
+    ".git",
+    ".hg",
+    ".svn",
+    "node_modules",
+    "target",
+    "dist",
+    "build",
+    ".venv",
+    "venv",
+    "__pycache__",
+    ".tox",
+    ".next",
+    ".nuxt",
+    "vendor",
+    ".idea",
+    ".vscode",
+    ".gradle",
+    ".mvn",
+    "out",
+    "bin",
+    "obj",
+];
+
+fn scan_nested_model_filter(dir: &Path, host: &Host, depth: usize, visited: &mut usize) -> bool {
+    if depth >= MAX_CONFIG_SCAN_DEPTH || *visited >= MAX_CONFIG_SCAN_DIRS {
+        return false;
+    }
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return false;
+    };
+    let mut subdirs = Vec::new();
+    for entry in entries.flatten() {
+        let Ok(kind) = entry.file_type() else {
+            continue;
+        };
+        if kind.is_symlink() {
+            continue;
+        }
+        let name = entry.file_name();
+        let Some(name_str) = name.to_str() else {
+            continue;
+        };
+        if depth > 0 && (name_str == PROJECT_FILE || name_str == LOCAL_FILE) {
+            if !resolve(dir, host).models.filter.is_all() {
+                return true;
+            }
+            continue;
+        }
+        if kind.is_dir() && !SKIP_SCAN_DIRS.contains(&name_str) {
+            subdirs.push(entry.path());
+        }
+    }
+    for sub in subdirs {
+        *visited += 1;
+        if *visited > MAX_CONFIG_SCAN_DIRS {
+            return false;
+        }
+        if scan_nested_model_filter(&sub, host, depth + 1, visited) {
+            return true;
+        }
+    }
+    false
+}
+
 /// Reads one config file; records it in `out.files`, or a warning when it is unusable. A file
 /// that does not exist is silent.
 fn load(path: &Path, out: &mut ProjectEnv) -> Option<file::ConfigFile> {

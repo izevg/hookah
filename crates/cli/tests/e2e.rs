@@ -1292,14 +1292,148 @@ fn unfiltered_session_start_writes_no_session_model_cache() {
     .to_string();
     assert_eq!(f.hookah(&["hook", "claude"], &sw).status.code(), Some(0));
 
-    let has_session_models = fs::read_dir(f.cache())
-        .into_iter()
-        .flatten()
-        .flatten()
-        .any(|entry| entry.path().join("session-models").exists());
     assert!(
-        !has_session_models,
-        "unfiltered sessions must not create session-models cache files"
+        !f.cache().join("sessions").exists(),
+        "unfiltered sessions must not create session cache files"
+    );
+
+    // Even when a project file restricts models, HOOKAH_MODELS="*" disables the filter and
+    // prevents creating or rewriting a session-model file on PostModelSwitch.
+    f.write(".hookah.toml", "models = [\"claude-sonnet-*\"]\n");
+    let sw_override = f.hookah_with(&["hook", "claude"], &sw, &[("HOOKAH_MODELS", "*")]);
+    assert_eq!(sw_override.status.code(), Some(0));
+    assert!(
+        !f.cache().join("sessions").exists(),
+        "HOOKAH_MODELS=* must not create session cache files"
+    );
+}
+
+#[test]
+fn claude_switch_survives_cwd_change_and_subagent_uses_child_transcript() {
+    let f = Fixture::new("claude-cwd-subagent", CLEAN_LIB);
+    f.write(".hookah.toml", "models = [\"claude-sonnet-*\"]\n");
+
+    let parent_transcript = f.cache().join("main-session.jsonl");
+    let subagents_dir = f.cache().join("main-session").join("subagents");
+    fs::create_dir_all(&subagents_dir).unwrap();
+    fs::write(
+        &parent_transcript,
+        r#"{"type":"assistant","timestamp":"2020-01-01T00:00:00Z","message":{"model":"claude-opus-4-6","content":[]}}"#,
+    )
+    .unwrap();
+
+    // Start the session on the clean repo so the session baseline is clean.
+    let start = serde_json::json!({
+        "session_id": "ses-cwd",
+        "cwd": f.root,
+        "hook_event_name": "SessionStart",
+        "model": "claude-sonnet-4-6",
+        "transcript_path": parent_transcript
+    })
+    .to_string();
+    assert_eq!(f.hookah(&["hook", "claude"], &start).status.code(), Some(0));
+
+    f.write("src/lib.rs", "pub fn answer() -> i32 {\n    \"nope\"\n}\n");
+
+    // Switch to sonnet from the repo root.
+    let sw = serde_json::json!({
+        "session_id": "ses-cwd",
+        "cwd": f.root,
+        "hook_event_name": "PostModelSwitch",
+        "to_model": "claude-sonnet-4-6",
+        "transcript_path": parent_transcript
+    })
+    .to_string();
+    assert_eq!(f.hookah(&["hook", "claude"], &sw).status.code(), Some(0));
+
+    // Subsequent edit from a subdirectory still resolves the recorded switch.
+    let sub_edit = serde_json::json!({
+        "session_id": "ses-cwd",
+        "cwd": f.path("src"),
+        "hook_event_name": "PostToolUse",
+        "transcript_path": parent_transcript,
+        "tool_name": "Edit",
+        "tool_input": {"file_path": f.path("src/lib.rs")}
+    })
+    .to_string();
+    let from_subdir = f.hookah(&["hook", "claude"], &sub_edit);
+    assert_eq!(
+        from_subdir.status.code(),
+        Some(2),
+        "{}",
+        stderr(&from_subdir)
+    );
+
+    // Subagent PostToolUse with agent_id and no agent_transcript_path must NOT use the parent
+    // session's transcript or cached switch when its own child transcript is absent.
+    let subagent_missing = serde_json::json!({
+        "session_id": "ses-cwd",
+        "cwd": f.root,
+        "hook_event_name": "PostToolUse",
+        "agent_id": "child99",
+        "transcript_path": parent_transcript,
+        "tool_name": "Edit",
+        "tool_input": {"file_path": f.path("src/lib.rs")}
+    })
+    .to_string();
+    assert_eq!(
+        f.hookah(&["hook", "claude"], &subagent_missing)
+            .status
+            .code(),
+        Some(0)
+    );
+
+    // Once the child transcript exists at <session>/subagents/agent-<id>.jsonl with sonnet, it
+    // runs checks using the child's own model even though the parent transcript has opus.
+    fs::write(
+        subagents_dir.join("agent-child99.jsonl"),
+        r#"{"type":"assistant","timestamp":"2020-01-01T00:00:00Z","message":{"model":"claude-sonnet-4-6","content":[]}}"#,
+    )
+    .unwrap();
+    let subagent_allowed = f.hookah(&["hook", "claude"], &subagent_missing);
+    assert_eq!(
+        subagent_allowed.status.code(),
+        Some(2),
+        "{}",
+        stderr(&subagent_allowed)
+    );
+}
+
+#[test]
+fn antigravity_caches_model_for_deeply_nested_filtered_project() {
+    let f = Fixture::new("agy-deep-filter", CLEAN_LIB);
+    fs::create_dir_all(f.path("a/b/c/d/src")).unwrap();
+    f.write(
+        "a/b/c/d/Cargo.toml",
+        "[package]\nname = \"deep\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n[workspace]\n",
+    );
+    f.write("a/b/c/d/.hookah.toml", "models = [\"gemini-4-*\"]\n");
+    f.write("a/b/c/d/src/lib.rs", "pub fn answer()->i32{43}\n");
+
+    // Unrestricted root; deep project is 4 levels down (beyond StartSession's depth-3 scan).
+    let start = serde_json::json!({
+        "conversationId": "agy-deep",
+        "workspacePaths": [f.root],
+        "modelName": "gemini-4-neon-low"
+    });
+    assert!(
+        f.hookah(&["hook", "antigravity"], &start.to_string())
+            .status
+            .success()
+    );
+
+    // Model-less PostToolUse in the deep child still resolves the cached gemini model.
+    let edit = serde_json::json!({
+        "conversationId": "agy-deep",
+        "workspacePaths": [f.root],
+        "stepIdx": 1,
+        "toolCall": {"name": "edit_file", "args": {"Path": "a/b/c/d/src/lib.rs"}}
+    });
+    let out = f.hookah(&["hook", "antigravity"], &edit.to_string());
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert_eq!(
+        f.read("a/b/c/d/src/lib.rs"),
+        "pub fn answer() -> i32 {\n    43\n}\n"
     );
 }
 
@@ -1333,7 +1467,8 @@ fn config_verifies_model_patterns_and_hook_payloads() {
         "{missing}"
     );
 
-    // Payload smoke test for Antigravity native `modelName`.
+    // Payload smoke test for Antigravity native `modelName` (and must write nothing to cache).
+    let _ = fs::remove_dir_all(f.cache());
     let agy_payload = serde_json::json!({
         "conversationId": "s",
         "workspacePaths": [f.root],
@@ -1351,8 +1486,45 @@ fn config_verifies_model_patterns_and_hook_payloads() {
         agy_out.contains(r#"decision: allow (matches pattern "gemini-4-*")"#),
         "{agy_out}"
     );
+    assert!(
+        !f.cache().exists(),
+        "config --hook must not create any cache directories"
+    );
+
+    // Monorepo diagnostic: disabled root (`models = []`) + enabled child (`models = ["*"]`)
+    // shows the child's `allow` decision on both Start and Stop.
+    fs::create_dir_all(f.path("child/src")).unwrap();
+    f.write(
+        "child/Cargo.toml",
+        "[package]\nname = \"child\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n[workspace]\n",
+    );
+    f.write("child/src/lib.rs", CLEAN_LIB);
+    f.git(&["add", "-A"]);
+    f.git(&["commit", "-q", "-m", "add child crate"]);
+    f.write(".hookah.toml", "models = []\n");
+    f.write("child/.hookah.toml", "models = [\"*\"]\n");
+    f.write("child/src/lib.rs", "pub fn answer() -> i32 { 43 }\n");
+
+    let start_diag = stdout(&f.hookah(&["config", "--hook", "claude"], &f.start_payload("diag")));
+    assert!(
+        start_diag.contains("child\nmodels: all") && start_diag.contains("decision: allow"),
+        "{start_diag}"
+    );
+    let stop_diag = stdout(&f.hookah(&["config", "--hook", "claude"], &f.stop_payload(false)));
+    assert!(
+        stop_diag.contains("child/src\nmodels: all") && stop_diag.contains("decision: allow"),
+        "{stop_diag}"
+    );
+    assert!(
+        !f.cache().exists(),
+        "monorepo config --hook must not create any cache directories"
+    );
 
     // Payload smoke test for Claude transcript resolution.
+    f.write(
+        ".hookah.toml",
+        "models = [\"claude-sonnet-*\", \"gemini-4-*\"]\n",
+    );
     let transcript = f.cache().join("diag.jsonl");
     fs::create_dir_all(f.cache()).unwrap();
     fs::write(

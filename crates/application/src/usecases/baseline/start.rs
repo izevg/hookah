@@ -43,6 +43,24 @@ impl<'a> StartSession<'a> {
         self.allow_dir.is_none_or(|allow| allow(dir))
     }
 
+    /// Read-only discovery of the project roots `run` evaluates for `cwd` (before filtering).
+    pub fn discover_roots(&self, cwd: &Path) -> Vec<PathBuf> {
+        let mut roots: Vec<PathBuf> = Vec::new();
+        let mut dirs = vec![cwd.to_path_buf()];
+        if let Ok(nested) = self.ports.locator.nested_roots(cwd, NESTED_DEPTH) {
+            dirs.extend(nested);
+        }
+        for dir in dirs {
+            if let Ok(Some(project)) = self.project_at(&dir)
+                && !roots.contains(&project.root)
+            {
+                roots.push(project.root);
+            }
+        }
+        roots.truncate(MAX_PROJECTS);
+        roots
+    }
+
     /// Never fails: problems become a degraded outcome.
     pub fn run(&self, request: &StartRequest) -> Outcome {
         let mut roots: Vec<PathBuf> = Vec::new();

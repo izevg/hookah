@@ -28,6 +28,7 @@ const EDIT_TIMEOUT_MS = 30_000
 const STOP_TIMEOUT_MS = 120_000
 const START_TIMEOUT_MS = 10_000
 const MAX_TOAST = 600
+const MAX_SESSIONS = 256
 
 /** hookah's answer: `block` means the model must act on `model_text`; `user_text` is for people. */
 type Reply = { v?: number; block?: boolean; model_text?: string; user_text?: string }
@@ -99,17 +100,57 @@ export const HookahPlugin: Plugin = async ({ client, directory }) => {
     }
   }
 
+  const isActive = (sessionID: string) =>
+    dirty.has(sessionID) ||
+    continuing.has(sessionID) ||
+    checking.has(sessionID) ||
+    needsModelStart.has(sessionID)
+
+  const evictOldestModel = () => {
+    while (models.size > MAX_SESSIONS) {
+      let victim: string | undefined
+      for (const key of models.keys()) {
+        if (!isActive(key)) {
+          victim = key
+          break
+        }
+      }
+      victim ??= models.keys().next().value
+      if (victim === undefined) break
+      models.delete(victim)
+    }
+  }
+
+  const getModel = (sessionID: string): string | undefined => {
+    const model = models.get(sessionID)
+    if (model !== undefined) {
+      models.delete(sessionID)
+      models.set(sessionID, model)
+    }
+    return model
+  }
+
   const rememberModel = (sessionID: unknown, provider: unknown, model: unknown) => {
     const name = formatModel(provider, model)
     if (typeof sessionID === "string" && sessionID && name) {
-      if (models.size > 64) models.clear()
+      models.delete(sessionID)
       models.set(sessionID, name)
+      evictOldestModel()
       if (needsModelStart.delete(sessionID)) {
         // Non-blocking: StartSession is idempotent when unfiltered, and starts the baseline when
         // a model filter skipped the model-less session.created call.
         void startBaseline(sessionID, name)
       }
     }
+  }
+
+  const forgetSession = (sessionID: unknown) => {
+    if (typeof sessionID !== "string" || !sessionID) return
+    models.delete(sessionID)
+    needsModelStart.delete(sessionID)
+    dirty.delete(sessionID)
+    continuing.delete(sessionID)
+    checking.delete(sessionID)
   }
 
   const log = (level: "info" | "warn", message: string) =>
@@ -203,9 +244,8 @@ export const HookahPlugin: Plugin = async ({ client, directory }) => {
         pendingArgs.delete(input.callID)
         const files = editedFiles(input.tool, args)
         if (files.length === 0) return
-        needsModelStart.delete(input.sessionID)
         dirty.add(input.sessionID)
-        const model = models.get(input.sessionID)
+        const model = getModel(input.sessionID)
         const reply = await callHookah(
           {
             event: "edit",
@@ -238,14 +278,22 @@ export const HookahPlugin: Plugin = async ({ client, directory }) => {
         } catch {}
         return
       }
+      if (event.type === "session.deleted") {
+        const props = event.properties as any
+        forgetSession(props?.info?.id ?? props?.sessionID)
+        return
+      }
       if (event.type === "session.created") {
         try {
           const info = event.properties.info
           // Subagent sessions work on the parent's project: they get a baseline lazily if needed.
           if (!info?.id || info.parentID) return
-          const model = models.get(info.id)
+          const model = getModel(info.id)
           if (!model) {
-            if (needsModelStart.size > 64) needsModelStart.clear()
+            if (needsModelStart.size >= MAX_SESSIONS) {
+              const oldest = needsModelStart.values().next().value
+              if (oldest !== undefined) needsModelStart.delete(oldest)
+            }
             needsModelStart.add(info.id)
           }
           await startBaseline(info.id, model)
@@ -262,7 +310,7 @@ export const HookahPlugin: Plugin = async ({ client, directory }) => {
       try {
         dirty.delete(id)
         continuing.delete(id)
-        const model = models.get(id)
+        const model = getModel(id)
         const reply = await callHookah(
           {
             event: "stop",

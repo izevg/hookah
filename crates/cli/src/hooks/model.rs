@@ -15,9 +15,8 @@ use std::collections::{HashMap, HashSet};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-use hookah_adapters::config::env::{Host, resolve};
+use hookah_adapters::config::env::{Host, has_model_filter_in_tree, resolve};
 use hookah_adapters::store::session_model;
-use hookah_adapters::transcript;
 use hookah_application::EditRequest;
 use hookah_domain::model::ModelFilter;
 use hookah_harness::protocol::{Invocation, ModelHint, canonical_dir};
@@ -35,6 +34,7 @@ pub(crate) enum ModelSource {
 
 /// Cached per-invocation model evaluator.
 pub(crate) struct ModelGate<'a> {
+    harness: &'a str,
     hint: &'a ModelHint,
     host: Host,
     filters: RefCell<HashMap<PathBuf, (ModelFilter, Vec<String>)>>,
@@ -47,12 +47,13 @@ pub(crate) struct ModelGate<'a> {
 
 impl<'a> ModelGate<'a> {
     /// Builds a gate backed by the current process environment.
-    pub(crate) fn new(hint: &'a ModelHint) -> Self {
-        Self::with_host(hint, Host::from_process(), true)
+    pub(crate) fn new(harness: &'a str, hint: &'a ModelHint) -> Self {
+        Self::with_host(harness, hint, Host::from_process(), true)
     }
 
-    fn with_host(hint: &'a ModelHint, host: Host, warn_stderr: bool) -> Self {
+    fn with_host(harness: &'a str, hint: &'a ModelHint, host: Host, warn_stderr: bool) -> Self {
         Self {
+            harness,
             hint,
             host,
             filters: RefCell::new(HashMap::new()),
@@ -69,18 +70,10 @@ impl<'a> ModelGate<'a> {
         self.any_allowed.get()
     }
 
-    /// True if any directory checked by this gate had a model restriction configured.
-    pub(crate) fn any_restricted(&self) -> bool {
-        self.any_restricted.get()
-    }
-
-    /// True if `dir` has no model restriction (`ModelFilter::All`).
-    pub(crate) fn is_all(&self, dir: &Path) -> bool {
-        let is_all = self.filter_for(dir).0.is_all();
-        if !is_all {
-            self.any_restricted.set(true);
-        }
-        is_all
+    /// True if `dir` itself or any nested project/user config below `dir` currently restricts
+    /// models (independent of `StartSession`'s baseline discovery depth).
+    pub(crate) fn workspace_has_filter(&self, dir: &Path) -> bool {
+        self.any_restricted.get() || has_model_filter_in_tree(dir, &self.host)
     }
 
     /// Whether a hook event targeting `dir` should run for the active model.
@@ -121,7 +114,7 @@ impl<'a> ModelGate<'a> {
         if let Some(cached) = self.resolved_model.borrow().as_ref() {
             return cached.clone();
         }
-        let model = resolve_model_with_source(self.hint).map(|(model, _)| model);
+        let model = resolve_model_with_source(self.harness, self.hint).map(|(model, _)| model);
         *self.resolved_model.borrow_mut() = Some(model.clone());
         model
     }
@@ -140,11 +133,12 @@ impl<'a> ModelGate<'a> {
 }
 
 /// Persists the session's active model when a main-session `SessionStart` or `PostModelSwitch`
-/// event carries one and a model filter is active (or a session-model record already exists).
+/// event carries one and a model filter is currently active in the workspace.
 ///
-/// Writes nothing when `models` is unset across the workspace so unfiltered sessions do not create
-/// extra cache files.
+/// Writes nothing when `models` is unset (or overridden to `"*"`) across the workspace so
+/// unfiltered sessions do not create or rewrite session cache files.
 pub(crate) fn record_session_model(
+    harness: &str,
     invocation: &Invocation,
     hint: &ModelHint,
     gate: &ModelGate<'_>,
@@ -167,12 +161,9 @@ pub(crate) fn record_session_model(
         return;
     };
     let canonical = canonical_dir(cwd);
-    let needed = gate.any_restricted()
-        || !gate.is_all(&canonical)
-        || (hint.model_switch && session_model::exists(&canonical, session));
-    if needed {
+    if gate.workspace_has_filter(&canonical) {
         session_model::record(
-            &canonical,
+            harness,
             session,
             model,
             hint.model_switch,
@@ -181,8 +172,8 @@ pub(crate) fn record_session_model(
     }
 }
 
-/// Persists Antigravity's reported `modelName` for the conversation when any workspace has a model
-/// filter configured (or when updating an existing session record on `PreInvocation`/`Stop`), so
+/// Persists Antigravity's reported `modelName` for the conversation when any mounted workspace
+/// (including nested projects at any depth) currently has a model filter configured, so
 /// `PostToolUse` events that omit `modelName` still resolve the active model.
 pub(crate) fn record_antigravity_model(
     roots: &[PathBuf],
@@ -190,22 +181,18 @@ pub(crate) fn record_antigravity_model(
     gate: &ModelGate<'_>,
     is_update: bool,
 ) {
-    let Some(primary) = roots.first() else {
+    if roots.is_empty() {
         return;
-    };
+    }
     let Some(model) = hint.model.as_deref() else {
         return;
     };
     let Some(session) = hint.session.as_deref() else {
         return;
     };
-    let canonical = canonical_dir(primary);
-    let needed = gate.any_restricted()
-        || roots.iter().any(|root| !gate.is_all(root))
-        || (is_update && session_model::exists(&canonical, session));
-    if needed {
+    if roots.iter().any(|root| gate.workspace_has_filter(root)) {
         session_model::record(
-            &canonical,
+            "antigravity",
             session,
             model,
             is_update,
@@ -248,29 +235,28 @@ pub(crate) fn filter_edits(invocation: Invocation, gate: &ModelGate<'_>) -> Invo
 }
 
 /// Resolves the active model for `hint` together with the source that supplied it.
-pub(crate) fn resolve_model_with_source(hint: &ModelHint) -> Option<(String, ModelSource)> {
+///
+/// Purely read-only: creates no cache directories.
+pub(crate) fn resolve_model_with_source(
+    harness: &str,
+    hint: &ModelHint,
+) -> Option<(String, ModelSource)> {
     if let Some(model) = hint.model.clone() {
         return Some((model, ModelSource::Payload));
     }
-    if let Some(cwd) = hint.cwd.as_deref() {
-        let canonical = canonical_dir(cwd);
-        let resolved = session_model::resolve_with_origin(
-            &canonical,
-            hint.session.as_deref(),
-            hint.transcript.as_deref(),
-            !hint.is_subagent,
-        )?;
-        let source = match resolved.origin {
-            session_model::ModelOrigin::SessionCache => ModelSource::SessionCache,
-            session_model::ModelOrigin::Transcript => {
-                ModelSource::Transcript(hint.transcript.clone().unwrap_or_default())
-            }
-        };
-        return Some((resolved.model, source));
-    }
-    let path = hint.transcript.as_deref()?;
-    let model = transcript::latest_model(path)?;
-    Some((model, ModelSource::Transcript(path.to_path_buf())))
+    let resolved = session_model::resolve_with_origin(
+        harness,
+        hint.session.as_deref(),
+        hint.transcript.as_deref(),
+        !hint.is_subagent,
+    )?;
+    let source = match resolved.origin {
+        session_model::ModelOrigin::SessionCache => ModelSource::SessionCache,
+        session_model::ModelOrigin::Transcript => {
+            ModelSource::Transcript(hint.transcript.clone().unwrap_or_default())
+        }
+    };
+    Some((resolved.model, source))
 }
 
 #[cfg(test)]
@@ -308,7 +294,7 @@ mod tests {
         let req = EditRequest::new(&file, &dir);
 
         let empty_hint = ModelHint::default();
-        let gate = ModelGate::with_host(&empty_hint, quiet_host(), false);
+        let gate = ModelGate::with_host("claude", &empty_hint, quiet_host(), false);
         assert_eq!(
             filter_edits(Invocation::Edit(req.clone()), &gate),
             Invocation::Edit(req.clone())
@@ -323,17 +309,17 @@ mod tests {
             model: Some("claude-opus-4-6".into()),
             ..ModelHint::default()
         };
-        let yes_gate = ModelGate::with_host(&yes, quiet_host(), false);
+        let yes_gate = ModelGate::with_host("claude", &yes, quiet_host(), false);
         assert_eq!(
             filter_edits(Invocation::Edit(req.clone()), &yes_gate),
             Invocation::Edit(req.clone())
         );
-        let no_gate = ModelGate::with_host(&no, quiet_host(), false);
+        let no_gate = ModelGate::with_host("claude", &no, quiet_host(), false);
         assert_eq!(
             filter_edits(Invocation::Edit(req.clone()), &no_gate),
             Invocation::Ignore
         );
-        let unknown_gate = ModelGate::with_host(&empty_hint, quiet_host(), false);
+        let unknown_gate = ModelGate::with_host("claude", &empty_hint, quiet_host(), false);
         assert_eq!(
             filter_edits(Invocation::Edit(req), &unknown_gate),
             Invocation::Ignore
@@ -358,13 +344,13 @@ mod tests {
         };
 
         // Empty filter short-circuits before touching the transcript.
-        let empty_gate = ModelGate::with_host(&hint, quiet_host(), false);
+        let empty_gate = ModelGate::with_host("claude", &hint, quiet_host(), false);
         assert!(!empty_gate.allows(&dir));
         assert!(empty_gate.resolved_model.borrow().is_none());
 
         // Restrictive filter resolves the transcript once and caches it for later files.
         fs::write(dir.join(".hookah.toml"), "models = [\"claude-opus-*\"]\n").unwrap();
-        let gate = ModelGate::with_host(&hint, quiet_host(), false);
+        let gate = ModelGate::with_host("claude", &hint, quiet_host(), false);
         assert!(gate.allows(&dir));
         let _ = fs::remove_file(&transcript);
         assert!(
@@ -391,7 +377,7 @@ mod tests {
             model: Some("gpt-5.3-codex".into()),
             ..ModelHint::default()
         };
-        let gate = ModelGate::with_host(&hint, quiet_host(), false);
+        let gate = ModelGate::with_host("opencode", &hint, quiet_host(), false);
         let filtered = filter_edits(Invocation::EditBatch(vec![req_a.clone(), req_b]), &gate);
         assert_eq!(filtered, Invocation::EditBatch(vec![req_a]));
         let _ = fs::remove_dir_all(dir);

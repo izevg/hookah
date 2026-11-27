@@ -53,9 +53,9 @@ pub fn parse_event(stdin: &str) -> Result<Parsed, PayloadError> {
         || p.agent_transcript_path.is_some()
         || p.agent_id.as_deref().is_some_and(|id| !id.is_empty());
     let transcript_raw = if is_subagent {
-        p.agent_transcript_path
-            .clone()
-            .or(p.transcript_path.clone())
+        p.agent_transcript_path.clone().or_else(|| {
+            subagent_transcript_path(p.transcript_path.as_deref(), p.agent_id.as_deref())
+        })
     } else {
         p.transcript_path.clone()
     };
@@ -89,6 +89,27 @@ pub fn parse_event(stdin: &str) -> Result<Parsed, PayloadError> {
         _ => Invocation::Ignore,
     };
     Ok(Parsed { invocation, model })
+}
+
+/// Derives Claude Code's documented subagent transcript path
+/// (`<project>/<session>/subagents/agent-<agent_id>.jsonl`) from the parent session transcript
+/// (`<project>/<session>.jsonl`). Never falls back to the parent session's transcript.
+fn subagent_transcript_path(
+    parent_transcript: Option<&Path>,
+    agent_id: Option<&str>,
+) -> Option<PathBuf> {
+    let parent = parent_transcript.filter(|p| !p.as_os_str().is_empty())?;
+    let id = agent_id.map(str::trim).filter(|id| {
+        !id.is_empty() && !id.contains('/') && !id.contains('\\') && !id.contains("..")
+    })?;
+    let stem = parent.file_stem()?;
+    let dir = parent.parent()?;
+    let file = if id.starts_with("agent-") {
+        format!("{id}.jsonl")
+    } else {
+        format!("agent-{id}.jsonl")
+    };
+    Some(dir.join(stem).join("subagents").join(file))
 }
 
 fn edit(p: &Payload) -> Result<Invocation, PayloadError> {
@@ -289,6 +310,29 @@ mod tests {
         assert_eq!(parsed.model.model, None);
         assert_eq!(parsed.model.transcript, Some(abs("/w/sub.jsonl")));
         assert!(parsed.model.is_subagent);
+
+        // Subagent PostToolUse without agent_transcript_path resolves Claude's subagent transcript
+        // layout from agent_id and never falls back to the parent transcript.
+        let sub_edit = os_json(
+            r#"{"session_id":"s","cwd":"/w","hook_event_name":"PostToolUse",
+            "agent_id":"a1b2c3","transcript_path":"/w/main.jsonl",
+            "tool_name":"Edit","tool_input":{"file_path":"/w/a.rs"}}"#,
+        );
+        let parsed = parse_event(&sub_edit).unwrap();
+        assert!(parsed.model.is_subagent);
+        assert_eq!(
+            parsed.model.transcript,
+            Some(abs("/w/main/subagents/agent-a1b2c3.jsonl"))
+        );
+
+        // SubagentStop with neither agent_transcript_path nor agent_id leaves transcript unknown.
+        let sub_unknown = os_json(
+            r#"{"session_id":"s","cwd":"/w","hook_event_name":"SubagentStop",
+            "transcript_path":"/w/main.jsonl"}"#,
+        );
+        let parsed = parse_event(&sub_unknown).unwrap();
+        assert!(parsed.model.is_subagent);
+        assert_eq!(parsed.model.transcript, None);
 
         let sw = os_json(
             r#"{"session_id":"s","cwd":"/w","hook_event_name":"PostModelSwitch",

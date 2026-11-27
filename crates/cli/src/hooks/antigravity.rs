@@ -20,7 +20,7 @@ pub(crate) fn run(stdin: &str, limit: usize) -> Response {
             antigravity::acknowledge()
         };
     };
-    let gate = ModelGate::new(&payload.model);
+    let gate = ModelGate::new("antigravity", &payload.model);
     let feedback = || HookFeedback::antigravity(root, &payload.session);
     match payload.event {
         Event::Start => {

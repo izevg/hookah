@@ -28,12 +28,6 @@ enum Entry {
 }
 
 impl Entry {
-    fn message(&self) -> &str {
-        match self {
-            Self::Scoped { message, .. } | Self::Legacy(message) => message,
-        }
-    }
-
     fn scope(&self) -> Option<&Path> {
         match self {
             Self::Scoped { scope, .. } => Some(scope.as_path()),
@@ -70,11 +64,7 @@ impl HookFeedback {
 
     fn push_entry(&self, entry: Entry) -> io::Result<()> {
         self.update(move |state| {
-            if !state
-                .pending
-                .iter()
-                .any(|existing| existing.message() == entry.message())
-            {
+            if !state.pending.contains(&entry) {
                 state.pending.push(entry);
             }
         })
@@ -86,7 +76,8 @@ impl HookFeedback {
     }
 
     /// Consume only the queued messages whose originating scope satisfies `allow`, keeping the
-    /// remaining entries queued for later.
+    /// remaining entries queued for later. Identical messages across multiple eligible scopes are
+    /// combined into one delivered message.
     pub fn take_where(
         &self,
         mut allow: impl FnMut(Option<&Path>) -> bool,
@@ -99,7 +90,10 @@ impl HookFeedback {
             let mut remaining = Vec::new();
             for entry in std::mem::take(&mut state.pending) {
                 if allow(entry.scope()) {
-                    delivered.push(entry.into_message());
+                    let message = entry.into_message();
+                    if !delivered.contains(&message) {
+                        delivered.push(message);
+                    }
                 } else {
                     remaining.push(entry);
                 }
@@ -232,6 +226,34 @@ mod tests {
         assert_eq!(only_b, ["from-b"]);
         let remaining = feedback.take().unwrap();
         assert_eq!(remaining, ["from-a"]);
+
+        // Identical text from two distinct scopes is stored separately and delivered to the
+        // eligible scope without losing the second scope's copy.
+        let same = "hookah reformatted src/lib.rs. Re-read before editing.";
+        feedback
+            .push_scoped(same.into(), PathBuf::from("/root/a"))
+            .unwrap();
+        feedback
+            .push_scoped(same.into(), PathBuf::from("/root/b"))
+            .unwrap();
+        let delivered_b = feedback
+            .take_where(|scope| scope == Some(Path::new("/root/b")))
+            .unwrap();
+        assert_eq!(delivered_b, [same]);
+        let delivered_a = feedback
+            .take_where(|scope| scope == Some(Path::new("/root/a")))
+            .unwrap();
+        assert_eq!(delivered_a, [same]);
+
+        // When both scopes are eligible at once, identical text is combined once.
+        feedback
+            .push_scoped(same.into(), PathBuf::from("/root/a"))
+            .unwrap();
+        feedback
+            .push_scoped(same.into(), PathBuf::from("/root/b"))
+            .unwrap();
+        assert_eq!(feedback.take().unwrap(), [same]);
+
         fs::remove_dir_all(dir).unwrap();
     }
 }

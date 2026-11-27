@@ -23,9 +23,11 @@ mod runner;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+use hookah_domain::model::ModelFilter;
+
 pub use runner::ProjectEnvRunner;
 
-use expand::{Context, expand, matches};
+use expand::{Context, expand, matches, matches_subtree};
 
 /// Project config file shared with the team.
 pub const PROJECT_FILE: &str = ".hookah.toml";
@@ -33,6 +35,8 @@ pub const PROJECT_FILE: &str = ".hookah.toml";
 pub const LOCAL_FILE: &str = ".hookah.local.toml";
 /// Environment variable that names the user config file.
 pub const CONFIG_VAR: &str = "HOOKAH_CONFIG";
+/// Environment variable that overrides the configured model filter (comma-separated patterns).
+pub const MODELS_VAR: &str = "HOOKAH_MODELS";
 
 /// An environment lookup.
 pub type VarFn = Box<dyn Fn(&str) -> Option<String> + Send + Sync>;
@@ -95,6 +99,15 @@ pub struct EnvEntry {
     pub source: String,
 }
 
+/// The effective model filter and where it came from.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct ModelSetting {
+    /// Which models hooks run for.
+    pub filter: ModelFilter,
+    /// The config file, `[[project]]` section, or environment variable that set it.
+    pub source: Option<String>,
+}
+
 /// What config says about one project.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ProjectEnv {
@@ -108,6 +121,8 @@ pub struct ProjectEnv {
     pub files: Vec<PathBuf>,
     /// The effective variables, sorted by name.
     pub entries: Vec<EnvEntry>,
+    /// The effective model filter for hook invocations.
+    pub models: ModelSetting,
     /// Problems that made a file or value be skipped.
     pub warnings: Vec<String>,
 }
@@ -141,21 +156,57 @@ pub fn resolve(dir: &Path, host: &Host) -> ProjectEnv {
         ..ProjectEnv::default()
     };
     let mut layers: Vec<(String, BTreeMap<String, String>)> = Vec::new();
+    let mut user_models: Option<ModelSetting> = None;
+    let mut models: Option<ModelSetting> = None;
     for name in [PROJECT_FILE, LOCAL_FILE] {
         let path = root.join(name);
         if let Some(parsed) = load(&path, &mut out) {
-            layers.push((text(&path), parsed.env));
+            let source = text(&path);
+            if let Some(list) = parsed.models {
+                models = Some(ModelSetting {
+                    filter: ModelFilter::from_patterns(list),
+                    source: Some(source.clone()),
+                });
+            }
+            layers.push((source, parsed.env));
         }
     }
     if let Some(user) = out.user_config.clone()
         && let Some(parsed) = load(&user, &mut out)
     {
+        if let Some(list) = parsed.models {
+            user_models = Some(ModelSetting {
+                filter: ModelFilter::from_patterns(list),
+                source: Some(text(&user)),
+            });
+        }
         for section in parsed.project {
             let pattern = expand(&section.path, &ctx);
             if matches(&pattern, &root_text, host.windows) {
                 let source = format!("{} [[project]] path = {:?}", text(&user), section.path);
+                if let Some(list) = section.models {
+                    models = Some(ModelSetting {
+                        filter: ModelFilter::from_patterns(list),
+                        source: Some(source.clone()),
+                    });
+                }
                 layers.push((source, section.env));
             }
+        }
+    }
+    out.models = models.or(user_models).unwrap_or_default();
+    if let Some(raw) = (host.var)(MODELS_VAR) {
+        let parts: Vec<String> = raw
+            .split(',')
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_owned)
+            .collect();
+        if !parts.is_empty() {
+            out.models = ModelSetting {
+                filter: ModelFilter::from_patterns(parts),
+                source: Some(MODELS_VAR.to_owned()),
+            };
         }
     }
     let mut merged: BTreeMap<String, EnvEntry> = BTreeMap::new();
@@ -172,6 +223,141 @@ pub fn resolve(dir: &Path, host: &Host) -> ProjectEnv {
     }
     out.entries = merged.into_values().collect();
     out
+}
+
+/// True when `HOOKAH_MODELS` is explicitly set in the environment to allow all models (e.g. `"*"`),
+/// overriding every config file across the entire workspace.
+pub fn models_env_allows_all(host: &Host) -> bool {
+    let Some(raw) = (host.var)(MODELS_VAR) else {
+        return false;
+    };
+    let parts: Vec<String> = raw
+        .split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_owned)
+        .collect();
+    !parts.is_empty() && ModelFilter::from_patterns(parts).is_all()
+}
+
+/// True if `dir` itself, a matching `[[project]]` section of the user config, `HOOKAH_MODELS`, or
+/// any nested `.hookah.toml` / `.hookah.local.toml` below `dir` currently restricts models (i.e.
+/// resolves to something other than [`ModelFilter::All`]).
+///
+/// When `HOOKAH_MODELS` is set in the environment it overrides every config file, so
+/// `HOOKAH_MODELS="*"` immediately returns `false` without walking the tree. When the directory
+/// walk reaches its depth or entry cap without finishing, it fails safe and returns `true` so a
+/// deeply nested filtered project is never silently missed.
+pub fn has_model_filter_in_tree(dir: &Path, host: &Host) -> bool {
+    if let Some(raw) = (host.var)(MODELS_VAR) {
+        let parts: Vec<String> = raw
+            .split(',')
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_owned)
+            .collect();
+        if !parts.is_empty() {
+            return !ModelFilter::from_patterns(parts).is_all();
+        }
+    }
+    let dir = dunce::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf());
+    if !resolve(&dir, host).models.filter.is_all() {
+        return true;
+    }
+    if let Some(user) = host.user_config()
+        && let Ok(text_of) = std::fs::read_to_string(&user)
+        && let Ok(parsed) = file::parse(&text_of)
+    {
+        let (root, git_root) = roots(&dir);
+        let home = host.home();
+        let (dir_text, root_text, git_text) = (text(&dir), text(&root), text(&git_root));
+        let ctx = Context {
+            home: home.as_deref(),
+            root: &root_text,
+            git_root: &git_text,
+            var: &*host.var,
+        };
+        if parsed.project.into_iter().any(|section| {
+            let restricted = section
+                .models
+                .is_some_and(|list| !ModelFilter::from_patterns(list).is_all());
+            if !restricted {
+                return false;
+            }
+            let pattern = expand(&section.path, &ctx);
+            matches_subtree(&pattern, &dir_text, host.windows)
+        }) {
+            return true;
+        }
+    }
+    scan_nested_model_filter(&dir, host, 0, &mut 0)
+}
+
+const MAX_CONFIG_SCAN_DEPTH: usize = 16;
+const MAX_CONFIG_SCAN_DIRS: usize = 2_048;
+const SKIP_SCAN_DIRS: &[&str] = &[
+    ".git",
+    ".hg",
+    ".svn",
+    "node_modules",
+    "target",
+    "dist",
+    "build",
+    ".venv",
+    "venv",
+    "__pycache__",
+    ".tox",
+    ".next",
+    ".nuxt",
+    "vendor",
+    ".idea",
+    ".vscode",
+    ".gradle",
+    ".mvn",
+    "out",
+    "bin",
+    "obj",
+];
+
+fn scan_nested_model_filter(dir: &Path, host: &Host, depth: usize, visited: &mut usize) -> bool {
+    if depth >= MAX_CONFIG_SCAN_DEPTH || *visited >= MAX_CONFIG_SCAN_DIRS {
+        // Incomplete scan: fail safe rather than falsely claiming no nested filter exists.
+        return true;
+    }
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return false;
+    };
+    let mut subdirs = Vec::new();
+    for entry in entries.flatten() {
+        let Ok(kind) = entry.file_type() else {
+            continue;
+        };
+        let name = entry.file_name();
+        let Some(name_str) = name.to_str() else {
+            continue;
+        };
+        if depth > 0 && (name_str == PROJECT_FILE || name_str == LOCAL_FILE || name_str == ".git") {
+            // A nested config file or nested git checkout (including symlinked markers) changes
+            // config-root inheritance, so evaluate its effective filter.
+            if !resolve(dir, host).models.filter.is_all() {
+                return true;
+            }
+            continue;
+        }
+        if !kind.is_symlink() && kind.is_dir() && !SKIP_SCAN_DIRS.contains(&name_str) {
+            subdirs.push(entry.path());
+        }
+    }
+    for sub in subdirs {
+        *visited += 1;
+        if *visited > MAX_CONFIG_SCAN_DIRS {
+            return true;
+        }
+        if scan_nested_model_filter(&sub, host, depth + 1, visited) {
+            return true;
+        }
+    }
+    false
 }
 
 /// Reads one config file; records it in `out.files`, or a warning when it is unusable. A file
@@ -463,6 +649,78 @@ mod tests {
     }
 
     #[test]
+    fn models_follow_precedence_and_env_override() {
+        let t = Scratch::new();
+        let user = t.write(
+            "user.toml",
+            &format!(
+                "models = [\"global-*\"]\n[[project]]\npath = {:?}\nmodels = [\"section-*\"]\n",
+                t.0.display().to_string()
+            ),
+        );
+        let cfg = user.display().to_string();
+
+        // Only user global default (when no [[project]] matches).
+        let other = Scratch::new();
+        let resolved = resolve(&other.0, &host(&[("HOOKAH_CONFIG", &cfg)], false));
+        assert_eq!(
+            resolved.models.filter,
+            ModelFilter::Only(vec!["global-*".into()])
+        );
+        assert_eq!(resolved.models.source.as_deref(), Some(cfg.as_str()));
+
+        // .hookah.toml beats user global default.
+        other.write(PROJECT_FILE, "models = [\"project-*\"]\n");
+        let resolved = resolve(&other.0, &host(&[("HOOKAH_CONFIG", &cfg)], false));
+        assert_eq!(
+            resolved.models.filter,
+            ModelFilter::Only(vec!["project-*".into()])
+        );
+        assert!(resolved.models.source.unwrap().ends_with(PROJECT_FILE));
+
+        // .hookah.local.toml beats .hookah.toml (and "*" resets to All).
+        other.write(LOCAL_FILE, "models = [\"*\"]\n");
+        let resolved = resolve(&other.0, &host(&[("HOOKAH_CONFIG", &cfg)], false));
+        assert_eq!(resolved.models.filter, ModelFilter::All);
+        assert!(resolved.models.source.unwrap().ends_with(LOCAL_FILE));
+
+        // Matching [[project]] section beats .hookah.local.toml.
+        t.write(LOCAL_FILE, "models = [\"local-*\"]\n");
+        let resolved = resolve(&t.0, &host(&[("HOOKAH_CONFIG", &cfg)], false));
+        assert_eq!(
+            resolved.models.filter,
+            ModelFilter::Only(vec!["section-*".into()])
+        );
+        assert!(resolved.models.source.unwrap().contains("[[project]]"));
+
+        // HOOKAH_MODELS beats every config file; blank HOOKAH_MODELS is ignored.
+        let resolved = resolve(
+            &t.0,
+            &host(
+                &[
+                    ("HOOKAH_CONFIG", &cfg),
+                    (MODELS_VAR, " claude-sonnet-* , gpt-5 "),
+                ],
+                false,
+            ),
+        );
+        assert_eq!(
+            resolved.models.filter,
+            ModelFilter::Only(vec!["claude-sonnet-*".into(), "gpt-5".into()])
+        );
+        assert_eq!(resolved.models.source.as_deref(), Some(MODELS_VAR));
+
+        let blank = resolve(
+            &t.0,
+            &host(&[("HOOKAH_CONFIG", &cfg), (MODELS_VAR, " , ")], false),
+        );
+        assert_eq!(
+            blank.models.filter,
+            ModelFilter::Only(vec!["section-*".into()])
+        );
+    }
+
+    #[test]
     fn an_unreadable_file_is_a_warning_not_a_failure() {
         let t = Scratch::new();
         fs::create_dir_all(t.0.join(PROJECT_FILE)).unwrap();
@@ -470,5 +728,34 @@ mod tests {
         let env = resolve(&t.0, &host(&[], false));
         assert_eq!(env.warnings.len(), 1, "{:?}", env.warnings);
         assert!(env.warnings[0].contains("cannot read"));
+    }
+
+    #[test]
+    fn tree_filter_detection_handles_nested_git_roots_and_git_root_placeholders() {
+        let t = Scratch::new();
+        fs::create_dir_all(t.0.join(".git")).unwrap();
+        fs::create_dir_all(t.0.join("frontend")).unwrap();
+        fs::create_dir_all(t.0.join("backend")).unwrap();
+
+        // A [[project]] with `{git_root}/backend` does NOT match sibling `frontend`.
+        let cfg_placeholder = t.write(
+            "user-placeholder.toml",
+            "[[project]]\npath = \"{git_root}/backend\"\nmodels = [\"claude-sonnet-*\"]\n",
+        );
+        let h = host(
+            &[("HOOKAH_CONFIG", &cfg_placeholder.to_string_lossy())],
+            false,
+        );
+        assert!(!has_model_filter_in_tree(&t.0.join("frontend"), &h));
+        assert!(has_model_filter_in_tree(&t.0.join("backend"), &h));
+
+        // Unrestricted root (`models = ["*"]`) with a nested git checkout 4 levels down that
+        // inherits the user's top-level `models` filter MUST be detected.
+        t.write(PROJECT_FILE, "models = [\"*\"]\n");
+        let nested_git = t.0.join("a/b/c/d");
+        fs::create_dir_all(nested_git.join(".git")).unwrap();
+        let cfg_global = t.write("user-global.toml", "models = [\"gemini-*\"]\n");
+        let h_global = host(&[("HOOKAH_CONFIG", &cfg_global.to_string_lossy())], false);
+        assert!(has_model_filter_in_tree(&t.0, &h_global));
     }
 }

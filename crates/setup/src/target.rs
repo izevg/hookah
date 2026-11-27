@@ -50,6 +50,7 @@ const fn hook(event: &'static str, matcher: Option<&'static str>, timeout: i64) 
 
 const CLAUDE: &[HookSpec] = &[
     hook("SessionStart", Some("startup|resume"), 30),
+    hook("PostModelSwitch", None, 30),
     hook("PostToolUse", Some("Edit|Write|MultiEdit|NotebookEdit"), 30),
     hook("Stop", None, 120),
     hook("SubagentStop", None, 120),
@@ -378,7 +379,7 @@ mod tests {
                 "openclaw"
             ]
         );
-        assert_eq!(Target::Claude.hooks().len(), 4);
+        assert_eq!(Target::Claude.hooks().len(), 5);
         assert_eq!(Target::Codex.hooks().len(), 3);
         assert_eq!(Target::Qoder.hooks().len(), 3);
         assert_eq!(Target::Zcode.hooks().len(), 3);

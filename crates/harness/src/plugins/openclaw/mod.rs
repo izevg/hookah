@@ -10,7 +10,7 @@
 use hookah_application::Outcome;
 
 use crate::plugins::opencode::{payload, response};
-use crate::protocol::{Harness, Invocation, PayloadError, Response};
+use crate::protocol::{Harness, Invocation, Parsed, PayloadError, Response};
 
 /// The plugin entry point, printed by `hookah plugin openclaw`.
 pub const PLUGIN_SOURCE: &str = include_str!("plugin.js");
@@ -23,8 +23,8 @@ pub const MANIFEST: &str = include_str!("openclaw.plugin.json");
 pub struct Openclaw;
 
 impl Harness for Openclaw {
-    fn parse(&self, stdin: &str) -> Result<Invocation, PayloadError> {
-        payload::parse_for(stdin, "openclaw")
+    fn parse_event(&self, stdin: &str) -> Result<Parsed, PayloadError> {
+        payload::parse_event_for(stdin, "openclaw")
     }
 
     fn render(&self, invocation: &Invocation, outcome: &Outcome) -> Response {

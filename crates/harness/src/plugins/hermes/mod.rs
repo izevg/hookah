@@ -11,7 +11,7 @@ pub mod response;
 
 use hookah_application::Outcome;
 
-use crate::protocol::{Harness, Invocation, PayloadError, Response};
+use crate::protocol::{Harness, Invocation, Parsed, PayloadError, Response};
 
 /// The plugin source, installed as `__init__.py` and printed by `hookah plugin hermes`.
 pub const PLUGIN_SOURCE: &str = include_str!("plugin.py");
@@ -23,6 +23,7 @@ version: \"1.0\"
 description: Runs the project's own format, lint, and test checks on what the agent edits.
 provides_hooks:
   - on_session_start
+  - pre_llm_call
   - transform_tool_result
   - pre_verify
 ";
@@ -32,8 +33,8 @@ provides_hooks:
 pub struct Hermes;
 
 impl Harness for Hermes {
-    fn parse(&self, stdin: &str) -> Result<Invocation, PayloadError> {
-        payload::parse(stdin)
+    fn parse_event(&self, stdin: &str) -> Result<Parsed, PayloadError> {
+        payload::parse_event(stdin)
     }
 
     fn render(&self, invocation: &Invocation, outcome: &Outcome) -> Response {

@@ -64,7 +64,12 @@ impl CachePurge {
     /// Deletes [`CachePurge::paths`], then a shared `base` that is now empty.
     pub fn run(&self) -> std::io::Result<()> {
         for path in &self.paths {
-            fs::remove_dir_all(path)?;
+            let meta = fs::symlink_metadata(path)?;
+            if meta.file_type().is_dir() {
+                fs::remove_dir_all(path)?;
+            } else if meta.file_type().is_file() {
+                fs::remove_file(path)?;
+            }
         }
         if self.shared && !self.paths.is_empty() {
             // Not empty means the user keeps something there; that is fine.
@@ -85,16 +90,21 @@ pub fn cache_purge() -> Option<CachePurge> {
 
 fn purge_in(base: PathBuf, shared: bool) -> CachePurge {
     let paths = if shared {
-        let mut dirs: Vec<PathBuf> = fs::read_dir(&base)
+        let mut items: Vec<PathBuf> = fs::read_dir(&base)
             .into_iter()
             .flatten()
             .flatten()
-            .filter(|entry| is_project_dir_name(&entry.file_name()))
+            .filter(|entry| {
+                let Ok(kind) = entry.file_type() else {
+                    return false;
+                };
+                (kind.is_dir() && is_project_dir_name(&entry.file_name()))
+                    || (kind.is_file() && is_session_model_file(&entry.file_name()))
+            })
             .map(|entry| entry.path())
-            .filter(|path| path.is_dir())
             .collect();
-        dirs.sort();
-        dirs
+        items.sort();
+        items
     } else {
         vec![base.clone()]
     };
@@ -105,8 +115,7 @@ fn purge_in(base: PathBuf, shared: bool) -> CachePurge {
     }
 }
 
-/// True for the 16 lowercase hex digits of [`root_hash`], or the name of the updater's directory:
-/// the directories hookah itself creates inside a user-chosen cache directory.
+/// True for the 16 lowercase hex digits of [`root_hash`], or the updater's directory.
 fn is_project_dir_name(name: &std::ffi::OsStr) -> bool {
     name.to_str().is_some_and(|n| {
         n == UPDATE_DIR
@@ -114,8 +123,22 @@ fn is_project_dir_name(name: &std::ffi::OsStr) -> bool {
     })
 }
 
+/// True for `session-model-<16 lowercase hex digits>.json`, the flat filenames written directly
+/// inside `<hookah cache>/` by `session_model` (with no intermediate directory to swap for a
+/// symlink between purge planning and deletion).
+fn is_session_model_file(name: &std::ffi::OsStr) -> bool {
+    name.to_str()
+        .and_then(|n| n.strip_prefix(SESSION_MODEL_PREFIX))
+        .and_then(|n| n.strip_suffix(".json"))
+        .is_some_and(|stem| {
+            stem.len() == 16 && stem.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+        })
+}
+
 /// The updater's directory inside the hookah cache.
 const UPDATE_DIR: &str = "update";
+/// Filename prefix of per-session model cache files stored directly in `<hookah cache>/`.
+pub(crate) const SESSION_MODEL_PREFIX: &str = "session-model-";
 
 /// The directory where the updater keeps its state and lock: `<hookah cache>/update`; created
 /// when missing.
@@ -129,6 +152,18 @@ pub fn update_cache_dir() -> Result<PathBuf, PortError> {
 /// `<base>/update`, created private to the user.
 fn update_dir_in(base: &Path) -> Result<PathBuf, PortError> {
     private_dir(&base.join(UPDATE_DIR))
+}
+
+/// Side-effect-free path of `<hookah cache>` for reading session-model files (creates nothing).
+pub fn sessions_cache_path() -> Result<PathBuf, PortError> {
+    cache_base(|key| std::env::var_os(key), Platform::current()).ok_or_else(|| {
+        PortError::new("no cache directory: no home or local application data directory is set")
+    })
+}
+
+/// `<hookah cache>`, created private to the user when missing for writing session-model files.
+pub fn sessions_cache_dir() -> Result<PathBuf, PortError> {
+    private_dir(&sessions_cache_path()?)
 }
 
 /// The cache directory of the project at `project_root`; created when missing.
@@ -410,6 +445,14 @@ mod tests {
             fs::create_dir_all(base.join(name)).unwrap();
         }
         fs::create_dir_all(base.join("update")).unwrap();
+        fs::create_dir_all(base.join("sessions")).unwrap();
+        fs::write(base.join("sessions/notes.txt"), "user data").unwrap();
+        fs::write(
+            base.join("session-model-0123456789abcdef.json"),
+            r#"{"model":"gpt-5"}"#,
+        )
+        .unwrap();
+        fs::write(base.join("session-model-keep.json"), "user file").unwrap();
         fs::write(base.join("aaaaaaaaaaaaaaaa"), "a file named like a project").unwrap();
         fs::write(base.join("notes.txt"), "mine").unwrap();
         let purge = purge_in(base.clone(), true);
@@ -418,11 +461,15 @@ mod tests {
             [
                 base.join("0123456789abcdef"),
                 base.join("fedcba9876543210"),
+                base.join("session-model-0123456789abcdef.json"),
                 base.join("update")
             ]
         );
         purge.run().unwrap();
         assert!(base.join("notes.txt").is_file());
+        assert!(base.join("sessions/notes.txt").is_file());
+        assert!(base.join("session-model-keep.json").is_file());
+        assert!(!base.join("session-model-0123456789abcdef.json").exists());
         assert!(base.join("0123456789abcde").is_dir());
         assert!(base.join("0123456789abcdeg").is_dir());
         assert!(base.join("aaaaaaaaaaaaaaaa").is_file());
@@ -454,6 +501,35 @@ mod tests {
             shared: false,
         };
         assert!(purge.run().is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn shared_purge_does_not_follow_symlinks_even_if_swapped_after_planning() {
+        let base = scratch("symlink-base");
+        let outside = scratch("symlink-outside");
+        let target_file = outside.join("keep.json");
+        fs::write(&target_file, r#"{"model":"keep"}"#).unwrap();
+
+        // A symlinked file named like a session-model file is skipped during planning.
+        let link = base.join("session-model-0123456789abcdef.json");
+        std::os::unix::fs::symlink(&target_file, &link).unwrap();
+        let purge = purge_in(base.clone(), true);
+        assert!(purge.paths.is_empty(), "{:?}", purge.paths);
+
+        // Even if a real file is swapped for a symlink between planning and run(), the target
+        // outside the cache is never deleted.
+        fs::remove_file(&link).unwrap();
+        fs::write(&link, r#"{"model":"temp"}"#).unwrap();
+        let planned = purge_in(base.clone(), true);
+        assert_eq!(planned.paths, std::slice::from_ref(&link));
+        fs::remove_file(&link).unwrap();
+        std::os::unix::fs::symlink(&target_file, &link).unwrap();
+        planned.run().unwrap();
+        assert!(target_file.is_file());
+
+        let _ = fs::remove_dir_all(&base);
+        let _ = fs::remove_dir_all(&outside);
     }
 
     #[test]

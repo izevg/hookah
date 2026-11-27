@@ -15,8 +15,31 @@ pub struct HookFeedback {
 
 #[derive(Default, PartialEq, Eq, Deserialize, Serialize)]
 struct State {
-    pending: Vec<String>,
+    pending: Vec<Entry>,
     continued_for: Option<u64>,
+}
+
+/// A queued edit feedback message with the optional config directory that produced it.
+#[derive(PartialEq, Eq, Deserialize, Serialize)]
+#[serde(untagged)]
+enum Entry {
+    Scoped { message: String, scope: PathBuf },
+    Legacy(String),
+}
+
+impl Entry {
+    fn scope(&self) -> Option<&Path> {
+        match self {
+            Self::Scoped { scope, .. } => Some(scope.as_path()),
+            Self::Legacy(_) => None,
+        }
+    }
+
+    fn into_message(self) -> String {
+        match self {
+            Self::Scoped { message, .. } | Self::Legacy(message) => message,
+        }
+    }
 }
 
 impl HookFeedback {
@@ -31,19 +54,53 @@ impl HookFeedback {
 
     /// Queue actionable feedback once per batch, even when several edits happen concurrently.
     pub fn push(&self, message: String) -> io::Result<()> {
+        self.push_entry(Entry::Legacy(message))
+    }
+
+    /// Queue actionable feedback tagged with the config directory that admitted the edit.
+    pub fn push_scoped(&self, message: String, scope: PathBuf) -> io::Result<()> {
+        self.push_entry(Entry::Scoped { message, scope })
+    }
+
+    fn push_entry(&self, entry: Entry) -> io::Result<()> {
         self.update(move |state| {
-            if !state.pending.contains(&message) {
-                state.pending.push(message);
+            if !state.pending.contains(&entry) {
+                state.pending.push(entry);
             }
         })
     }
 
-    /// Consume the messages that are ready for this model call.
+    /// Consume all queued messages that are ready for this model call.
     pub fn take(&self) -> io::Result<Vec<String>> {
+        self.take_where(|_| true)
+    }
+
+    /// Consume only the queued messages whose originating scope satisfies `allow`, keeping the
+    /// remaining entries queued for later. Identical messages across multiple eligible scopes are
+    /// combined into one delivered message.
+    pub fn take_where(
+        &self,
+        mut allow: impl FnMut(Option<&Path>) -> bool,
+    ) -> io::Result<Vec<String>> {
         if !self.path.try_exists()? {
             return Ok(Vec::new());
         }
-        self.update(|state| std::mem::take(&mut state.pending))
+        self.update(|state| {
+            let mut delivered = Vec::new();
+            let mut remaining = Vec::new();
+            for entry in std::mem::take(&mut state.pending) {
+                if allow(entry.scope()) {
+                    let message = entry.into_message();
+                    if !delivered.contains(&message) {
+                        delivered.push(message);
+                    }
+                } else {
+                    remaining.push(entry);
+                }
+            }
+            state.pending = remaining;
+            delivered
+        })
     }
 
     /// Return true once per prompt with unresolved findings. A clean stop resets the guard.
@@ -146,6 +203,57 @@ mod tests {
         messages.sort_unstable();
         assert_eq!(messages, ["a", "b"]);
         assert!(feedback.take().unwrap().is_empty());
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn scoped_entries_deliver_only_matching_scopes_and_preserve_others() {
+        let dir =
+            std::env::temp_dir().join(format!("hookah-scoped-feedback-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let feedback = HookFeedback {
+            path: dir.join("messages.json"),
+        };
+        feedback
+            .push_scoped("from-a".into(), PathBuf::from("/root/a"))
+            .unwrap();
+        feedback
+            .push_scoped("from-b".into(), PathBuf::from("/root/b"))
+            .unwrap();
+        let only_b = feedback
+            .take_where(|scope| scope == Some(Path::new("/root/b")))
+            .unwrap();
+        assert_eq!(only_b, ["from-b"]);
+        let remaining = feedback.take().unwrap();
+        assert_eq!(remaining, ["from-a"]);
+
+        // Identical text from two distinct scopes is stored separately and delivered to the
+        // eligible scope without losing the second scope's copy.
+        let same = "hookah reformatted src/lib.rs. Re-read before editing.";
+        feedback
+            .push_scoped(same.into(), PathBuf::from("/root/a"))
+            .unwrap();
+        feedback
+            .push_scoped(same.into(), PathBuf::from("/root/b"))
+            .unwrap();
+        let delivered_b = feedback
+            .take_where(|scope| scope == Some(Path::new("/root/b")))
+            .unwrap();
+        assert_eq!(delivered_b, [same]);
+        let delivered_a = feedback
+            .take_where(|scope| scope == Some(Path::new("/root/a")))
+            .unwrap();
+        assert_eq!(delivered_a, [same]);
+
+        // When both scopes are eligible at once, identical text is combined once.
+        feedback
+            .push_scoped(same.into(), PathBuf::from("/root/a"))
+            .unwrap();
+        feedback
+            .push_scoped(same.into(), PathBuf::from("/root/b"))
+            .unwrap();
+        assert_eq!(feedback.take().unwrap(), [same]);
+
         fs::remove_dir_all(dir).unwrap();
     }
 }

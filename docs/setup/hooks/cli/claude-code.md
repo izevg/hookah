@@ -7,6 +7,8 @@ Command hooks. Claude Code runs `hookah hook claude` and sends a JSON payload on
 - `SessionStart` with matcher `startup|resume` records the problems the project already has, in
   the background, so later reports show only what the agent introduced (the baseline; see
   [architecture](../../../architecture.md#baseline)). The hook returns at once and prints nothing.
+- `PostModelSwitch` updates the session's active model when `models` filtering is configured so
+  mid-session switches take effect before the next assistant turn is written to the transcript.
 - `PostToolUse` with matcher `Edit|Write|MultiEdit|NotebookEdit` runs the edit phase (format and
   lint of the edited file).
 - `Stop` and `SubagentStop` run the stop phase (checks over the files changed in the session,
@@ -61,6 +63,13 @@ Put `hookah` on `PATH`, then add this to `.claude/settings.json` in the project 
     "SessionStart": [
       {
         "matcher": "startup|resume",
+        "hooks": [
+          { "type": "command", "command": "hookah hook claude", "timeout": 30 }
+        ]
+      }
+    ],
+    "PostModelSwitch": [
+      {
         "hooks": [
           { "type": "command", "command": "hookah hook claude", "timeout": 30 }
         ]

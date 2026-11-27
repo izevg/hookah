@@ -16,13 +16,18 @@ use std::path::PathBuf;
 use hookah_application::EditRequest;
 use serde::Deserialize;
 
-use crate::protocol::{Invocation, PayloadError, display_root, resolve_path, start_invocation};
+use crate::protocol::{
+    Invocation, ModelHint, Parsed, PayloadError, clean_model, clean_transcript, display_root,
+    resolve_path, start_invocation,
+};
 
 #[derive(Deserialize)]
 struct Payload {
     hook_event_name: Option<String>,
     session_id: Option<String>,
     cwd: Option<PathBuf>,
+    model: Option<String>,
+    transcript_path: Option<PathBuf>,
     tool_name: Option<String>,
     tool_input: Option<ToolInput>,
 }
@@ -34,27 +39,36 @@ struct ToolInput {
 
 /// Parses a Kimi Code hook payload.
 pub fn parse(stdin: &str) -> Result<Invocation, PayloadError> {
+    parse_event(stdin).map(|parsed| parsed.invocation)
+}
+
+/// Parses a Kimi Code hook payload along with its model metadata.
+pub fn parse_event(stdin: &str) -> Result<Parsed, PayloadError> {
     let p: Payload = serde_json::from_str(stdin).map_err(|e| PayloadError(e.to_string()))?;
-    if p.hook_event_name.as_deref() == Some("SessionStart") {
-        return Ok(start_invocation(p.cwd, p.session_id));
-    }
-    if p.hook_event_name.as_deref() != Some("PostToolUse") {
-        return Ok(Invocation::Ignore);
-    }
-    if !matches!(
-        p.tool_name.as_deref(),
-        Some("Write" | "Edit" | "WriteFile" | "StrReplaceFile")
-    ) {
-        return Ok(Invocation::Ignore);
-    }
-    let Some(path) = p.tool_input.as_ref().and_then(|i| i.path.as_ref()) else {
-        return Ok(Invocation::Ignore);
+    let model = ModelHint {
+        model: clean_model(p.model.clone()),
+        transcript: clean_transcript(p.transcript_path.clone(), p.cwd.as_deref()),
+        session: p.session_id.clone().filter(|s| !s.is_empty()),
+        cwd: p.cwd.clone().filter(|c| c.is_absolute()),
+        ..ModelHint::default()
     };
-    let file = resolve_path(path, p.cwd.as_deref())?;
-    let root = display_root(&file, p.cwd.as_deref());
-    Ok(Invocation::Edit(
-        EditRequest::new(file, root).with_session(p.session_id),
-    ))
+    let invocation = if p.hook_event_name.as_deref() == Some("SessionStart") {
+        start_invocation(p.cwd, p.session_id)
+    } else if p.hook_event_name.as_deref() != Some("PostToolUse")
+        || !matches!(
+            p.tool_name.as_deref(),
+            Some("Write" | "Edit" | "WriteFile" | "StrReplaceFile")
+        )
+    {
+        Invocation::Ignore
+    } else if let Some(path) = p.tool_input.as_ref().and_then(|i| i.path.as_ref()) {
+        let file = resolve_path(path, p.cwd.as_deref())?;
+        let root = display_root(&file, p.cwd.as_deref());
+        Invocation::Edit(EditRequest::new(file, root).with_session(p.session_id))
+    } else {
+        Invocation::Ignore
+    };
+    Ok(Parsed { invocation, model })
 }
 
 #[cfg(test)]

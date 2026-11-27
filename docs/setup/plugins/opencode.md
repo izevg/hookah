@@ -35,7 +35,7 @@ The plugin and the binary exchange one JSON document each way, versioned with `"
 
 ```json
 {"v": 1, "event": "edit", "cwd": "/abs/project", "files": ["src/a.ts"],
- "session_id": "ses_...", "already_continuing": false}
+ "session_id": "ses_...", "model": "anthropic/claude-sonnet-4-6", "already_continuing": false}
 ```
 
 ```json

@@ -188,6 +188,7 @@ mod tests {
             got,
             json!({"hooks": {
                 "SessionStart": [{"matcher": "startup|resume", "hooks": hook(30)}],
+                "PostModelSwitch": [{"hooks": hook(30)}],
                 "PostToolUse": [{"matcher": "Edit|Write|MultiEdit|NotebookEdit", "hooks": hook(30)}],
                 "Stop": [{"hooks": hook(120)}],
                 "SubagentStop": [{"hooks": hook(120)}],

@@ -16,13 +16,20 @@ use std::path::{Path, PathBuf};
 use hookah_application::{EditRequest, StopRequest};
 use serde::Deserialize;
 
-use crate::protocol::{Invocation, PayloadError, start_invocation};
+use crate::protocol::{
+    Invocation, ModelHint, Parsed, PayloadError, clean_model, clean_transcript, start_invocation,
+};
 
 #[derive(Deserialize)]
 struct Payload {
     hook_event_name: Option<String>,
     session_id: Option<String>,
     cwd: Option<PathBuf>,
+    model: Option<String>,
+    to_model: Option<String>,
+    transcript_path: Option<PathBuf>,
+    agent_id: Option<String>,
+    agent_transcript_path: Option<PathBuf>,
     tool_name: Option<String>,
     tool_input: Option<ToolInput>,
     stop_hook_active: Option<bool>,
@@ -36,22 +43,73 @@ struct ToolInput {
 
 /// Parses a Claude Code hook payload.
 pub fn parse(stdin: &str) -> Result<Invocation, PayloadError> {
+    parse_event(stdin).map(|parsed| parsed.invocation)
+}
+
+/// Parses a Claude Code hook payload along with its model metadata.
+pub fn parse_event(stdin: &str) -> Result<Parsed, PayloadError> {
     let p: Payload = serde_json::from_str(stdin).map_err(|e| PayloadError(e.to_string()))?;
-    match p.hook_event_name.as_deref() {
-        Some("PostToolUse") => edit(&p),
-        Some("SessionStart") => Ok(start_invocation(p.cwd, p.session_id)),
+    let is_subagent = p.hook_event_name.as_deref() == Some("SubagentStop")
+        || p.agent_transcript_path.is_some()
+        || p.agent_id.as_deref().is_some_and(|id| !id.is_empty());
+    let transcript_raw = if is_subagent {
+        p.agent_transcript_path.clone().or_else(|| {
+            subagent_transcript_path(p.transcript_path.as_deref(), p.agent_id.as_deref())
+        })
+    } else {
+        p.transcript_path.clone()
+    };
+    let model_switch = p.hook_event_name.as_deref() == Some("PostModelSwitch");
+    let direct_model = if model_switch {
+        clean_model(p.to_model.clone()).or_else(|| clean_model(p.model.clone()))
+    } else {
+        clean_model(p.model.clone())
+    };
+    let model = ModelHint {
+        model: direct_model,
+        transcript: clean_transcript(transcript_raw, p.cwd.as_deref()),
+        session: p.session_id.clone().filter(|s| !s.is_empty()),
+        cwd: p.cwd.clone().filter(|c| c.is_absolute()),
+        is_subagent,
+        model_switch,
+    };
+    let invocation = match p.hook_event_name.as_deref() {
+        Some("PostToolUse") => edit(&p)?,
+        Some("SessionStart") => start_invocation(p.cwd, p.session_id),
         Some("Stop" | "SubagentStop") => {
             let root = p
                 .cwd
                 .filter(|c| c.is_absolute())
                 .ok_or_else(|| PayloadError("stop event without an absolute cwd".into()))?;
-            Ok(Invocation::Stop {
+            Invocation::Stop {
                 request: StopRequest::new(root).with_session(p.session_id),
                 already_continuing: p.stop_hook_active.unwrap_or(false),
-            })
+            }
         }
-        _ => Ok(Invocation::Ignore),
-    }
+        _ => Invocation::Ignore,
+    };
+    Ok(Parsed { invocation, model })
+}
+
+/// Derives Claude Code's documented subagent transcript path
+/// (`<project>/<session>/subagents/agent-<agent_id>.jsonl`) from the parent session transcript
+/// (`<project>/<session>.jsonl`). Never falls back to the parent session's transcript.
+fn subagent_transcript_path(
+    parent_transcript: Option<&Path>,
+    agent_id: Option<&str>,
+) -> Option<PathBuf> {
+    let parent = parent_transcript.filter(|p| !p.as_os_str().is_empty())?;
+    let id = agent_id.map(str::trim).filter(|id| {
+        !id.is_empty() && !id.contains('/') && !id.contains('\\') && !id.contains("..")
+    })?;
+    let stem = parent.file_stem()?;
+    let dir = parent.parent()?;
+    let file = if id.starts_with("agent-") {
+        format!("{id}.jsonl")
+    } else {
+        format!("agent-{id}.jsonl")
+    };
+    Some(dir.join(stem).join("subagents").join(file))
 }
 
 fn edit(p: &Payload) -> Result<Invocation, PayloadError> {
@@ -232,5 +290,69 @@ mod tests {
             panic!("expected edit");
         };
         assert_eq!(r.session.as_deref(), Some("abc123"));
+    }
+
+    #[test]
+    fn extracts_model_and_transcript_hints_with_subagent_transcript_priority() {
+        let start = os_json(
+            r#"{"session_id":"s","cwd":"/w","hook_event_name":"SessionStart",
+            "model":"claude-sonnet-4-6","transcript_path":"/w/t.jsonl"}"#,
+        );
+        let parsed = parse_event(&start).unwrap();
+        assert_eq!(parsed.model.model.as_deref(), Some("claude-sonnet-4-6"));
+        assert_eq!(parsed.model.transcript, Some(abs("/w/t.jsonl")));
+
+        let sub = os_json(
+            r#"{"session_id":"s","cwd":"/w","hook_event_name":"SubagentStop",
+            "transcript_path":"/w/main.jsonl","agent_transcript_path":"/w/sub.jsonl"}"#,
+        );
+        let parsed = parse_event(&sub).unwrap();
+        assert_eq!(parsed.model.model, None);
+        assert_eq!(parsed.model.transcript, Some(abs("/w/sub.jsonl")));
+        assert!(parsed.model.is_subagent);
+
+        // Subagent PostToolUse without agent_transcript_path resolves Claude's subagent transcript
+        // layout from agent_id and never falls back to the parent transcript.
+        let sub_edit = os_json(
+            r#"{"session_id":"s","cwd":"/w","hook_event_name":"PostToolUse",
+            "agent_id":"a1b2c3","transcript_path":"/w/main.jsonl",
+            "tool_name":"Edit","tool_input":{"file_path":"/w/a.rs"}}"#,
+        );
+        let parsed = parse_event(&sub_edit).unwrap();
+        assert!(parsed.model.is_subagent);
+        assert_eq!(
+            parsed.model.transcript,
+            Some(abs("/w/main/subagents/agent-a1b2c3.jsonl"))
+        );
+
+        // SubagentStop with neither agent_transcript_path nor agent_id leaves transcript unknown.
+        let sub_unknown = os_json(
+            r#"{"session_id":"s","cwd":"/w","hook_event_name":"SubagentStop",
+            "transcript_path":"/w/main.jsonl"}"#,
+        );
+        let parsed = parse_event(&sub_unknown).unwrap();
+        assert!(parsed.model.is_subagent);
+        assert_eq!(parsed.model.transcript, None);
+
+        let sw = os_json(
+            r#"{"session_id":"s","cwd":"/w","hook_event_name":"PostModelSwitch",
+            "from_model":"claude-sonnet-4-6","to_model":"claude-opus-4-6",
+            "transcript_path":"/w/t.jsonl"}"#,
+        );
+        let parsed = parse_event(&sw).unwrap();
+        assert_eq!(parsed.invocation, Invocation::Ignore);
+        assert_eq!(parsed.model.model.as_deref(), Some("claude-opus-4-6"));
+        assert_eq!(parsed.model.transcript, Some(abs("/w/t.jsonl")));
+        assert!(parsed.model.model_switch);
+        assert!(!parsed.model.is_subagent);
+
+        // Fallback to `model` if `to_model` is omitted.
+        let sw_fallback = os_json(
+            r#"{"session_id":"s","cwd":"/w","hook_event_name":"PostModelSwitch",
+            "model":"claude-haiku-4-5"}"#,
+        );
+        let parsed = parse_event(&sw_fallback).unwrap();
+        assert_eq!(parsed.model.model.as_deref(), Some("claude-haiku-4-5"));
+        assert!(parsed.model.model_switch);
     }
 }

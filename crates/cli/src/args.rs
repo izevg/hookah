@@ -124,6 +124,17 @@ pub enum Command {
         /// File or directory to inspect; defaults to the current directory.
         #[arg(default_value = ".")]
         path: PathBuf,
+
+        /// Check whether a model identifier would be allowed or skipped by the effective `models`
+        /// filter. Pass `""` to test a hook that reports no model.
+        #[arg(long, value_name = "MODEL", conflicts_with = "hook")]
+        model: Option<String>,
+
+        /// Read a hook payload from stdin for this harness, report the extracted model identifier
+        /// and its source, and explain whether the effective `models` filter allows or skips it.
+        /// Runs no checks and writes nothing.
+        #[arg(long, value_enum, value_name = "HARNESS", conflicts_with = "model")]
+        hook: Option<HarnessKind>,
     },
     /// Print the project and toolchain found for a path.
     Detect {
@@ -557,5 +568,31 @@ mod tests {
                 None => assert_eq!(name, "orca"),
             }
         }
+    }
+
+    #[test]
+    fn parses_config_model_and_hook_diagnostics() {
+        let cli = Cli::try_parse_from(["hookah", "config", "sub", "--model", "gpt-5"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Command::Config {
+                ref path,
+                model: Some(ref m),
+                hook: None
+            } if path == std::path::Path::new("sub") && m == "gpt-5"
+        ));
+        let cli = Cli::try_parse_from(["hookah", "config", "--hook", "antigravity"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Command::Config {
+                model: None,
+                hook: Some(HarnessKind::Antigravity),
+                ..
+            }
+        ));
+        assert!(
+            Cli::try_parse_from(["hookah", "config", "--model", "gpt-5", "--hook", "claude"])
+                .is_err()
+        );
     }
 }

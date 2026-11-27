@@ -4,7 +4,7 @@ use hookah_application::EditRequest;
 use hookah_domain::path::normalize;
 use serde::Deserialize;
 
-use crate::protocol::{PayloadError, canonical_dir};
+use crate::protocol::{ModelHint, PayloadError, canonical_dir, clean_model, clean_transcript};
 
 /// The file-writing tools whose completed edit should be checked.
 pub const EDIT_TOOLS: &str =
@@ -33,6 +33,8 @@ pub struct Payload {
     pub roots: Vec<PathBuf>,
     /// User input associated with the current turn, used to bound continuations.
     pub prompt: String,
+    /// Model metadata carried by the payload, if any.
+    pub model: ModelHint,
     /// What this hook should do.
     pub event: Event,
 }
@@ -43,6 +45,9 @@ struct Input {
     conversation_id: Option<String>,
     #[serde(default)]
     workspace_paths: Vec<PathBuf>,
+    model_name: Option<String>,
+    model: Option<String>,
+    transcript_path: Option<PathBuf>,
     last_user_input: Option<String>,
     tool_call: Option<ToolCall>,
     step_idx: Option<usize>,
@@ -106,10 +111,18 @@ pub fn parse(stdin: &str) -> Result<Payload, PayloadError> {
     } else {
         Event::Start
     };
+    let model = ModelHint {
+        model: clean_model(input.model_name).or_else(|| clean_model(input.model)),
+        transcript: clean_transcript(input.transcript_path, roots.first().map(PathBuf::as_path)),
+        session: (!session.is_empty()).then(|| session.clone()),
+        cwd: roots.first().cloned(),
+        ..ModelHint::default()
+    };
     Ok(Payload {
         session,
         roots,
         prompt: input.last_user_input.unwrap_or_default(),
+        model,
         event,
     })
 }
@@ -257,5 +270,26 @@ mod tests {
         ] {
             assert_eq!(decode(fields).event, Event::Stop { eligible });
         }
+    }
+
+    #[test]
+    fn reads_native_model_name_field_with_fallback_to_model() {
+        let start = decode(r#""modelName":"gemini-4-neon-low""#);
+        assert_eq!(start.event, Event::Start);
+        assert_eq!(start.model.model.as_deref(), Some("gemini-4-neon-low"));
+
+        let pre = decode(r#""invocationNum":1,"modelName":"gemini-4-neon-low""#);
+        assert_eq!(pre.event, Event::BeforeModel);
+        assert_eq!(pre.model.model.as_deref(), Some("gemini-4-neon-low"));
+
+        let stop = decode(
+            r#""executionNum":0,"fullyIdle":true,"terminationReason":"model_stop","modelName":"gemini-4-neon-low""#,
+        );
+        assert_eq!(stop.event, Event::Stop { eligible: true });
+        assert_eq!(stop.model.model.as_deref(), Some("gemini-4-neon-low"));
+
+        // Blank modelName falls back to `model` when present.
+        let fallback = decode(r#""modelName":"  ","model":"gemini-4-pro""#);
+        assert_eq!(fallback.model.model.as_deref(), Some("gemini-4-pro"));
     }
 }

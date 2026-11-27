@@ -18,6 +18,8 @@
 //! lacks become non-blocking `MissingTool` notices. Finding paths are rendered relative to the
 //! request's display root, so projects in a monorepo stay distinguishable.
 
+use std::path::Path;
+
 use hookah_domain::finding::Severity;
 use hookah_domain::light::{Admission, Budgets};
 use hookah_domain::project::locate_project;
@@ -30,12 +32,18 @@ use super::request::{Outcome, RunLog, StopRequest};
 use super::status::record;
 use crate::ports::Ports;
 
+struct LocatedChanges {
+    located: Vec<(hookah_domain::project::Project, std::path::PathBuf)>,
+    errors: Vec<String>,
+}
+
 /// Runs the static checks, related tests, and mutation testing for everything changed in the
 /// session.
 pub struct CheckSession<'a> {
     ports: Ports<'a>,
     report_limit: usize,
     budgets: Budgets,
+    allow_dir: Option<&'a dyn Fn(&Path) -> bool>,
 }
 
 impl<'a> CheckSession<'a> {
@@ -45,6 +53,7 @@ impl<'a> CheckSession<'a> {
             ports,
             report_limit,
             budgets: Budgets::default(),
+            allow_dir: None,
         }
     }
 
@@ -55,24 +64,73 @@ impl<'a> CheckSession<'a> {
         self
     }
 
+    /// Limits checks to changed files whose directory satisfies `allow`.
+    #[must_use]
+    pub fn with_dir_filter(mut self, allow: &'a dyn Fn(&Path) -> bool) -> Self {
+        self.allow_dir = Some(allow);
+        self
+    }
+
+    fn allows(&self, dir: &Path) -> bool {
+        self.allow_dir.is_none_or(|allow| allow(dir))
+    }
+
+    /// Read-only discovery of the changed-file config directories `run` evaluates for `root`
+    /// (before filtering). Falls back to `[root]` when there are no changed checkable files.
+    pub fn discover_scopes(&self, root: &Path) -> Vec<std::path::PathBuf> {
+        let Ok(found) = self.collect_changed_files(root) else {
+            return vec![root.to_path_buf()];
+        };
+        let mut scopes = Vec::new();
+        for (project, file) in found.located {
+            let dir = file.parent().unwrap_or(&project.root).to_path_buf();
+            if !scopes.contains(&dir) {
+                scopes.push(dir);
+            }
+        }
+        if scopes.is_empty() {
+            scopes.push(root.to_path_buf());
+        }
+        scopes
+    }
+
+    fn collect_changed_files(&self, root: &Path) -> Result<LocatedChanges, crate::PortError> {
+        let files = self.ports.changes.changed_files(root)?;
+        let mut located = Vec::new();
+        let mut errors = Vec::new();
+        for file in files {
+            match self.ports.locator.manifests_above(&file) {
+                Err(e) => errors.push(format!("locating project: {e}")),
+                Ok(manifests) => {
+                    if let Some(p) = locate_project(&file, &manifests)
+                        && p.ecosystem.can_check(&file)
+                    {
+                        located.push((p, file));
+                    }
+                }
+            }
+        }
+        Ok(LocatedChanges { located, errors })
+    }
+
     /// Runs the stop phase. Never panics and never fails on a port error.
     pub fn run(&self, request: &StopRequest) -> Outcome {
-        let files = match self.ports.changes.changed_files(&request.root) {
-            Ok(f) => f,
+        let found = match self.collect_changed_files(&request.root) {
+            Ok(found) => found,
+            Err(_) if !self.allows(&request.root) => return Outcome::pass(),
             Err(e) => return Outcome::degraded(format!("reading changes: {e}")),
         };
         let mut total = RunLog::default();
+        for err in found.errors {
+            total.fail(err);
+        }
         let mut set = ChangeSet::new();
-        for file in &files {
-            match self.ports.locator.manifests_above(file) {
-                Err(e) => total.fail(format!("locating project: {e}")),
-                Ok(manifests) => {
-                    if let Some(p) = locate_project(file, &manifests)
-                        && p.ecosystem.can_check(file)
-                    {
-                        set.add(&p, file);
-                    }
-                }
+        let mut filtered_out = false;
+        for (p, file) in &found.located {
+            if self.allows(file.parent().unwrap_or(&p.root)) {
+                set.add(p, file);
+            } else {
+                filtered_out = true;
             }
         }
 
@@ -218,7 +276,7 @@ impl<'a> CheckSession<'a> {
             );
             total.absorb(log);
         }
-        if !checked {
+        if !checked && !filtered_out && self.allows(&request.root) {
             self.record_clean(&request.root);
         }
         total.finish(self.report_limit)
@@ -240,7 +298,9 @@ impl<'a> CheckSession<'a> {
         let Ok(manifests) = self.ports.locator.manifests_above(&probe) else {
             return;
         };
-        if let Some(project) = locate_project(&probe, &manifests) {
+        if let Some(project) = locate_project(&probe, &manifests)
+            && self.allows(&project.root)
+        {
             record(&self.ports, &project.root, Phase::Stop, &Verdict::Pass);
         }
     }

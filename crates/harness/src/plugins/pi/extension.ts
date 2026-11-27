@@ -70,6 +70,19 @@ export default function (pi: ExtensionAPI) {
     } catch {}
   }
 
+  /** Active model id (`provider/id` when provider is known), or undefined. */
+  const modelOf = (ctx: ExtensionContext): string | undefined => {
+    try {
+      const m = ctx.model as { provider?: string; id?: string } | undefined
+      if (!m?.id) return undefined
+      if (!m.provider) return m.id
+      const prefix = `${m.provider}/`
+      return m.id.toLowerCase().startsWith(prefix.toLowerCase()) ? m.id : `${prefix}${m.id}`
+    } catch {
+      return undefined
+    }
+  }
+
   /** Runs `hookah hook pi`. Never throws; a failure becomes a user-facing warning. */
   const callHookah = (
     ctx: ExtensionContext,
@@ -86,6 +99,7 @@ export default function (pi: ExtensionAPI) {
       }
       try {
         const bin = process.env.HOOKAH_BIN || "hookah"
+        const model = modelOf(ctx)
         const child = spawn(bin, ["hook", "pi"], {
           cwd: ctx.cwd,
           env: process.env,
@@ -117,7 +131,7 @@ export default function (pi: ExtensionAPI) {
             done(undefined, "unreadable reply")
           }
         })
-        child.stdin.end(JSON.stringify({ v: CONTRACT, cwd: ctx.cwd, ...payload }))
+        child.stdin.end(JSON.stringify({ v: CONTRACT, cwd: ctx.cwd, ...(model ? { model } : {}), ...payload }))
       } catch (e) {
         done(undefined, `cannot run hookah: ${e}`)
       }

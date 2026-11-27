@@ -4,7 +4,7 @@
 //! monorepo root holds none itself), and starts their baseline jobs in the background. A project
 //! the agent edits later without having one gets its baseline lazily, on its first edit.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use hookah_domain::project::{Project, locate_project};
 
@@ -20,30 +20,38 @@ const MAX_PROJECTS: usize = 8;
 /// Starts the baseline of the session's project.
 pub struct StartSession<'a> {
     ports: Ports<'a>,
+    allow_dir: Option<&'a dyn Fn(&Path) -> bool>,
 }
 
 impl<'a> StartSession<'a> {
     /// Creates the use case.
     pub fn new(ports: Ports<'a>) -> Self {
-        Self { ports }
+        Self {
+            ports,
+            allow_dir: None,
+        }
+    }
+
+    /// Limits baseline jobs to discovered project roots that satisfy `allow`.
+    #[must_use]
+    pub fn with_dir_filter(mut self, allow: &'a dyn Fn(&Path) -> bool) -> Self {
+        self.allow_dir = Some(allow);
+        self
+    }
+
+    fn allows(&self, dir: &Path) -> bool {
+        self.allow_dir.is_none_or(|allow| allow(dir))
+    }
+
+    /// Read-only discovery of all candidate project roots `run` inspects for `cwd`, in discovery
+    /// order and without truncating to `MAX_PROJECTS` before filtering.
+    pub fn discover_roots(&self, cwd: &Path) -> Vec<PathBuf> {
+        self.collect_roots(cwd, false).0
     }
 
     /// Never fails: problems become a degraded outcome.
     pub fn run(&self, request: &StartRequest) -> Outcome {
-        let mut roots: Vec<PathBuf> = Vec::new();
-        let mut problem = None;
-        let mut dirs = vec![request.cwd.clone()];
-        match self.ports.locator.nested_roots(&request.cwd, NESTED_DEPTH) {
-            Ok(nested) => dirs.extend(nested),
-            Err(e) => problem = Some(format!("looking for nested projects: {e}")),
-        }
-        for dir in dirs {
-            match self.project_at(&dir) {
-                Ok(Some(project)) if !roots.contains(&project.root) => roots.push(project.root),
-                Ok(_) => {}
-                Err(reason) => problem = problem.or(Some(reason)),
-            }
-        }
+        let (mut roots, mut problem) = self.collect_roots(&request.cwd, true);
         roots.truncate(MAX_PROJECTS);
         for root in &roots {
             if let Err(reason) = ensure(&self.ports, root, &request.session) {
@@ -54,6 +62,35 @@ impl<'a> StartSession<'a> {
             Some(reason) => Outcome::degraded(reason),
             None => Outcome::pass(),
         }
+    }
+
+    fn collect_roots(&self, cwd: &Path, apply_filter: bool) -> (Vec<PathBuf>, Option<String>) {
+        let mut roots: Vec<PathBuf> = Vec::new();
+        let mut problem = None;
+        let mut dirs = vec![cwd.to_path_buf()];
+        match self.ports.locator.nested_roots(cwd, NESTED_DEPTH) {
+            Ok(nested) => dirs.extend(nested),
+            Err(e) if !apply_filter || self.allows(cwd) => {
+                problem = Some(format!("looking for nested projects: {e}"));
+            }
+            Err(_) => {}
+        }
+        for dir in dirs {
+            match self.project_at(&dir) {
+                Ok(Some(project))
+                    if (!apply_filter || self.allows(&project.root))
+                        && !roots.contains(&project.root) =>
+                {
+                    roots.push(project.root);
+                }
+                Ok(_) => {}
+                Err(reason) if !apply_filter || self.allows(&dir) => {
+                    problem = problem.or(Some(reason));
+                }
+                Err(_) => {}
+            }
+        }
+        (roots, problem)
     }
 
     fn project_at(&self, dir: &std::path::Path) -> Result<Option<Project>, String> {

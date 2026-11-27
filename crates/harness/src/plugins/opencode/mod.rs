@@ -10,7 +10,7 @@ pub mod response;
 
 use hookah_application::Outcome;
 
-use crate::protocol::{Harness, Invocation, PayloadError, Response};
+use crate::protocol::{Harness, Invocation, Parsed, PayloadError, Response};
 
 /// The plugin source, printed by `hookah plugin opencode`.
 pub const PLUGIN_SOURCE: &str = include_str!("plugin.ts");
@@ -20,8 +20,8 @@ pub const PLUGIN_SOURCE: &str = include_str!("plugin.ts");
 pub struct Opencode;
 
 impl Harness for Opencode {
-    fn parse(&self, stdin: &str) -> Result<Invocation, PayloadError> {
-        payload::parse(stdin)
+    fn parse_event(&self, stdin: &str) -> Result<Parsed, PayloadError> {
+        payload::parse_event_for(stdin, "opencode")
     }
 
     fn render(&self, invocation: &Invocation, outcome: &Outcome) -> Response {

@@ -37,7 +37,7 @@ the same contract shape as the [opencode plugin](opencode.md):
 
 ```json
 {"v": 1, "event": "edit", "cwd": "/abs/project", "files": ["src/a.ts"],
- "session_id": "...", "already_continuing": false}
+ "session_id": "...", "model": "anthropic/claude-sonnet-4-6", "already_continuing": false}
 ```
 
 ```json

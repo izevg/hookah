@@ -33,6 +33,8 @@ CONTRACT = 1
 EDIT_TIMEOUT_S = 30
 STOP_TIMEOUT_S = 120
 START_TIMEOUT_S = 10
+MAX_SESSIONS = 256
+MAX_IN_FLIGHT = 4096
 
 log = logging.getLogger("hookah")
 
@@ -147,20 +149,91 @@ def _with_report(result, text):
 
 
 def register(ctx):
-    def on_session_start(session_id="", **_):
+    models = {}
+    in_flight = {}
+    dirty = {}
+
+    def _touch(table, sid):
+        if not sid:
+            return
+        table.pop(sid, None)
+        table[sid] = True
+        while len(table) > MAX_IN_FLIGHT:
+            victim = next(iter(table))
+            table.pop(victim, None)
+            if table is in_flight and victim not in dirty:
+                models.pop(victim, None)
+
+    def _evict_models():
+        while len(models) > MAX_SESSIONS:
+            victim = next((sid for sid in models if sid not in in_flight and sid not in dirty), None)
+            if victim is not None:
+                models.pop(victim, None)
+                continue
+            if len(models) <= MAX_IN_FLIGHT:
+                break
+            victim = next((sid for sid in models if sid not in dirty), None)
+            if victim is None:
+                victim = next(iter(models))
+            models.pop(victim, None)
+            in_flight.pop(victim, None)
+            dirty.pop(victim, None)
+
+    def _model_for(session_id, kwargs):
+        raw = kwargs.get("model")
+        if isinstance(raw, str) and raw.strip():
+            model = raw.strip()
+            if session_id:
+                models.pop(session_id, None)
+                models[session_id] = model
+                _evict_models()
+            return model
+        if session_id and session_id in models:
+            model = models.pop(session_id)
+            models[session_id] = model
+            return model
+        return None
+
+    def on_session_end(session_id="", task_id="", **_kwargs):
+        sid = session_id or task_id or ""
+        if sid:
+            models.pop(sid, None)
+            in_flight.pop(sid, None)
+            dirty.pop(sid, None)
+
+    def on_llm_call(session_id="", task_id="", **kwargs):
+        try:
+            sid = session_id or task_id or ""
+            _touch(in_flight, sid)
+            _model_for(sid, kwargs)
+        except Exception:
+            pass
+
+    def on_session_start(session_id="", **kwargs):
         try:
             if session_id:
-                _call({"event": "start", "session_id": session_id}, START_TIMEOUT_S, session_id)
+                payload = {"event": "start", "session_id": session_id}
+                model = _model_for(session_id, kwargs)
+                if model:
+                    payload["model"] = model
+                _call(payload, START_TIMEOUT_S, session_id)
         except Exception as e:
             _warn("session start failed: %s" % e)
 
-    def on_result(tool_name="", args=None, result=None, session_id="", task_id="", **_):
+    def on_result(tool_name="", args=None, result=None, session_id="", task_id="", **kwargs):
         try:
             files = _edited_files(tool_name, args, result)
             if not files:
                 return None
+            sid = session_id or task_id or ""
+            _touch(dirty, sid)
+            _touch(in_flight, sid)
+            payload = {"event": "edit", "files": files, "session_id": sid or None}
+            model = _model_for(sid, kwargs)
+            if model:
+                payload["model"] = model
             reply = _call(
-                {"event": "edit", "files": files, "session_id": session_id or task_id or None},
+                payload,
                 EDIT_TIMEOUT_S,
                 task_id or session_id,
             )
@@ -175,10 +248,18 @@ def register(ctx):
             _warn("edit check failed: %s" % e)
         return None
 
-    def on_verify(session_id="", attempt=0, **_):
+    def on_verify(session_id="", attempt=0, **kwargs):
         try:
+            payload = {
+                "event": "stop",
+                "session_id": session_id or None,
+                "already_continuing": bool(attempt),
+            }
+            model = _model_for(session_id, kwargs)
+            if model:
+                payload["model"] = model
             reply = _call(
-                {"event": "stop", "session_id": session_id or None, "already_continuing": bool(attempt)},
+                payload,
                 STOP_TIMEOUT_S,
                 session_id,
             )
@@ -188,10 +269,22 @@ def register(ctx):
                 _warn(reply["user_text"])
             if reply.get("block") and reply.get("model_text"):
                 return {"action": "continue", "message": reply["model_text"]}
+            if session_id:
+                dirty.pop(session_id, None)
+                in_flight.pop(session_id, None)
+                _evict_models()
         except Exception as e:
             _warn("stop check failed: %s" % e)
         return None
 
     ctx.register_hook("on_session_start", on_session_start)
+    try:
+        ctx.register_hook("on_session_end", on_session_end)
+    except Exception:
+        pass
+    try:
+        ctx.register_hook("pre_llm_call", on_llm_call)
+    except Exception:
+        pass
     ctx.register_hook("transform_tool_result", on_result)
     ctx.register_hook("pre_verify", on_verify)

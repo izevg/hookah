@@ -12,7 +12,8 @@
 //! | lint         | `ruff`        | `ruff check --output-format json --force-exclude --no-fix {files}` | 30 s |
 //! | typecheck    | `mypy`        | `mypy [-O json] --show-column-numbers --show-error-codes --no-error-summary --no-color-output {files}` (see below) | 120 s |
 //! | architecture | `lint-imports`| `lint-imports` (project-wide; `PYTHONPATH=src` in the src layout) | 60 s  |
-//! | unused       | `vulture`     | `vulture` (configured paths, stop phase only)                    | 60 s    |
+//! | unused       | `unref`       | `unref --config pyproject.toml --output-format concise` (preferred) | 60 s |
+//! | unused       | `vulture`     | `vulture` (configured paths)                                    | 60 s    |
 //! | test         | `pytest`      | `pytest [--testmon --ignore-glob=<heavy>...] [-m "not (<heavy markers>)"] -rfE --tb=short -q --color=no --rootdir=. {tests}` | 300 s |
 //! | mutation     | `mutmut`      | `mutmut run {globs}` (mutmut 3 only)                            | 480 s   |
 //!
@@ -29,7 +30,7 @@
 //! [`select::heavy_ignores`]).
 //!
 //! Tools the project configures or implies but the environment lacks become [`MissingTool`]s:
-//! mutmut when pytest is available, and ruff, mypy, import-linter, or Vulture when configured. The hint
+//! mutmut when pytest is available, and ruff, mypy, import-linter, Unref, or Vulture when configured. The hint
 //! matches the package manager (`uv add --dev`, `poetry add --group dev`, `pip install`).
 
 pub mod config;
@@ -55,6 +56,8 @@ pub const RUFF: &str = "ruff";
 pub const MYPY: &str = "mypy";
 /// Name of the import-linter tool.
 pub const IMPORT_LINTER: &str = "import-linter";
+/// Name of the Unref tool.
+pub const UNREF: &str = "unref";
 /// Name of the Vulture tool.
 pub const VULTURE: &str = "vulture";
 /// Name of the pytest tool.
@@ -78,6 +81,10 @@ const IMPORT_LINTER_REF: ToolRef = ToolRef {
     exe: "lint-imports",
     package: "import-linter",
 };
+const UNREF_REF: ToolRef = ToolRef {
+    exe: UNREF,
+    package: UNREF,
+};
 const VULTURE_REF: ToolRef = ToolRef {
     exe: VULTURE,
     package: VULTURE,
@@ -95,7 +102,7 @@ const FORMAT_TIMEOUT: Duration = Duration::from_secs(30);
 const LINT_TIMEOUT: Duration = Duration::from_secs(30);
 const MYPY_TIMEOUT: Duration = Duration::from_secs(120);
 const IMPORT_LINTER_TIMEOUT: Duration = Duration::from_secs(60);
-const VULTURE_TIMEOUT: Duration = Duration::from_secs(60);
+const UNUSED_TIMEOUT: Duration = Duration::from_secs(60);
 const PYTEST_TIMEOUT: Duration = Duration::from_secs(300);
 const MUTMUT_TIMEOUT: Duration = Duration::from_secs(480);
 
@@ -292,15 +299,28 @@ pub fn toolchain(setup: &Setup, root: &Path) -> Toolchain {
         }
     }
 
-    // Vulture scans all configured files together to resolve cross-file symbol usage.
-    if config.vulture_configured() {
-        match env.tool(VULTURE_REF) {
-            Some(inv) => tools.push(tool(
-                VULTURE,
-                CheckKind::Unused,
-                spec(inv, &[], vec![], root, VULTURE_TIMEOUT),
-            )),
-            None => missing.push(missing_tool(VULTURE, CheckKind::Unused, manager)),
+    // Choose one whole-project analyzer. Configured Vulture can cover a missing Unref.
+    for (configured, analyzer, args) in [
+        (
+            config.unref_configured(),
+            UNREF_REF,
+            &["--config", "pyproject.toml", "--output-format", "concise"][..],
+        ),
+        (config.vulture_configured(), VULTURE_REF, &[][..]),
+    ] {
+        if !configured {
+            continue;
+        }
+        match env.tool(analyzer) {
+            Some(inv) => {
+                tools.push(tool(
+                    analyzer.exe,
+                    CheckKind::Unused,
+                    spec(inv, args, vec![], root, UNUSED_TIMEOUT),
+                ));
+                break;
+            }
+            None => missing.push(missing_tool(analyzer.package, CheckKind::Unused, manager)),
         }
     }
 
@@ -414,6 +434,91 @@ mod tests {
         let t = tc.tools().iter().find(|t| t.name == name).unwrap();
         let targets: Vec<String> = targets.iter().map(|s| (*s).to_string()).collect();
         (t.command.program.clone(), t.command.expand_args(&targets))
+    }
+
+    const BOTH_UNUSED_TOOLS: &str =
+        "[tool.unref]\nexclude = ['generated']\n[tool.vulture]\npaths = ['src']\n";
+
+    #[test]
+    fn unref_takes_precedence_without_scheduling_vulture() {
+        let (scratch, tc) = project(
+            "unref-preferred",
+            &["unref", "vulture"],
+            &[],
+            &[("pyproject.toml", BOTH_UNUSED_TOOLS)],
+        );
+        let tools: Vec<_> = tc.of_kind(CheckKind::Unused).collect();
+        assert_eq!(tools.len(), 1);
+        assert_eq!(tools[0].name, "unref");
+        assert_eq!(tools[0].command.cwd, scratch.root());
+        assert_eq!(tools[0].command.timeout, Duration::from_secs(60));
+        let (program, args) = argv(&tc, "unref", &["only_changed.py"]);
+        assert_eq!(Path::new(&program), scratch.root().join(".venv/bin/unref"));
+        assert_eq!(
+            args,
+            ["--config", "pyproject.toml", "--output-format", "concise"]
+        );
+        assert!(tc.missing().is_empty());
+    }
+
+    #[test]
+    fn a_declared_unref_dependency_opts_in_without_configuration() {
+        let (_, tc) = project(
+            "unref-dependency",
+            &["unref"],
+            &[],
+            &[(
+                "pyproject.toml",
+                "[dependency-groups]\ndev = ['unref>=0.3.2']\n",
+            )],
+        );
+        assert_eq!(
+            tc.of_kind(CheckKind::Unused)
+                .map(|tool| tool.name.as_str())
+                .collect::<Vec<_>>(),
+            ["unref"]
+        );
+        assert!(tc.missing().is_empty());
+    }
+
+    #[test]
+    fn an_unconfigured_unref_does_not_replace_vulture() {
+        let (_, tc) = project(
+            "unref-unconfigured",
+            &["unref", "vulture"],
+            &[],
+            &[("pyproject.toml", "[tool.vulture]\npaths = ['src']\n")],
+        );
+        assert_eq!(
+            tc.of_kind(CheckKind::Unused)
+                .map(|tool| tool.name.as_str())
+                .collect::<Vec<_>>(),
+            ["vulture"]
+        );
+    }
+
+    #[test]
+    fn a_missing_unref_falls_back_to_configured_vulture_and_reports_the_missing_tool() {
+        let (_, tc) = project(
+            "unref-missing",
+            &["vulture"],
+            &[],
+            &[("pyproject.toml", BOTH_UNUSED_TOOLS), ("uv.lock", "")],
+        );
+        assert_eq!(
+            tc.of_kind(CheckKind::Unused)
+                .map(|tool| tool.name.as_str())
+                .collect::<Vec<_>>(),
+            ["vulture"]
+        );
+        assert_eq!(
+            tc.missing(),
+            [MissingTool::new(
+                "unref",
+                CheckKind::Unused,
+                "uv add --dev unref"
+            )]
+        );
     }
 
     #[test]

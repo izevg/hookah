@@ -67,7 +67,9 @@ pub fn parse_event(stdin: &str) -> Result<Parsed, PayloadError> {
     }
     let model = ModelHint {
         model: clean_model(p.model.clone()),
-        transcript: None,
+        session: p.session_id.clone().filter(|s| !s.is_empty()),
+        cwd: p.cwd.clone().filter(|c| c.is_absolute()),
+        ..ModelHint::default()
     };
     let invocation = match p.event {
         Event::Start => start_invocation(p.cwd, p.session_id),

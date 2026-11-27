@@ -74,7 +74,6 @@ export default {
       /** Session keys whose last stop check asked for one more pass (the loop guard). */
       continuing: new Set(),
       lastWorkspace: undefined,
-      lastModel: undefined,
     })
     state.models ??= new Map()
     const { workspaces, models, dirty, continuing } = state
@@ -118,21 +117,22 @@ export default {
       const id = typeof model === "string" ? model : model?.id
       if (typeof id !== "string" || !id) return undefined
       const prov = typeof provider === "string" ? provider : model?.provider
-      return typeof prov === "string" && prov && !id.includes("/") ? `${prov}/${id}` : id
+      if (typeof prov !== "string" || !prov) return id
+      const prefix = `${prov}/`
+      return id.toLowerCase().startsWith(prefix.toLowerCase()) ? id : `${prefix}${id}`
     }
     const rememberModel = (session, provider, model) => {
       const name = formatModel(provider, model)
-      if (!name) return
-      state.lastModel = name
-      if (session) {
-        if (models.size > 64) models.clear()
-        models.set(session, name)
-      }
+      if (!name || !session) return
+      if (models.size > 64) models.clear()
+      models.set(session, name)
     }
-    const modelOf = (event, ctx) =>
-      formatModel(event?.provider ?? ctx?.provider, event?.model ?? ctx?.model) ||
-      models.get(sessionOf(ctx) || event?.sessionKey || event?.sessionId) ||
-      state.lastModel
+    const modelOf = (event, ctx) => {
+      const direct = formatModel(event?.provider ?? ctx?.provider, event?.model ?? ctx?.model)
+      if (direct) return direct
+      const session = sessionOf(ctx) || event?.sessionKey || event?.sessionId
+      return session ? models.get(session) : undefined
+    }
 
     api.on("before_model_resolve", (event, ctx) => {
       const session = sessionOf(ctx)

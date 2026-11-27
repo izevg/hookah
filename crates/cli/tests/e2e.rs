@@ -94,8 +94,9 @@ impl Fixture {
             .current_dir(&self.root)
             .env("HOOKAH_CACHE_DIR", self.cache())
             .env("HOOKAH_BASELINE_FOREGROUND", "1")
-            // Never the developer's own user config; a test that wants one overrides this.
+            // Never the developer's own user config or model override; a test overrides explicitly.
             .env("HOOKAH_CONFIG", self.cache().join("no-user-config.toml"))
+            .env_remove("HOOKAH_MODELS")
             .envs(env.iter().copied())
             .env("GIT_CONFIG_GLOBAL", "/dev/null")
             .env("GIT_CONFIG_NOSYSTEM", "1")
@@ -1060,4 +1061,135 @@ fn model_filter_gates_hooks_and_shows_in_config() {
         &[("HOOKAH_MODELS", "*")],
     );
     assert_eq!(override_out.status.code(), Some(2));
+}
+
+#[test]
+fn nested_project_model_filters_apply_at_start_and_stop() {
+    let f = Fixture::new("nested-models", CLEAN_LIB);
+    fs::create_dir_all(f.path("child/src")).unwrap();
+    f.write(
+        "child/Cargo.toml",
+        "[package]\nname = \"child\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n[workspace]\n",
+    );
+    f.write("child/src/lib.rs", CLEAN_LIB);
+    f.git(&["add", "-A"]);
+    f.git(&["commit", "-q", "-m", "add child crate"]);
+
+    let broken = "pub fn answer() -> i32 {\n    \"nope\"\n}\n";
+    let baseline_count = |f: &Fixture| -> usize {
+        fs::read_dir(f.cache())
+            .into_iter()
+            .flatten()
+            .flatten()
+            .filter_map(|dir| fs::read_dir(dir.path().join("baselines")).ok())
+            .flatten()
+            .count()
+    };
+
+    // Direction 1: unrestricted root, disabled child (`models = []`).
+    f.write("child/.hookah.toml", "models = []\n");
+    f.write("child/src/lib.rs", broken);
+    let start = f.hookah(&["hook", "claude"], &f.start_payload("sess-dir1"));
+    assert_eq!(start.status.code(), Some(0), "{}", stderr(&start));
+    // Only the root project got a baseline; the disabled child did not.
+    assert_eq!(baseline_count(&f), 1);
+
+    let stop = f.hookah(&["hook", "claude"], &f.stop_payload(false));
+    assert_eq!(stop.status.code(), Some(0), "{}", stderr(&stop));
+
+    // Direction 2: disabled root (`models = []`), enabled child (`models = ["*"]`).
+    let _ = fs::remove_dir_all(f.cache());
+    f.write(".hookah.toml", "models = []\n");
+    f.write("child/.hookah.toml", "models = [\"*\"]\n");
+    f.write("src/lib.rs", broken);
+    f.write("child/src/lib.rs", broken);
+
+    let start = f.hookah(&["hook", "claude"], &f.start_payload("sess-dir2"));
+    assert_eq!(start.status.code(), Some(0), "{}", stderr(&start));
+    // Only the enabled child got a baseline; the disabled root did not.
+    assert_eq!(baseline_count(&f), 1);
+
+    let stop = f.hookah(&["hook", "claude"], &f.stop_payload(false));
+    assert_eq!(stop.status.code(), Some(2), "{}", stderr(&stop));
+    let err = stderr(&stop);
+    assert!(err.contains("child/src/lib.rs:2"), "{err}");
+    assert!(!err.contains("\nsrc/lib.rs:2"), "{err}");
+}
+
+#[test]
+fn claude_post_model_switch_overrides_a_stale_transcript_until_flushed() {
+    let f = Fixture::new("claude-switch", CLEAN_LIB);
+    f.write(".hookah.toml", "models = [\"claude-sonnet-*\"]\n");
+    f.write("src/lib.rs", "pub fn answer() -> i32 {\n    \"nope\"\n}\n");
+
+    let transcript = f.cache().join("switch.jsonl");
+    fs::create_dir_all(f.cache()).unwrap();
+    fs::write(
+        &transcript,
+        r#"{"type":"assistant","message":{"model":"claude-opus-4-6","content":[]}}"#,
+    )
+    .unwrap();
+
+    // Before the switch, the stale transcript says opus -> skipped.
+    let edit_payload = serde_json::json!({
+        "session_id": "ses-sw",
+        "cwd": f.root,
+        "hook_event_name": "PostToolUse",
+        "transcript_path": transcript,
+        "tool_name": "Edit",
+        "tool_input": {"file_path": f.path("src/lib.rs")}
+    })
+    .to_string();
+    assert_eq!(
+        f.hookah(&["hook", "claude"], &edit_payload).status.code(),
+        Some(0)
+    );
+
+    // PostModelSwitch updates session state to sonnet even while transcript still says opus.
+    let switch_payload = serde_json::json!({
+        "session_id": "ses-sw",
+        "cwd": f.root,
+        "hook_event_name": "PostModelSwitch",
+        "model": "claude-sonnet-4-6"
+    })
+    .to_string();
+    let sw = f.hookah(&["hook", "claude"], &switch_payload);
+    assert_eq!(sw.status.code(), Some(0));
+    assert!(sw.stdout.is_empty() && sw.stderr.is_empty());
+
+    let after = f.hookah(&["hook", "claude"], &edit_payload);
+    assert_eq!(after.status.code(), Some(2), "{}", stderr(&after));
+    assert!(stderr(&after).contains("src/lib.rs:2"));
+}
+
+#[test]
+fn antigravity_delivers_feedback_for_an_allowed_secondary_workspace() {
+    let primary = Fixture::new("agy-primary", CLEAN_LIB);
+    let secondary = Fixture::new("agy-secondary", CLEAN_LIB);
+    primary.write(".hookah.toml", "models = []\n");
+    secondary.write(".hookah.toml", "models = [\"*\"]\n");
+    secondary.write("src/lib.rs", "pub fn answer()->i32{43}\n");
+
+    let roots = [primary.root.clone(), secondary.root.clone()];
+    let edit = serde_json::json!({
+        "conversationId": "multi-root",
+        "workspacePaths": roots,
+        "stepIdx": 1,
+        "toolCall": {"name": "edit_file", "args": {"Path": secondary.path("src/lib.rs")}}
+    });
+    let edit_out = primary.hookah(&["hook", "antigravity"], &edit.to_string());
+    assert!(edit_out.status.success());
+
+    let before = serde_json::json!({
+        "conversationId": "multi-root",
+        "workspacePaths": [primary.root, secondary.root],
+        "invocationNum": 1
+    });
+    let before_out = primary.hookah(&["hook", "antigravity"], &before.to_string());
+    assert!(before_out.status.success());
+    let value: serde_json::Value = serde_json::from_str(&stdout(&before_out)).unwrap();
+    let message = value["injectSteps"][0]["systemMessage"]["systemMessage"]
+        .as_str()
+        .unwrap();
+    assert!(message.contains("src/lib.rs") && message.contains("Re-read"));
 }

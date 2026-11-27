@@ -5,7 +5,7 @@ use hookah_application::{StartRequest, StopRequest};
 use hookah_harness::antigravity::{self, Event};
 use hookah_harness::protocol::{Invocation, Response, blocking_report, merge_outcomes};
 
-use crate::hooks::model;
+use crate::hooks::model::{self, ModelGate};
 use crate::{run_invocation, warning};
 
 pub(crate) fn run(stdin: &str, limit: usize) -> Response {
@@ -20,57 +20,46 @@ pub(crate) fn run(stdin: &str, limit: usize) -> Response {
             antigravity::acknowledge()
         };
     };
+    let gate = ModelGate::new(&payload.model);
     let feedback = || HookFeedback::antigravity(root, &payload.session);
     match payload.event {
         Event::Start => {
             let mut response = antigravity::acknowledge();
             for root in payload.roots {
-                if !model::allows(&root, &payload.model) {
-                    continue;
-                }
                 let invocation = Invocation::Start(StartRequest::new(root, &payload.session));
-                antigravity::warn(&mut response, &run_invocation(&invocation, limit));
+                antigravity::warn(&mut response, &run_invocation(&invocation, limit, &gate));
             }
             response
         }
         Event::Edit(request) => {
-            if !model::allows(model::edit_dir(&request), &payload.model) {
+            let scope = model::edit_dir(&request).to_path_buf();
+            if !gate.allows(&scope) {
                 return antigravity::acknowledge();
             }
-            let outcome = run_invocation(&Invocation::Edit(request), limit);
+            let outcome = run_invocation(&Invocation::Edit(request), limit, &gate);
             let mut response = antigravity::acknowledge();
             antigravity::warn(&mut response, &outcome);
             if let Some(message) = antigravity::edit_feedback(&outcome)
-                && let Err(error) = feedback().and_then(|store| store.push(message))
+                && let Err(error) = feedback().and_then(|store| store.push_scoped(message, scope))
             {
                 response.stderr.push_str(&feedback_warning(error));
             }
             response
         }
-        Event::BeforeModel => {
-            if !model::allows(root, &payload.model) {
-                return antigravity::acknowledge();
-            }
-            match feedback().and_then(|store| store.take()) {
-                Ok(messages) if !messages.is_empty() => antigravity::inject(messages.join("\n")),
-                Ok(_) => antigravity::acknowledge(),
-                Err(error) => Response {
-                    stderr: feedback_warning(error),
-                    ..antigravity::acknowledge()
-                },
-            }
-        }
+        Event::BeforeModel => match feedback().and_then(|store| {
+            store.take_where(|scope| gate.allows(scope.unwrap_or(root.as_path())))
+        }) {
+            Ok(messages) if !messages.is_empty() => antigravity::inject(messages.join("\n")),
+            Ok(_) => antigravity::acknowledge(),
+            Err(error) => Response {
+                stderr: feedback_warning(error),
+                ..antigravity::acknowledge()
+            },
+        },
         Event::Stop { eligible: true } => {
-            let roots: Vec<_> = payload
+            let outcomes = payload
                 .roots
                 .iter()
-                .filter(|root| model::allows(root, &payload.model))
-                .collect();
-            if roots.is_empty() {
-                return antigravity::stop(None);
-            }
-            let outcomes = roots
-                .into_iter()
                 .map(|root| {
                     let request =
                         StopRequest::new(root).with_session(Some(payload.session.clone()));
@@ -78,11 +67,14 @@ pub(crate) fn run(stdin: &str, limit: usize) -> Response {
                         request,
                         already_continuing: false,
                     };
-                    run_invocation(&invocation, limit)
+                    run_invocation(&invocation, limit, &gate)
                 })
                 .collect();
             let outcome = merge_outcomes(outcomes, limit);
             let report = blocking_report(&outcome);
+            if report.is_none() && !gate.any_allowed() {
+                return antigravity::stop(None);
+            }
             let claim = feedback()
                 .and_then(|store| store.claim_continuation(&payload.prompt, report.is_some()));
             let mut response = match (&claim, report) {

@@ -60,12 +60,12 @@ function patchedFiles(patch: string): string[] {
   return [...new Set(files)]
 }
 
-/** Formats `provider/model` when both are known and `model` has no provider prefix yet. */
+/** Composes `provider/model` when provider is known, preserving any `/` inside routed model IDs. */
 function formatModel(provider: unknown, model: unknown): string | undefined {
   if (typeof model !== "string" || !model) return undefined
-  return typeof provider === "string" && provider && !model.includes("/")
-    ? `${provider}/${model}`
-    : model
+  if (typeof provider !== "string" || !provider) return model
+  const prefix = `${provider}/`
+  return model.toLowerCase().startsWith(prefix.toLowerCase()) ? model : `${prefix}${model}`
 }
 
 export const HookahPlugin: Plugin = async ({ client, directory }) => {
@@ -73,6 +73,8 @@ export const HookahPlugin: Plugin = async ({ client, directory }) => {
   const pendingArgs = new Map<string, unknown>()
   /** Latest model seen per session, learned from `chat.params` and `message.updated`. */
   const models = new Map<string, string>()
+  /** Top-level sessions awaiting their first model-bearing event before starting the baseline. */
+  const pendingStart = new Set<string>()
   /** Sessions that edited files since their last stop check. */
   const dirty = new Set<string>()
   /** Sessions whose latest turn was started by a message this plugin injected (the loop guard). */
@@ -80,11 +82,31 @@ export const HookahPlugin: Plugin = async ({ client, directory }) => {
   /** Sessions with a stop check in flight. */
   const checking = new Set<string>()
 
-  const rememberModel = (sessionID: unknown, provider: unknown, model: unknown) => {
+  const startBaseline = async (sessionID: string, model?: string) => {
+    try {
+      const reply = await callHookah(
+        {
+          event: "start",
+          session_id: sessionID,
+          already_continuing: false,
+          ...(model ? { model } : {}),
+        },
+        START_TIMEOUT_MS,
+      )
+      if (reply?.user_text) await warnUser(reply.user_text)
+    } catch (e) {
+      await log("warn", `hookah session start failed: ${e}`)
+    }
+  }
+
+  const rememberModel = async (sessionID: unknown, provider: unknown, model: unknown) => {
     const name = formatModel(provider, model)
     if (typeof sessionID === "string" && sessionID && name) {
       if (models.size > 64) models.clear()
       models.set(sessionID, name)
+      if (pendingStart.delete(sessionID)) {
+        await startBaseline(sessionID, name)
+      }
     }
   }
 
@@ -161,7 +183,7 @@ export const HookahPlugin: Plugin = async ({ client, directory }) => {
         const modelId = typeof raw?.model === "string" ? raw.model : raw?.model?.id
         const providerId =
           (typeof raw?.model === "object" ? raw?.model?.providerID : undefined) ?? raw?.provider?.id
-        rememberModel(raw?.sessionID, providerId, modelId)
+        await rememberModel(raw?.sessionID, providerId, modelId)
       } catch {}
     },
 
@@ -179,6 +201,7 @@ export const HookahPlugin: Plugin = async ({ client, directory }) => {
         pendingArgs.delete(input.callID)
         const files = editedFiles(input.tool, args)
         if (files.length === 0) return
+        pendingStart.delete(input.sessionID)
         dirty.add(input.sessionID)
         const model = models.get(input.sessionID)
         const reply = await callHookah(
@@ -205,7 +228,7 @@ export const HookahPlugin: Plugin = async ({ client, directory }) => {
       if (event.type === "message.updated") {
         try {
           const info = (event.properties as any)?.info
-          rememberModel(
+          await rememberModel(
             info?.sessionID,
             info?.providerID ?? info?.model?.providerID,
             info?.modelID ?? info?.model?.modelID,
@@ -219,16 +242,12 @@ export const HookahPlugin: Plugin = async ({ client, directory }) => {
           // Subagent sessions work on the parent's project: they get a baseline lazily if needed.
           if (!info?.id || info.parentID) return
           const model = models.get(info.id)
-          const reply = await callHookah(
-            {
-              event: "start",
-              session_id: info.id,
-              already_continuing: false,
-              ...(model ? { model } : {}),
-            },
-            START_TIMEOUT_MS,
-          )
-          if (reply?.user_text) await warnUser(reply.user_text)
+          if (model) {
+            await startBaseline(info.id, model)
+          } else {
+            if (pendingStart.size > 64) pendingStart.clear()
+            pendingStart.add(info.id)
+          }
         } catch (e) {
           await log("warn", `hookah session start failed: ${e}`)
         }

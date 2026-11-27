@@ -303,12 +303,22 @@ fn run_harness(harness: &dyn Harness, stdin: &str, limit: usize) -> Response {
         Ok(parsed) => parsed,
         Err(e) => return warning(e.to_string()),
     };
-    let invocation = hooks::model::filter_invocation(parsed.invocation.canonical(), &parsed.model);
-    let outcome = run_invocation(&invocation, limit);
+    let invocation = parsed.invocation.canonical();
+    hooks::model::record_session_model(&invocation, &parsed.model);
+    let gate = hooks::model::ModelGate::new(&parsed.model);
+    let invocation = hooks::model::filter_edits(invocation, &gate);
+    let outcome = run_invocation(&invocation, limit, &gate);
     harness.render(&invocation, &outcome)
 }
 
-fn run_invocation(invocation: &Invocation, limit: usize) -> Outcome {
+fn run_invocation(
+    invocation: &Invocation,
+    limit: usize,
+    gate: &hooks::model::ModelGate<'_>,
+) -> Outcome {
+    if matches!(invocation, Invocation::Ignore) {
+        return Outcome::pass();
+    }
     let adapters = wiring::build();
     let ports = adapters.ports();
     match invocation {
@@ -317,12 +327,21 @@ fn run_invocation(invocation: &Invocation, limit: usize) -> Outcome {
             let use_case = CheckEdit::new(ports, limit);
             merge_outcomes(requests.iter().map(|r| use_case.run(r)).collect(), limit)
         }
-        Invocation::Stop { request, .. } => CheckSession::new(ports, limit)
-            .with_budgets(wiring::budgets())
-            .run(request),
+        Invocation::Stop { request, .. } => {
+            let allow = |dir: &Path| gate.allows(dir);
+            CheckSession::new(ports, limit)
+                .with_budgets(wiring::budgets())
+                .with_dir_filter(&allow)
+                .run(request)
+        }
         Invocation::Start(request) => {
-            let mut outcome = StartSession::new(ports).run(request);
-            outcome.notices.extend(update::session_start_notice());
+            let allow = |dir: &Path| gate.allows(dir);
+            let mut outcome = StartSession::new(ports)
+                .with_dir_filter(&allow)
+                .run(request);
+            if gate.any_allowed() || gate.allows(&request.cwd) {
+                outcome.notices.extend(update::session_start_notice());
+            }
             outcome
         }
         Invocation::Ignore => Outcome::pass(),

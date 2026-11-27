@@ -7,19 +7,28 @@
 //! broken file means the defaults: both on.
 
 use hookah_domain::update::Policy;
+use serde::Deserialize;
 
 use crate::config::env::Host;
-use crate::config::env::file;
+use crate::config::env::file::UpdateSection;
 
 /// Environment variable that switches updates off.
 pub const NO_UPDATE_VAR: &str = "HOOKAH_NO_UPDATE";
+
+/// Reads only `[update]` from the user config so a mistyped sibling key (such as `models`)
+/// never disables a user's update opt-out.
+#[derive(Default, Deserialize)]
+struct UpdateFile {
+    #[serde(default)]
+    update: UpdateSection,
+}
 
 /// The policy in effect for `host`.
 pub fn policy(host: &Host) -> Policy {
     let mut policy = Policy::default();
     if let Some(path) = host.user_config()
         && let Ok(text) = std::fs::read_to_string(path)
-        && let Ok(parsed) = file::parse(&text)
+        && let Ok(parsed) = toml_edit::de::from_str::<UpdateFile>(&text)
     {
         policy.check = parsed.update.check.unwrap_or(true);
         policy.auto = parsed.update.auto.unwrap_or(true);
@@ -105,6 +114,17 @@ mod tests {
             policy(&host("broken", Some("[update\ncheck = false"), &[])),
             pol(true, true)
         );
+    }
+
+    #[test]
+    fn a_mistyped_models_key_still_honors_the_update_opt_out() {
+        let text = "models = \"gpt-5\"\n[update]\ncheck = false\nauto = false\n";
+        assert_eq!(
+            policy(&host("mistyped-models", Some(text), &[])),
+            pol(false, false)
+        );
+        // The full config parser still reports the type error.
+        assert!(crate::config::env::file::parse(text).is_err());
     }
 
     #[test]

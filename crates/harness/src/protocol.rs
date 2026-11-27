@@ -139,6 +139,14 @@ pub struct ModelHint {
     /// Path to the session transcript file, used as a fallback to learn the active model when
     /// the payload omits `model`.
     pub transcript: Option<PathBuf>,
+    /// Session identifier reported by the harness, used to correlate session-level model events.
+    pub session: Option<String>,
+    /// Absolute working directory of the session, if reported.
+    pub cwd: Option<PathBuf>,
+    /// True when the event belongs to a subagent whose model is separate from the parent session.
+    pub is_subagent: bool,
+    /// True when the payload represents an explicit mid-session model switch (`PostModelSwitch`).
+    pub model_switch: bool,
 }
 
 /// A parsed hook payload: the invocation and any model metadata it carried.

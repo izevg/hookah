@@ -34,6 +34,9 @@ pub(super) fn parse_event(stdin: &str) -> Result<Parsed, PayloadError> {
     let model = ModelHint {
         model: clean_model(payload.model.clone()),
         transcript: clean_transcript(payload.transcript_path.clone(), payload.cwd.as_deref()),
+        session: payload.session_id.clone().filter(|s| !s.is_empty()),
+        cwd: payload.cwd.clone().filter(|c| c.is_absolute()),
+        ..ModelHint::default()
     };
     let invocation = match payload.hook_event_name.as_deref() {
         Some("PostToolUse") => edit(&payload)?,

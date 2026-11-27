@@ -8,6 +8,7 @@ use std::process::{Command, Output, Stdio};
 fn run(args: &[&str], stdin: &str) -> Output {
     let mut child = Command::new(env!("CARGO_BIN_EXE_hookah"))
         .args(args)
+        .env_remove("HOOKAH_MODELS")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

@@ -43,6 +43,11 @@ impl ModelFilter {
         matches!(self, Self::All)
     }
 
+    /// True when the filter explicitly excludes every model (`models = []`).
+    pub fn is_empty(&self) -> bool {
+        matches!(self, Self::Only(patterns) if patterns.is_empty())
+    }
+
     /// The configured patterns, or `None` when every model is allowed.
     pub fn patterns(&self) -> Option<&[String]> {
         match self {

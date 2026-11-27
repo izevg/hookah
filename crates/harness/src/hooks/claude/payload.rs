@@ -27,6 +27,7 @@ struct Payload {
     cwd: Option<PathBuf>,
     model: Option<String>,
     transcript_path: Option<PathBuf>,
+    agent_id: Option<String>,
     agent_transcript_path: Option<PathBuf>,
     tool_name: Option<String>,
     tool_input: Option<ToolInput>,
@@ -47,7 +48,10 @@ pub fn parse(stdin: &str) -> Result<Invocation, PayloadError> {
 /// Parses a Claude Code hook payload along with its model metadata.
 pub fn parse_event(stdin: &str) -> Result<Parsed, PayloadError> {
     let p: Payload = serde_json::from_str(stdin).map_err(|e| PayloadError(e.to_string()))?;
-    let transcript_raw = if p.hook_event_name.as_deref() == Some("SubagentStop") {
+    let is_subagent = p.hook_event_name.as_deref() == Some("SubagentStop")
+        || p.agent_transcript_path.is_some()
+        || p.agent_id.as_deref().is_some_and(|id| !id.is_empty());
+    let transcript_raw = if is_subagent {
         p.agent_transcript_path
             .clone()
             .or(p.transcript_path.clone())
@@ -57,6 +61,10 @@ pub fn parse_event(stdin: &str) -> Result<Parsed, PayloadError> {
     let model = ModelHint {
         model: clean_model(p.model.clone()),
         transcript: clean_transcript(transcript_raw, p.cwd.as_deref()),
+        session: p.session_id.clone().filter(|s| !s.is_empty()),
+        cwd: p.cwd.clone().filter(|c| c.is_absolute()),
+        is_subagent,
+        model_switch: p.hook_event_name.as_deref() == Some("PostModelSwitch"),
     };
     let invocation = match p.hook_event_name.as_deref() {
         Some("PostToolUse") => edit(&p)?,
@@ -273,5 +281,16 @@ mod tests {
         let parsed = parse_event(&sub).unwrap();
         assert_eq!(parsed.model.model, None);
         assert_eq!(parsed.model.transcript, Some(abs("/w/sub.jsonl")));
+        assert!(parsed.model.is_subagent);
+
+        let sw = os_json(
+            r#"{"session_id":"s","cwd":"/w","hook_event_name":"PostModelSwitch",
+            "model":"claude-opus-4-6"}"#,
+        );
+        let parsed = parse_event(&sw).unwrap();
+        assert_eq!(parsed.invocation, Invocation::Ignore);
+        assert_eq!(parsed.model.model.as_deref(), Some("claude-opus-4-6"));
+        assert!(parsed.model.model_switch);
+        assert!(!parsed.model.is_subagent);
     }
 }

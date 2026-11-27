@@ -113,6 +113,9 @@ pub fn parse(stdin: &str) -> Result<Payload, PayloadError> {
     let model = ModelHint {
         model: clean_model(input.model),
         transcript: clean_transcript(input.transcript_path, roots.first().map(PathBuf::as_path)),
+        session: (!session.is_empty()).then(|| session.clone()),
+        cwd: roots.first().cloned(),
+        ..ModelHint::default()
     };
     Ok(Payload {
         session,

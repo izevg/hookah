@@ -157,9 +157,14 @@ def register(ctx):
                 if len(models) > 64:
                     models.clear()
                 models[session_id] = model
-            models[""] = model
             return model
-        return models.get(session_id) or models.get("")
+        return models.get(session_id) if session_id else None
+
+    def on_llm_call(session_id="", task_id="", **kwargs):
+        try:
+            _model_for(session_id or task_id or "", kwargs)
+        except Exception:
+            pass
 
     def on_session_start(session_id="", **kwargs):
         try:
@@ -224,5 +229,9 @@ def register(ctx):
         return None
 
     ctx.register_hook("on_session_start", on_session_start)
+    try:
+        ctx.register_hook("pre_llm_call", on_llm_call)
+    except Exception:
+        pass
     ctx.register_hook("transform_tool_result", on_result)
     ctx.register_hook("pre_verify", on_verify)

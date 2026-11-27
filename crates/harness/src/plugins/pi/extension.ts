@@ -75,7 +75,9 @@ export default function (pi: ExtensionAPI) {
     try {
       const m = ctx.model as { provider?: string; id?: string } | undefined
       if (!m?.id) return undefined
-      return m.provider && !m.id.includes("/") ? `${m.provider}/${m.id}` : m.id
+      if (!m.provider) return m.id
+      const prefix = `${m.provider}/`
+      return m.id.toLowerCase().startsWith(prefix.toLowerCase()) ? m.id : `${prefix}${m.id}`
     } catch {
       return undefined
     }

@@ -103,6 +103,7 @@ the allow-list.
    description: Runs the project's own format, lint, and test checks on what the agent edits.
    provides_hooks:
      - on_session_start
+     - pre_llm_call
      - transform_tool_result
      - pre_verify
    ```

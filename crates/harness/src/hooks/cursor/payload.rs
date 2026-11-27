@@ -69,6 +69,9 @@ pub fn parse_event(stdin: &str) -> Result<Parsed, PayloadError> {
     let model = ModelHint {
         model: clean_model(p.model.clone()),
         transcript: clean_transcript(p.transcript_path.clone(), p.root()),
+        session: p.session(),
+        cwd: p.root().map(Path::to_path_buf),
+        ..ModelHint::default()
     };
     let invocation = match p.hook_event_name.as_deref() {
         Some("afterFileEdit") => edit(&p)?,

@@ -199,16 +199,18 @@ omitting `models` inherits it):
 |---------|--------|
 | Codex CLI | `model` field in `SessionStart`, `PostToolUse`, and `Stop` payloads |
 | Cursor | `model` field in common hook payload fields (may be omitted by `cursor-agent`) |
-| Claude Code | `model` on `SessionStart`; latest assistant `message.model` from `transcript_path` (or `agent_transcript_path` on `SubagentStop`) on `PostToolUse` and `Stop` |
+| Claude Code | `model` on `SessionStart` and `PostModelSwitch` (cached per session); latest assistant `message.model` from `transcript_path` (or `agent_transcript_path` on `SubagentStop`) on `PostToolUse` and `Stop` |
 | Pi | active `ctx.model` (`provider/id`) sent by the bundled extension (`hookah setup pi`) |
-| opencode | active session model (`provider/id`) tracked by the bundled plugin (`hookah setup opencode`) |
-| OpenClaw | active session model (`provider/id`) tracked by the bundled plugin (`hookah setup openclaw`) |
-| Hermes Agent | `model` forwarded by the bundled plugin when Hermes passes it (`hookah setup hermes`) |
+| opencode | active session model (`provider/id`) tracked by the bundled plugin (`hookah setup opencode`); top-level session baselines wait for the first model-bearing event |
+| OpenClaw | active session model (`provider/id`) tracked per session by the bundled plugin (`hookah setup openclaw`) |
+| Hermes Agent | `model` tracked per session from `on_session_start`, `pre_llm_call`, tool results, and `pre_verify` (`hookah setup hermes`) |
 | Antigravity, Kimi Code, Qoder, ZCode | read if `model` (or a JSONL transcript) is present; currently not sent by those harnesses, so hooks are skipped when `models` is restricted |
 
-Re-run `hookah setup <harness>` (or `hookah plugin <harness>`) after upgrading `hookah` if you use
-a bundled plugin so it forwards the `model` field. `hookah config` prints the effective `models`
-line and where it came from.
+In a monorepo with nested projects, `Start` and `Stop` evaluate each discovered project against
+its own configuration, so a child `.hookah.toml` can enable or disable hooks independently of the
+repository root. Re-run `hookah setup <harness>` (or `hookah plugin <harness>`) after upgrading
+`hookah` if you use a bundled plugin so it forwards the `model` field. `hookah config` prints the
+effective `models` line and where it came from.
 
 ## The `[update]` table: self-update
 

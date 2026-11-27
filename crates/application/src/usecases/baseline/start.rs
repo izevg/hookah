@@ -4,7 +4,7 @@
 //! monorepo root holds none itself), and starts their baseline jobs in the background. A project
 //! the agent edits later without having one gets its baseline lazily, on its first edit.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use hookah_domain::project::{Project, locate_project};
 
@@ -20,12 +20,27 @@ const MAX_PROJECTS: usize = 8;
 /// Starts the baseline of the session's project.
 pub struct StartSession<'a> {
     ports: Ports<'a>,
+    allow_dir: Option<&'a dyn Fn(&Path) -> bool>,
 }
 
 impl<'a> StartSession<'a> {
     /// Creates the use case.
     pub fn new(ports: Ports<'a>) -> Self {
-        Self { ports }
+        Self {
+            ports,
+            allow_dir: None,
+        }
+    }
+
+    /// Limits baseline jobs to discovered project roots that satisfy `allow`.
+    #[must_use]
+    pub fn with_dir_filter(mut self, allow: &'a dyn Fn(&Path) -> bool) -> Self {
+        self.allow_dir = Some(allow);
+        self
+    }
+
+    fn allows(&self, dir: &Path) -> bool {
+        self.allow_dir.is_none_or(|allow| allow(dir))
     }
 
     /// Never fails: problems become a degraded outcome.
@@ -35,13 +50,21 @@ impl<'a> StartSession<'a> {
         let mut dirs = vec![request.cwd.clone()];
         match self.ports.locator.nested_roots(&request.cwd, NESTED_DEPTH) {
             Ok(nested) => dirs.extend(nested),
-            Err(e) => problem = Some(format!("looking for nested projects: {e}")),
+            Err(e) if self.allows(&request.cwd) => {
+                problem = Some(format!("looking for nested projects: {e}"));
+            }
+            Err(_) => {}
         }
         for dir in dirs {
             match self.project_at(&dir) {
-                Ok(Some(project)) if !roots.contains(&project.root) => roots.push(project.root),
+                Ok(Some(project))
+                    if self.allows(&project.root) && !roots.contains(&project.root) =>
+                {
+                    roots.push(project.root);
+                }
                 Ok(_) => {}
-                Err(reason) => problem = problem.or(Some(reason)),
+                Err(reason) if self.allows(&dir) => problem = problem.or(Some(reason)),
+                Err(_) => {}
             }
         }
         roots.truncate(MAX_PROJECTS);

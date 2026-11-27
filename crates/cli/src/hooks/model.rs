@@ -1,23 +1,137 @@
 //! Model gate for hook invocations.
 //!
-//! Resolves the effective [`ModelFilter`](hookah_domain::model::ModelFilter) for the directory a
-//! hook targets. When no restriction is configured (the default), every invocation runs without
-//! touching the transcript. When a restriction is configured, the invocation runs only if the
-//! harness reported a matching model directly or through its session transcript.
+//! Resolves the effective [`ModelFilter`] per target directory and caches both directory configs
+//! and the active model for the duration of a single hook invocation.
+//!
+//! - When a directory has no model restriction (`ModelFilter::All`), `allows` returns `true`
+//!   without reading the transcript or session-model cache.
+//! - When a directory explicitly disables hooks (`models = []`), `allows` returns `false` without
+//!   reading the transcript or session-model cache.
+//! - Otherwise the active model is resolved lazily once per hook invocation (direct `model` field,
+//!   else session-model / transcript fallback) and reused across every file or nested project.
 
+use std::cell::{Cell, RefCell};
+use std::collections::{HashMap, HashSet};
 use std::io::Write;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use hookah_adapters::config::env::{Host, resolve};
+use hookah_adapters::store::session_model;
 use hookah_adapters::transcript;
 use hookah_application::EditRequest;
-use hookah_harness::protocol::{Invocation, ModelHint};
+use hookah_domain::model::ModelFilter;
+use hookah_harness::protocol::{Invocation, ModelHint, canonical_dir};
 
-/// Whether a hook event targeting `dir` should run for the model described by `hint`.
-pub(crate) fn allows(dir: &Path, hint: &ModelHint) -> bool {
-    allows_with(dir, hint, &Host::from_process(), |w| {
-        let _ = writeln!(std::io::stderr(), "hookah: warning: config: {w}");
-    })
+/// Cached per-invocation model evaluator.
+pub(crate) struct ModelGate<'a> {
+    hint: &'a ModelHint,
+    host: Host,
+    filters: RefCell<HashMap<PathBuf, (ModelFilter, Vec<String>)>>,
+    resolved_model: RefCell<Option<Option<String>>>,
+    warned: RefCell<HashSet<String>>,
+    any_allowed: Cell<bool>,
+    warn_stderr: bool,
+}
+
+impl<'a> ModelGate<'a> {
+    /// Builds a gate backed by the current process environment.
+    pub(crate) fn new(hint: &'a ModelHint) -> Self {
+        Self::with_host(hint, Host::from_process(), true)
+    }
+
+    fn with_host(hint: &'a ModelHint, host: Host, warn_stderr: bool) -> Self {
+        Self {
+            hint,
+            host,
+            filters: RefCell::new(HashMap::new()),
+            resolved_model: RefCell::new(None),
+            warned: RefCell::new(HashSet::new()),
+            any_allowed: Cell::new(false),
+            warn_stderr,
+        }
+    }
+
+    /// True if at least one `allows` check on this gate returned `true`.
+    pub(crate) fn any_allowed(&self) -> bool {
+        self.any_allowed.get()
+    }
+
+    /// Whether a hook event targeting `dir` should run for the active model.
+    pub(crate) fn allows(&self, dir: &Path) -> bool {
+        let (filter, warnings) = self.filter_for(dir);
+        if filter.is_all() {
+            self.any_allowed.set(true);
+            return true;
+        }
+        if filter.is_empty() {
+            self.emit_warnings(&warnings);
+            return false;
+        }
+        let model = self.active_model();
+        let allowed = filter.allows(model.as_deref());
+        if allowed {
+            self.any_allowed.set(true);
+        } else {
+            self.emit_warnings(&warnings);
+        }
+        allowed
+    }
+
+    fn filter_for(&self, dir: &Path) -> (ModelFilter, Vec<String>) {
+        if let Some(cached) = self.filters.borrow().get(dir) {
+            return cached.clone();
+        }
+        let found = resolve(dir, &self.host);
+        let entry = (found.models.filter, found.warnings);
+        self.filters
+            .borrow_mut()
+            .insert(dir.to_path_buf(), entry.clone());
+        entry
+    }
+
+    fn active_model(&self) -> Option<String> {
+        if let Some(cached) = self.resolved_model.borrow().as_ref() {
+            return cached.clone();
+        }
+        let model = resolve_model(self.hint);
+        *self.resolved_model.borrow_mut() = Some(model.clone());
+        model
+    }
+
+    fn emit_warnings(&self, warnings: &[String]) {
+        if !self.warn_stderr {
+            return;
+        }
+        let mut seen = self.warned.borrow_mut();
+        for w in warnings {
+            if seen.insert(w.clone()) {
+                let _ = writeln!(std::io::stderr(), "hookah: warning: config: {w}");
+            }
+        }
+    }
+}
+
+/// Persists the session's active model when a main-session `SessionStart` or `PostModelSwitch`
+/// event carries one, so subsequent hooks in the same session can resolve it reliably even when
+/// asynchronous transcript writes lag.
+pub(crate) fn record_session_model(invocation: &Invocation, hint: &ModelHint) {
+    if hint.is_subagent {
+        return;
+    }
+    let Some(model) = hint.model.as_deref() else {
+        return;
+    };
+    let Some(session) = hint.session.as_deref() else {
+        return;
+    };
+    let cwd = match invocation {
+        Invocation::Start(req) => Some(req.cwd.as_path()),
+        _ if hint.model_switch => hint.cwd.as_deref(),
+        _ => None,
+    };
+    if let Some(cwd) = cwd {
+        session_model::record(&canonical_dir(cwd), session, model, hint.model_switch);
+    }
 }
 
 /// The directory whose config governs `request`.
@@ -25,48 +139,14 @@ pub(crate) fn edit_dir(request: &EditRequest) -> &Path {
     request.file.parent().unwrap_or(&request.display_root)
 }
 
-/// Drops any part of `invocation` whose target directory's config excludes the model in `hint`.
-pub(crate) fn filter_invocation(invocation: Invocation, hint: &ModelHint) -> Invocation {
-    filter_invocation_with(invocation, hint, &Host::from_process(), |w| {
-        let _ = writeln!(std::io::stderr(), "hookah: warning: config: {w}");
-    })
-}
-
-fn allows_with(dir: &Path, hint: &ModelHint, host: &Host, mut warn: impl FnMut(&str)) -> bool {
-    let found = resolve(dir, host);
-    if found.models.filter.is_all() {
-        return true;
-    }
-    let resolved;
-    let model = match hint.model.as_deref() {
-        Some(m) => Some(m),
-        None => {
-            resolved = hint
-                .transcript
-                .as_deref()
-                .and_then(transcript::latest_model);
-            resolved.as_deref()
-        }
-    };
-    let allowed = found.models.filter.allows(model);
-    if !allowed {
-        for w in &found.warnings {
-            warn(w);
-        }
-    }
-    allowed
-}
-
-fn filter_invocation_with(
-    invocation: Invocation,
-    hint: &ModelHint,
-    host: &Host,
-    mut warn: impl FnMut(&str),
-) -> Invocation {
+/// Filters file-level edit invocations through `gate`.
+///
+/// `Start` and `Stop` are not gated here because they discover nested projects below `cwd`/`root`
+/// and apply `gate` per discovered project inside `StartSession` and `CheckSession`.
+pub(crate) fn filter_edits(invocation: Invocation, gate: &ModelGate<'_>) -> Invocation {
     match invocation {
-        Invocation::Ignore => Invocation::Ignore,
         Invocation::Edit(req) => {
-            if allows_with(edit_dir(&req), hint, host, &mut warn) {
+            if gate.allows(edit_dir(&req)) {
                 Invocation::Edit(req)
             } else {
                 Invocation::Ignore
@@ -75,7 +155,7 @@ fn filter_invocation_with(
         Invocation::EditBatch(reqs) => {
             let kept: Vec<_> = reqs
                 .into_iter()
-                .filter(|r| allows_with(edit_dir(r), hint, host, &mut warn))
+                .filter(|r| gate.allows(edit_dir(r)))
                 .collect();
             if kept.is_empty() {
                 Invocation::Ignore
@@ -83,27 +163,26 @@ fn filter_invocation_with(
                 Invocation::EditBatch(kept)
             }
         }
-        Invocation::Stop {
-            request,
-            already_continuing,
-        } => {
-            if allows_with(&request.root, hint, host, &mut warn) {
-                Invocation::Stop {
-                    request,
-                    already_continuing,
-                }
-            } else {
-                Invocation::Ignore
-            }
-        }
-        Invocation::Start(req) => {
-            if allows_with(&req.cwd, hint, host, &mut warn) {
-                Invocation::Start(req)
-            } else {
-                Invocation::Ignore
-            }
-        }
+        other => other,
     }
+}
+
+fn resolve_model(hint: &ModelHint) -> Option<String> {
+    if let Some(model) = hint.model.clone() {
+        return Some(model);
+    }
+    if let Some(cwd) = hint.cwd.as_deref() {
+        let canonical = canonical_dir(cwd);
+        return session_model::resolve(
+            &canonical,
+            hint.session.as_deref(),
+            hint.transcript.as_deref(),
+            !hint.is_subagent,
+        );
+    }
+    hint.transcript
+        .as_deref()
+        .and_then(transcript::latest_model)
 }
 
 #[cfg(test)]
@@ -112,8 +191,6 @@ mod tests {
     use std::fs;
     use std::path::PathBuf;
     use std::sync::atomic::{AtomicUsize, Ordering};
-
-    use hookah_application::{StartRequest, StopRequest};
 
     use super::*;
 
@@ -125,7 +202,7 @@ mod tests {
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
         fs::create_dir_all(&dir).unwrap();
-        hookah_harness::protocol::canonical_dir(&dir)
+        canonical_dir(&dir)
     }
 
     fn quiet_host() -> Host {
@@ -142,59 +219,35 @@ mod tests {
         fs::create_dir_all(file.parent().unwrap()).unwrap();
         let req = EditRequest::new(&file, &dir);
 
-        // No config: runs even without a model.
-        let kept = filter_invocation_with(
-            Invocation::Edit(req.clone()),
-            &ModelHint::default(),
-            &quiet_host(),
-            |_| {},
+        let empty_hint = ModelHint::default();
+        let gate = ModelGate::with_host(&empty_hint, quiet_host(), false);
+        assert_eq!(
+            filter_edits(Invocation::Edit(req.clone()), &gate),
+            Invocation::Edit(req.clone())
         );
-        assert_eq!(kept, Invocation::Edit(req.clone()));
 
-        // Restricted config: matching model passes, non-matching and unknown become Ignore.
         fs::write(dir.join(".hookah.toml"), "models = [\"claude-sonnet-*\"]\n").unwrap();
         let yes = ModelHint {
             model: Some("claude-sonnet-4-6".into()),
-            transcript: None,
+            ..ModelHint::default()
         };
         let no = ModelHint {
             model: Some("claude-opus-4-6".into()),
-            transcript: None,
+            ..ModelHint::default()
         };
+        let yes_gate = ModelGate::with_host(&yes, quiet_host(), false);
         assert_eq!(
-            filter_invocation_with(Invocation::Edit(req.clone()), &yes, &quiet_host(), |_| {}),
+            filter_edits(Invocation::Edit(req.clone()), &yes_gate),
             Invocation::Edit(req.clone())
         );
+        let no_gate = ModelGate::with_host(&no, quiet_host(), false);
         assert_eq!(
-            filter_invocation_with(Invocation::Edit(req.clone()), &no, &quiet_host(), |_| {}),
+            filter_edits(Invocation::Edit(req.clone()), &no_gate),
             Invocation::Ignore
         );
+        let unknown_gate = ModelGate::with_host(&empty_hint, quiet_host(), false);
         assert_eq!(
-            filter_invocation_with(
-                Invocation::Edit(req),
-                &ModelHint::default(),
-                &quiet_host(),
-                |_| {}
-            ),
-            Invocation::Ignore
-        );
-
-        // Start and Stop follow the same rule.
-        let stop = Invocation::Stop {
-            request: StopRequest::new(&dir),
-            already_continuing: false,
-        };
-        assert_eq!(
-            filter_invocation_with(stop.clone(), &no, &quiet_host(), |_| {}),
-            Invocation::Ignore
-        );
-        assert_eq!(
-            filter_invocation_with(stop.clone(), &yes, &quiet_host(), |_| {}),
-            stop
-        );
-        let start = Invocation::Start(StartRequest::new(&dir, "s"));
-        assert_eq!(
-            filter_invocation_with(start, &no, &quiet_host(), |_| {}),
+            filter_edits(Invocation::Edit(req), &unknown_gate),
             Invocation::Ignore
         );
 
@@ -202,9 +255,9 @@ mod tests {
     }
 
     #[test]
-    fn falls_back_to_transcript_when_payload_has_no_model() {
+    fn falls_back_to_transcript_once_and_skips_it_for_empty_filter() {
         let dir = scratch("transcript");
-        fs::write(dir.join(".hookah.toml"), "models = [\"claude-opus-*\"]\n").unwrap();
+        fs::write(dir.join(".hookah.toml"), "models = []\n").unwrap();
         let transcript = dir.join("session.jsonl");
         fs::write(
             &transcript,
@@ -212,10 +265,25 @@ mod tests {
         )
         .unwrap();
         let hint = ModelHint {
-            model: None,
-            transcript: Some(transcript),
+            transcript: Some(transcript.clone()),
+            ..ModelHint::default()
         };
-        assert!(allows_with(&dir, &hint, &quiet_host(), |_| {}));
+
+        // Empty filter short-circuits before touching the transcript.
+        let empty_gate = ModelGate::with_host(&hint, quiet_host(), false);
+        assert!(!empty_gate.allows(&dir));
+        assert!(empty_gate.resolved_model.borrow().is_none());
+
+        // Restrictive filter resolves the transcript once and caches it for later files.
+        fs::write(dir.join(".hookah.toml"), "models = [\"claude-opus-*\"]\n").unwrap();
+        let gate = ModelGate::with_host(&hint, quiet_host(), false);
+        assert!(gate.allows(&dir));
+        let _ = fs::remove_file(&transcript);
+        assert!(
+            gate.allows(&dir),
+            "reuses cached model instead of rereading"
+        );
+
         let _ = fs::remove_dir_all(dir);
     }
 
@@ -233,14 +301,10 @@ mod tests {
         let req_b = EditRequest::new(b.join("y.rs"), &dir);
         let hint = ModelHint {
             model: Some("gpt-5.3-codex".into()),
-            transcript: None,
+            ..ModelHint::default()
         };
-        let filtered = filter_invocation_with(
-            Invocation::EditBatch(vec![req_a.clone(), req_b]),
-            &hint,
-            &quiet_host(),
-            |_| {},
-        );
+        let gate = ModelGate::with_host(&hint, quiet_host(), false);
+        let filtered = filter_edits(Invocation::EditBatch(vec![req_a.clone(), req_b]), &gate);
         assert_eq!(filtered, Invocation::EditBatch(vec![req_a]));
         let _ = fs::remove_dir_all(dir);
     }

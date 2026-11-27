@@ -18,6 +18,8 @@
 //! lacks become non-blocking `MissingTool` notices. Finding paths are rendered relative to the
 //! request's display root, so projects in a monorepo stay distinguishable.
 
+use std::path::Path;
+
 use hookah_domain::finding::Severity;
 use hookah_domain::light::{Admission, Budgets};
 use hookah_domain::project::locate_project;
@@ -36,6 +38,7 @@ pub struct CheckSession<'a> {
     ports: Ports<'a>,
     report_limit: usize,
     budgets: Budgets,
+    allow_dir: Option<&'a dyn Fn(&Path) -> bool>,
 }
 
 impl<'a> CheckSession<'a> {
@@ -45,6 +48,7 @@ impl<'a> CheckSession<'a> {
             ports,
             report_limit,
             budgets: Budgets::default(),
+            allow_dir: None,
         }
     }
 
@@ -55,14 +59,27 @@ impl<'a> CheckSession<'a> {
         self
     }
 
+    /// Limits checks to changed files whose directory satisfies `allow`.
+    #[must_use]
+    pub fn with_dir_filter(mut self, allow: &'a dyn Fn(&Path) -> bool) -> Self {
+        self.allow_dir = Some(allow);
+        self
+    }
+
+    fn allows(&self, dir: &Path) -> bool {
+        self.allow_dir.is_none_or(|allow| allow(dir))
+    }
+
     /// Runs the stop phase. Never panics and never fails on a port error.
     pub fn run(&self, request: &StopRequest) -> Outcome {
         let files = match self.ports.changes.changed_files(&request.root) {
             Ok(f) => f,
+            Err(_) if !self.allows(&request.root) => return Outcome::pass(),
             Err(e) => return Outcome::degraded(format!("reading changes: {e}")),
         };
         let mut total = RunLog::default();
         let mut set = ChangeSet::new();
+        let mut filtered_out = false;
         for file in &files {
             match self.ports.locator.manifests_above(file) {
                 Err(e) => total.fail(format!("locating project: {e}")),
@@ -70,7 +87,11 @@ impl<'a> CheckSession<'a> {
                     if let Some(p) = locate_project(file, &manifests)
                         && p.ecosystem.can_check(file)
                     {
-                        set.add(&p, file);
+                        if self.allows(file.parent().unwrap_or(&p.root)) {
+                            set.add(&p, file);
+                        } else {
+                            filtered_out = true;
+                        }
                     }
                 }
             }
@@ -218,7 +239,7 @@ impl<'a> CheckSession<'a> {
             );
             total.absorb(log);
         }
-        if !checked {
+        if !checked && !filtered_out && self.allows(&request.root) {
             self.record_clean(&request.root);
         }
         total.finish(self.report_limit)
@@ -240,7 +261,9 @@ impl<'a> CheckSession<'a> {
         let Ok(manifests) = self.ports.locator.manifests_above(&probe) else {
             return;
         };
-        if let Some(project) = locate_project(&probe, &manifests) {
+        if let Some(project) = locate_project(&probe, &manifests)
+            && self.allows(&project.root)
+        {
             record(&self.ports, &project.root, Phase::Stop, &Verdict::Pass);
         }
     }

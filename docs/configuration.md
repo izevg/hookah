@@ -199,18 +199,55 @@ omitting `models` inherits it):
 |---------|--------|
 | Codex CLI | `model` field in `SessionStart`, `PostToolUse`, and `Stop` payloads |
 | Cursor | `model` field in common hook payload fields (may be omitted by `cursor-agent`) |
-| Claude Code | `model` on `SessionStart` and `PostModelSwitch` (cached per session); latest assistant `message.model` from `transcript_path` (or `agent_transcript_path` on `SubagentStop`) on `PostToolUse` and `Stop` |
+| Claude Code | `model` on `SessionStart` and `to_model` on `PostModelSwitch` (registered by `hookah setup claude` and cached per session when `models` is restricted); latest assistant `message.model` from `transcript_path` (or `agent_transcript_path` on `SubagentStop`) on `PostToolUse` and `Stop` |
+| Antigravity CLI | `modelName` field in `SessionStart`, `PreInvocation`, and `Stop` payloads (cached per conversation when `models` is restricted so `PostToolUse` resolves it too) |
 | Pi | active `ctx.model` (`provider/id`) sent by the bundled extension (`hookah setup pi`) |
-| opencode | active session model (`provider/id`) tracked by the bundled plugin (`hookah setup opencode`); top-level session baselines wait for the first model-bearing event |
+| opencode | active session model (`provider/id`) tracked by the bundled plugin (`hookah setup opencode`); `session.created` starts as before and a non-blocking `start` runs once the first model-bearing event arrives so filtered sessions still get a baseline |
 | OpenClaw | active session model (`provider/id`) tracked per session by the bundled plugin (`hookah setup openclaw`) |
 | Hermes Agent | `model` tracked per session from `on_session_start`, `pre_llm_call`, tool results, and `pre_verify` (`hookah setup hermes`) |
-| Antigravity, Kimi Code, Qoder, ZCode | read if `model` (or a JSONL transcript) is present; currently not sent by those harnesses, so hooks are skipped when `models` is restricted |
+| Kimi Code, Qoder, ZCode | read if `model` (or a JSONL transcript) is present; currently not sent by those harnesses, so hooks are skipped when `models` is restricted |
 
 In a monorepo with nested projects, `Start` and `Stop` evaluate each discovered project against
 its own configuration, so a child `.hookah.toml` can enable or disable hooks independently of the
-repository root. Re-run `hookah setup <harness>` (or `hookah plugin <harness>`) after upgrading
-`hookah` if you use a bundled plugin so it forwards the `model` field. `hookah config` prints the
-effective `models` line and where it came from.
+repository root. The model filter gates hook checks only: self-update notices on `SessionStart`
+remain governed by `[update]` / `HOOKAH_NO_UPDATE`, and no per-session model cache file is written
+when `models` is unset.
+
+After upgrading `hookah`, re-run `hookah setup <harness>` if you use Claude Code (to add
+`PostModelSwitch`) or a bundled plugin (to update the installed plugin file; for manual single-file
+installs, redirect `hookah plugin opencode > .opencode/plugins/hookah.ts` or
+`hookah plugin pi > .pi/extensions/hookah.ts`).
+
+**Verifying the filter:**
+
+Check the effective `models` patterns and test specific model identifiers without running any checks:
+
+```console
+$ hookah config --model claude-sonnet-4-6
+...
+models: claude-sonnet-*, gpt-5*  (/path/to/.hookah.toml)
+model check: claude-sonnet-4-6 -> allow (matches pattern "claude-sonnet-*")
+
+$ hookah config --model claude-opus-4-6
+...
+models: claude-sonnet-*, gpt-5*  (/path/to/.hookah.toml)
+model check: claude-opus-4-6 -> skip (does not match configured models: claude-sonnet-*, gpt-5*)
+```
+
+To verify what model identifier `hookah` extracts from a real harness hook payload (including
+session-cache and transcript fallback) and why it would allow or skip the hook, pipe a sample
+payload into `hookah config --hook <harness>`:
+
+```console
+$ printf '%s\n' '{"conversationId":"s","workspacePaths":["'"$PWD"'"],"modelName":"gemini-4-neon-low"}' \
+    | hookah config --hook antigravity
+harness: antigravity
+event: start
+model: gemini-4-neon-low (payload)
+scope: /path/to/project
+models: claude-sonnet-*, gpt-5*  (/path/to/.hookah.toml)
+decision: skip (does not match configured models: claude-sonnet-*, gpt-5*)
+```
 
 ## The `[update]` table: self-update
 

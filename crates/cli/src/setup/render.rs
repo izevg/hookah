@@ -151,7 +151,7 @@ mod tests {
             out,
             "hookah setup: claude, project scope\n\
              created .claude/settings.json\n\
-             hooks: SessionStart, PostToolUse, Stop, SubagentStop run `/b/hookah hook claude`\n\
+             hooks: SessionStart, PostModelSwitch, PostToolUse, Stop, SubagentStop run `/b/hookah hook claude`\n\
              verify: run `/b/hookah setup --detect` (it should list claude as configured), then `/b/hookah detect <a source file>`\n\
              next: Restart Claude Code, or run /hooks in it to review and approve the new hooks.\n"
         );

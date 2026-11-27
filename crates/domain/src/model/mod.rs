@@ -19,6 +19,31 @@ pub enum ModelFilter {
     Only(Vec<String>),
 }
 
+/// The outcome and reason of evaluating a [`ModelFilter`] against a reported model identifier.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ModelDecision {
+    /// No model restriction is configured (`ModelFilter::All`).
+    AllowAll,
+    /// The reported model matched this configured pattern.
+    AllowMatch {
+        /// The first configured pattern that matched.
+        pattern: String,
+    },
+    /// Hooks are explicitly disabled (`models = []`).
+    SkipDisabled,
+    /// A restriction is active, but the hook reported no model identifier.
+    SkipMissing,
+    /// A restriction is active and none of the configured patterns matched.
+    SkipMismatch,
+}
+
+impl ModelDecision {
+    /// True when the hook invocation should run.
+    pub fn is_allowed(&self) -> bool {
+        matches!(self, Self::AllowAll | Self::AllowMatch { .. })
+    }
+}
+
 impl ModelFilter {
     /// Builds a filter from raw configured patterns.
     ///
@@ -56,17 +81,31 @@ impl ModelFilter {
         }
     }
 
-    /// Whether a hook invocation with the reported `model` should run.
-    pub fn allows(&self, model: Option<&str>) -> bool {
+    /// Evaluates whether a hook invocation with the reported `model` should run, and why.
+    pub fn decide(&self, model: Option<&str>) -> ModelDecision {
         match self {
-            Self::All => true,
+            Self::All => ModelDecision::AllowAll,
+            Self::Only(patterns) if patterns.is_empty() => ModelDecision::SkipDisabled,
             Self::Only(patterns) => {
                 let Some(model) = model.map(str::trim).filter(|m| !m.is_empty()) else {
-                    return false;
+                    return ModelDecision::SkipMissing;
                 };
-                patterns.iter().any(|pattern| model_matches(pattern, model))
+                match patterns
+                    .iter()
+                    .find(|pattern| model_matches(pattern, model))
+                {
+                    Some(pattern) => ModelDecision::AllowMatch {
+                        pattern: pattern.clone(),
+                    },
+                    None => ModelDecision::SkipMismatch,
+                }
             }
         }
+    }
+
+    /// Whether a hook invocation with the reported `model` should run.
+    pub fn allows(&self, model: Option<&str>) -> bool {
+        self.decide(model).is_allowed()
     }
 }
 
@@ -217,5 +256,27 @@ mod tests {
         let pat = "*a*a*a*a*a*a*a*a*a*a*b";
         let text = "a".repeat(64);
         assert!(!model_matches(pat, &text));
+    }
+
+    #[test]
+    fn decide_reports_exact_reason_for_allow_and_skip() {
+        assert_eq!(ModelFilter::All.decide(None), ModelDecision::AllowAll);
+        assert_eq!(
+            ModelFilter::Only(vec![]).decide(Some("gpt-5")),
+            ModelDecision::SkipDisabled
+        );
+        let filter = ModelFilter::from_patterns(["claude-sonnet-*".into(), "gpt-5*".into()]);
+        assert_eq!(filter.decide(None), ModelDecision::SkipMissing);
+        assert_eq!(filter.decide(Some("  ")), ModelDecision::SkipMissing);
+        assert_eq!(
+            filter.decide(Some("anthropic/claude-sonnet-4-6")),
+            ModelDecision::AllowMatch {
+                pattern: "claude-sonnet-*".into()
+            }
+        );
+        assert_eq!(
+            filter.decide(Some("claude-opus-4-6")),
+            ModelDecision::SkipMismatch
+        );
     }
 }

@@ -22,6 +22,17 @@ use hookah_application::EditRequest;
 use hookah_domain::model::ModelFilter;
 use hookah_harness::protocol::{Invocation, ModelHint, canonical_dir};
 
+/// Where a hook's active model identifier came from.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum ModelSource {
+    /// Directly reported in the hook payload.
+    Payload,
+    /// Cached from an earlier session event (`SessionStart`, `PostModelSwitch`, `PreInvocation`).
+    SessionCache,
+    /// Read from the latest real model entry in the session transcript JSONL file.
+    Transcript(PathBuf),
+}
+
 /// Cached per-invocation model evaluator.
 pub(crate) struct ModelGate<'a> {
     hint: &'a ModelHint,
@@ -30,6 +41,7 @@ pub(crate) struct ModelGate<'a> {
     resolved_model: RefCell<Option<Option<String>>>,
     warned: RefCell<HashSet<String>>,
     any_allowed: Cell<bool>,
+    any_restricted: Cell<bool>,
     warn_stderr: bool,
 }
 
@@ -47,6 +59,7 @@ impl<'a> ModelGate<'a> {
             resolved_model: RefCell::new(None),
             warned: RefCell::new(HashSet::new()),
             any_allowed: Cell::new(false),
+            any_restricted: Cell::new(false),
             warn_stderr,
         }
     }
@@ -56,6 +69,20 @@ impl<'a> ModelGate<'a> {
         self.any_allowed.get()
     }
 
+    /// True if any directory checked by this gate had a model restriction configured.
+    pub(crate) fn any_restricted(&self) -> bool {
+        self.any_restricted.get()
+    }
+
+    /// True if `dir` has no model restriction (`ModelFilter::All`).
+    pub(crate) fn is_all(&self, dir: &Path) -> bool {
+        let is_all = self.filter_for(dir).0.is_all();
+        if !is_all {
+            self.any_restricted.set(true);
+        }
+        is_all
+    }
+
     /// Whether a hook event targeting `dir` should run for the active model.
     pub(crate) fn allows(&self, dir: &Path) -> bool {
         let (filter, warnings) = self.filter_for(dir);
@@ -63,6 +90,7 @@ impl<'a> ModelGate<'a> {
             self.any_allowed.set(true);
             return true;
         }
+        self.any_restricted.set(true);
         if filter.is_empty() {
             self.emit_warnings(&warnings);
             return false;
@@ -93,7 +121,7 @@ impl<'a> ModelGate<'a> {
         if let Some(cached) = self.resolved_model.borrow().as_ref() {
             return cached.clone();
         }
-        let model = resolve_model(self.hint);
+        let model = resolve_model_with_source(self.hint).map(|(model, _)| model);
         *self.resolved_model.borrow_mut() = Some(model.clone());
         model
     }
@@ -112,9 +140,15 @@ impl<'a> ModelGate<'a> {
 }
 
 /// Persists the session's active model when a main-session `SessionStart` or `PostModelSwitch`
-/// event carries one, so subsequent hooks in the same session can resolve it reliably even when
-/// asynchronous transcript writes lag.
-pub(crate) fn record_session_model(invocation: &Invocation, hint: &ModelHint) {
+/// event carries one and a model filter is active (or a session-model record already exists).
+///
+/// Writes nothing when `models` is unset across the workspace so unfiltered sessions do not create
+/// extra cache files.
+pub(crate) fn record_session_model(
+    invocation: &Invocation,
+    hint: &ModelHint,
+    gate: &ModelGate<'_>,
+) {
     if hint.is_subagent {
         return;
     }
@@ -129,8 +163,54 @@ pub(crate) fn record_session_model(invocation: &Invocation, hint: &ModelHint) {
         _ if hint.model_switch => hint.cwd.as_deref(),
         _ => None,
     };
-    if let Some(cwd) = cwd {
-        session_model::record(&canonical_dir(cwd), session, model, hint.model_switch);
+    let Some(cwd) = cwd else {
+        return;
+    };
+    let canonical = canonical_dir(cwd);
+    let needed = gate.any_restricted()
+        || !gate.is_all(&canonical)
+        || (hint.model_switch && session_model::exists(&canonical, session));
+    if needed {
+        session_model::record(
+            &canonical,
+            session,
+            model,
+            hint.model_switch,
+            hint.transcript.as_deref(),
+        );
+    }
+}
+
+/// Persists Antigravity's reported `modelName` for the conversation when any workspace has a model
+/// filter configured (or when updating an existing session record on `PreInvocation`/`Stop`), so
+/// `PostToolUse` events that omit `modelName` still resolve the active model.
+pub(crate) fn record_antigravity_model(
+    roots: &[PathBuf],
+    hint: &ModelHint,
+    gate: &ModelGate<'_>,
+    is_update: bool,
+) {
+    let Some(primary) = roots.first() else {
+        return;
+    };
+    let Some(model) = hint.model.as_deref() else {
+        return;
+    };
+    let Some(session) = hint.session.as_deref() else {
+        return;
+    };
+    let canonical = canonical_dir(primary);
+    let needed = gate.any_restricted()
+        || roots.iter().any(|root| !gate.is_all(root))
+        || (is_update && session_model::exists(&canonical, session));
+    if needed {
+        session_model::record(
+            &canonical,
+            session,
+            model,
+            is_update,
+            hint.transcript.as_deref(),
+        );
     }
 }
 
@@ -167,22 +247,30 @@ pub(crate) fn filter_edits(invocation: Invocation, gate: &ModelGate<'_>) -> Invo
     }
 }
 
-fn resolve_model(hint: &ModelHint) -> Option<String> {
+/// Resolves the active model for `hint` together with the source that supplied it.
+pub(crate) fn resolve_model_with_source(hint: &ModelHint) -> Option<(String, ModelSource)> {
     if let Some(model) = hint.model.clone() {
-        return Some(model);
+        return Some((model, ModelSource::Payload));
     }
     if let Some(cwd) = hint.cwd.as_deref() {
         let canonical = canonical_dir(cwd);
-        return session_model::resolve(
+        let resolved = session_model::resolve_with_origin(
             &canonical,
             hint.session.as_deref(),
             hint.transcript.as_deref(),
             !hint.is_subagent,
-        );
+        )?;
+        let source = match resolved.origin {
+            session_model::ModelOrigin::SessionCache => ModelSource::SessionCache,
+            session_model::ModelOrigin::Transcript => {
+                ModelSource::Transcript(hint.transcript.clone().unwrap_or_default())
+            }
+        };
+        return Some((resolved.model, source));
     }
-    hint.transcript
-        .as_deref()
-        .and_then(transcript::latest_model)
+    let path = hint.transcript.as_deref()?;
+    let model = transcript::latest_model(path)?;
+    Some((model, ModelSource::Transcript(path.to_path_buf())))
 }
 
 #[cfg(test)]

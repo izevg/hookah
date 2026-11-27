@@ -1124,11 +1124,11 @@ fn claude_post_model_switch_overrides_a_stale_transcript_until_flushed() {
 
     let transcript = f.cache().join("switch.jsonl");
     fs::create_dir_all(f.cache()).unwrap();
-    fs::write(
-        &transcript,
-        r#"{"type":"assistant","message":{"model":"claude-opus-4-6","content":[]}}"#,
-    )
-    .unwrap();
+    let old_assistant = concat!(
+        r#"{"type":"assistant","timestamp":"2026-04-01T12:00:00Z","message":{"model":"claude-opus-4-6","content":[]}}"#,
+        "\n"
+    );
+    fs::write(&transcript, old_assistant).unwrap();
 
     // Before the switch, the stale transcript says opus -> skipped.
     let edit_payload = serde_json::json!({
@@ -1145,21 +1145,241 @@ fn claude_post_model_switch_overrides_a_stale_transcript_until_flushed() {
         Some(0)
     );
 
-    // PostModelSwitch updates session state to sonnet even while transcript still says opus.
+    // Native PostModelSwitch carries `to_model` and `transcript_path`.
     let switch_payload = serde_json::json!({
         "session_id": "ses-sw",
         "cwd": f.root,
         "hook_event_name": "PostModelSwitch",
-        "model": "claude-sonnet-4-6"
+        "from_model": "claude-opus-4-6",
+        "to_model": "claude-sonnet-4-6",
+        "transcript_path": transcript
     })
     .to_string();
     let sw = f.hookah(&["hook", "claude"], &switch_payload);
     assert_eq!(sw.status.code(), Some(0));
     assert!(sw.stdout.is_empty() && sw.stderr.is_empty());
 
+    // Appending non-model entries (user + <synthetic>) bumps the transcript file mtime, yet the
+    // older opus assistant entry must NOT override the newer PostModelSwitch.
+    let mut updated = old_assistant.to_owned();
+    updated.push_str(
+        r#"{"type":"user","timestamp":"2026-04-01T12:05:00Z","message":{"role":"user","content":"continue"}}"#,
+    );
+    updated.push('\n');
+    updated.push_str(
+        r#"{"type":"assistant","timestamp":"2026-04-01T12:05:01Z","message":{"model":"<synthetic>","content":[]}}"#,
+    );
+    updated.push('\n');
+    fs::write(&transcript, &updated).unwrap();
+
     let after = f.hookah(&["hook", "claude"], &edit_payload);
     assert_eq!(after.status.code(), Some(2), "{}", stderr(&after));
     assert!(stderr(&after).contains("src/lib.rs:2"));
+
+    // Once a real assistant turn with a different model is appended after the switch, it takes over.
+    updated.push_str(
+        r#"{"type":"assistant","timestamp":"2026-04-01T12:06:00Z","message":{"model":"claude-opus-4-6","content":[]}}"#,
+    );
+    updated.push('\n');
+    fs::write(&transcript, &updated).unwrap();
+    let superseded = f.hookah(&["hook", "claude"], &edit_payload);
+    assert_eq!(superseded.status.code(), Some(0), "{}", stderr(&superseded));
+}
+
+#[test]
+fn antigravity_model_name_filters_start_edit_feedback_and_stop() {
+    let f = Fixture::new("agy-model-name", CLEAN_LIB);
+    f.write(".hookah.toml", "models = [\"gemini-4-*\"]\n");
+
+    let invoke = |session: &str, fields: serde_json::Value| {
+        let mut payload = serde_json::json!({
+            "conversationId": session,
+            "workspacePaths": [f.root],
+            "lastUserInput": "Fix lib.rs",
+        });
+        payload
+            .as_object_mut()
+            .unwrap()
+            .extend(fields.as_object().unwrap().clone());
+        f.hookah(&["hook", "antigravity"], &payload.to_string())
+    };
+
+    // Allowed native `modelName` on SessionStart starts the baseline and caches the model.
+    let start = invoke(
+        "agy-ok",
+        serde_json::json!({"modelName": "gemini-4-neon-low"}),
+    );
+    assert!(start.status.success(), "{}", stderr(&start));
+
+    // PostToolUse without `modelName` resolves the cached modelName from SessionStart.
+    f.write("src/lib.rs", "pub fn answer()->i32{43}\n");
+    let edit = invoke(
+        "agy-ok",
+        serde_json::json!({
+            "stepIdx": 1,
+            "toolCall": {"name": "edit_file", "args": {"Path": "src/lib.rs"}}
+        }),
+    );
+    assert!(edit.status.success());
+    assert_eq!(
+        f.read("src/lib.rs"),
+        "pub fn answer() -> i32 {\n    43\n}\n"
+    );
+
+    // PreInvocation with matching `modelName` delivers queued edit feedback.
+    let before = invoke(
+        "agy-ok",
+        serde_json::json!({"invocationNum": 1, "modelName": "gemini-4-neon-low"}),
+    );
+    assert!(before.status.success());
+    let before_json: serde_json::Value = serde_json::from_str(&stdout(&before)).unwrap();
+    let msg = before_json["injectSteps"][0]["systemMessage"]["systemMessage"]
+        .as_str()
+        .unwrap();
+    assert!(
+        msg.contains("src/lib.rs") && msg.contains("Re-read"),
+        "{msg}"
+    );
+
+    // Stop with matching `modelName` blocks (continues) on a failing test.
+    f.write("src/lib.rs", FAILING_TEST_LIB);
+    let stop_ok = invoke(
+        "agy-ok",
+        serde_json::json!({
+            "executionNum": 0,
+            "fullyIdle": true,
+            "terminationReason": "model_stop",
+            "modelName": "gemini-4-neon-low"
+        }),
+    );
+    assert!(stop_ok.status.success());
+    let stop_ok_json: serde_json::Value = serde_json::from_str(&stdout(&stop_ok)).unwrap();
+    assert_eq!(stop_ok_json["decision"], "continue");
+
+    // Non-matching `modelName` skips stop checks silently.
+    let stop_skip = invoke(
+        "agy-skip",
+        serde_json::json!({
+            "executionNum": 0,
+            "fullyIdle": true,
+            "terminationReason": "model_stop",
+            "modelName": "gemini-3-flash"
+        }),
+    );
+    assert!(stop_skip.status.success());
+    let stop_skip_json: serde_json::Value = serde_json::from_str(&stdout(&stop_skip)).unwrap();
+    assert_eq!(stop_skip_json["decision"], "allow");
+}
+
+#[test]
+fn unfiltered_session_start_writes_no_session_model_cache() {
+    let f = Fixture::new("no-session-model-cache", CLEAN_LIB);
+    let start = serde_json::json!({
+        "session_id": "ses-unfiltered",
+        "cwd": f.root,
+        "hook_event_name": "SessionStart",
+        "model": "claude-sonnet-4-6"
+    })
+    .to_string();
+    assert_eq!(f.hookah(&["hook", "claude"], &start).status.code(), Some(0));
+
+    let sw = serde_json::json!({
+        "session_id": "ses-unfiltered",
+        "cwd": f.root,
+        "hook_event_name": "PostModelSwitch",
+        "to_model": "claude-opus-4-6"
+    })
+    .to_string();
+    assert_eq!(f.hookah(&["hook", "claude"], &sw).status.code(), Some(0));
+
+    let has_session_models = fs::read_dir(f.cache())
+        .into_iter()
+        .flatten()
+        .flatten()
+        .any(|entry| entry.path().join("session-models").exists());
+    assert!(
+        !has_session_models,
+        "unfiltered sessions must not create session-models cache files"
+    );
+}
+
+#[test]
+fn config_verifies_model_patterns_and_hook_payloads() {
+    let f = Fixture::new("config-model-check", CLEAN_LIB);
+    f.write(
+        ".hookah.toml",
+        "models = [\"claude-sonnet-*\", \"gemini-4-*\"]\n",
+    );
+
+    let allowed = stdout(&f.hookah(&["config", "--model", "claude-sonnet-4-6"], ""));
+    assert!(
+        allowed.contains(
+            r#"model check: claude-sonnet-4-6 -> allow (matches pattern "claude-sonnet-*")"#
+        ),
+        "{allowed}"
+    );
+
+    let skipped = stdout(&f.hookah(&["config", "--model", "claude-opus-4-6"], ""));
+    assert!(
+        skipped.contains(
+            "model check: claude-opus-4-6 -> skip (does not match configured models: claude-sonnet-*, gemini-4-*)"
+        ),
+        "{skipped}"
+    );
+
+    let missing = stdout(&f.hookah(&["config", "--model", ""], ""));
+    assert!(
+        missing.contains("model check: <none> -> skip (no model reported;"),
+        "{missing}"
+    );
+
+    // Payload smoke test for Antigravity native `modelName`.
+    let agy_payload = serde_json::json!({
+        "conversationId": "s",
+        "workspacePaths": [f.root],
+        "modelName": "gemini-4-neon-low"
+    })
+    .to_string();
+    let agy_out = stdout(&f.hookah(&["config", "--hook", "antigravity"], &agy_payload));
+    assert!(agy_out.contains("harness: antigravity\n"), "{agy_out}");
+    assert!(agy_out.contains("event: start\n"), "{agy_out}");
+    assert!(
+        agy_out.contains("model: gemini-4-neon-low (payload)\n"),
+        "{agy_out}"
+    );
+    assert!(
+        agy_out.contains(r#"decision: allow (matches pattern "gemini-4-*")"#),
+        "{agy_out}"
+    );
+
+    // Payload smoke test for Claude transcript resolution.
+    let transcript = f.cache().join("diag.jsonl");
+    fs::create_dir_all(f.cache()).unwrap();
+    fs::write(
+        &transcript,
+        r#"{"type":"assistant","message":{"model":"claude-opus-4-6","content":[]}}"#,
+    )
+    .unwrap();
+    let claude_payload = serde_json::json!({
+        "session_id": "s",
+        "cwd": f.root,
+        "hook_event_name": "PostToolUse",
+        "transcript_path": transcript,
+        "tool_name": "Edit",
+        "tool_input": {"file_path": f.path("src/lib.rs")}
+    })
+    .to_string();
+    let claude_out = stdout(&f.hookah(&["config", "--hook", "claude"], &claude_payload));
+    assert!(claude_out.contains("harness: claude\n"), "{claude_out}");
+    assert!(claude_out.contains("event: edit\n"), "{claude_out}");
+    assert!(
+        claude_out.contains("model: claude-opus-4-6 (transcript:"),
+        "{claude_out}"
+    );
+    assert!(
+        claude_out.contains("decision: skip (does not match configured models:"),
+        "{claude_out}"
+    );
 }
 
 #[test]

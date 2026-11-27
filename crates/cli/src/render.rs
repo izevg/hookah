@@ -9,6 +9,7 @@ use std::path::Path;
 use hookah_adapters::config::env::ProjectEnv;
 use hookah_adapters::ecosystems::cache::Origin;
 use hookah_application::{Outcome, ProjectStatus};
+use hookah_domain::model::{ModelDecision, ModelFilter};
 use hookah_domain::path::slashed;
 use hookah_domain::project::Project;
 use hookah_domain::status::{Standing, overall};
@@ -111,8 +112,8 @@ pub fn detection(style: Style, project: Option<(&Project, &Toolchain, Origin)>) 
 }
 
 /// Renders `hookah config`: the roots, the files read, the effective variables with their
-/// sources, and any warnings.
-pub fn config(found: &ProjectEnv) -> String {
+/// sources, the effective `models` filter, an optional `--model` decision, and any warnings.
+pub fn config(found: &ProjectEnv, check_model: Option<&str>) -> String {
     let mut out = format!(
         "root: {}\ngit root: {}\nuser config: {}\n",
         slashed(&found.root),
@@ -140,19 +141,80 @@ pub fn config(found: &ProjectEnv) -> String {
             out.push_str(&format!("  {}={}  ({})\n", e.key, e.value, e.source));
         }
     }
-    let models = match found.models.filter.patterns() {
-        None => "all".to_owned(),
-        Some([]) => "none".to_owned(),
-        Some(patterns) => patterns.join(", "),
-    };
-    match found.models.source.as_deref() {
-        Some(source) => out.push_str(&format!("models: {models}  ({source})\n")),
-        None => out.push_str(&format!("models: {models}\n")),
+    out.push_str(&format_models_line(found));
+    if let Some(raw) = check_model {
+        let trimmed = raw.trim();
+        let candidate = (!trimmed.is_empty()).then_some(trimmed);
+        let shown = candidate.unwrap_or("<none>");
+        out.push_str(&format!(
+            "model check: {shown} -> {}\n",
+            format_model_decision(&found.models.filter, candidate)
+        ));
     }
     for w in &found.warnings {
         out.push_str(&format!("warning: {w}\n"));
     }
     out
+}
+
+/// Renders `hookah config --hook <harness>`: the parsed event, the extracted model identifier and
+/// its source, and the effective filter decision for each target scope.
+pub fn hook_model_check(
+    harness: &str,
+    event: &str,
+    model: Option<(&str, &str)>,
+    scopes: &[(&Path, ProjectEnv)],
+) -> String {
+    let mut out = format!("harness: {harness}\nevent: {event}\n");
+    match model {
+        Some((id, source)) => out.push_str(&format!("model: {id} ({source})\n")),
+        None => out.push_str("model: <none>\n"),
+    }
+    let candidate = model.map(|(id, _)| id);
+    for (scope, found) in scopes {
+        out.push_str(&format!("scope: {}\n", slashed(scope)));
+        out.push_str(&format_models_line(found));
+        out.push_str(&format!(
+            "decision: {}\n",
+            format_model_decision(&found.models.filter, candidate)
+        ));
+        for w in &found.warnings {
+            out.push_str(&format!("warning: {w}\n"));
+        }
+    }
+    out
+}
+
+fn format_models_line(found: &ProjectEnv) -> String {
+    let models = format_patterns(&found.models.filter);
+    match found.models.source.as_deref() {
+        Some(source) => format!("models: {models}  ({source})\n"),
+        None => format!("models: {models}\n"),
+    }
+}
+
+fn format_patterns(filter: &ModelFilter) -> String {
+    match filter.patterns() {
+        None => "all".to_owned(),
+        Some([]) => "none".to_owned(),
+        Some(patterns) => patterns.join(", "),
+    }
+}
+
+fn format_model_decision(filter: &ModelFilter, model: Option<&str>) -> String {
+    match filter.decide(model) {
+        ModelDecision::AllowAll => "allow (no model filter configured; all models allowed)".into(),
+        ModelDecision::AllowMatch { pattern } => format!("allow (matches pattern \"{pattern}\")"),
+        ModelDecision::SkipDisabled => "skip (hooks disabled: models = [])".into(),
+        ModelDecision::SkipMissing => format!(
+            "skip (no model reported; configured models: {})",
+            format_patterns(filter)
+        ),
+        ModelDecision::SkipMismatch => format!(
+            "skip (does not match configured models: {})",
+            format_patterns(filter)
+        ),
+    }
 }
 
 /// Renders `hookah status` as one JSON document:

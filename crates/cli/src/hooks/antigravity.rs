@@ -25,10 +25,12 @@ pub(crate) fn run(stdin: &str, limit: usize) -> Response {
     match payload.event {
         Event::Start => {
             let mut response = antigravity::acknowledge();
-            for root in payload.roots {
-                let invocation = Invocation::Start(StartRequest::new(root, &payload.session));
+            for root in &payload.roots {
+                let invocation =
+                    Invocation::Start(StartRequest::new(root.clone(), &payload.session));
                 antigravity::warn(&mut response, &run_invocation(&invocation, limit, &gate));
             }
+            model::record_antigravity_model(&payload.roots, &payload.model, &gate, false);
             response
         }
         Event::Edit(request) => {
@@ -46,16 +48,20 @@ pub(crate) fn run(stdin: &str, limit: usize) -> Response {
             }
             response
         }
-        Event::BeforeModel => match feedback().and_then(|store| {
-            store.take_where(|scope| gate.allows(scope.unwrap_or(root.as_path())))
-        }) {
-            Ok(messages) if !messages.is_empty() => antigravity::inject(messages.join("\n")),
-            Ok(_) => antigravity::acknowledge(),
-            Err(error) => Response {
-                stderr: feedback_warning(error),
-                ..antigravity::acknowledge()
-            },
-        },
+        Event::BeforeModel => {
+            let response = match feedback().and_then(|store| {
+                store.take_where(|scope| gate.allows(scope.unwrap_or(root.as_path())))
+            }) {
+                Ok(messages) if !messages.is_empty() => antigravity::inject(messages.join("\n")),
+                Ok(_) => antigravity::acknowledge(),
+                Err(error) => Response {
+                    stderr: feedback_warning(error),
+                    ..antigravity::acknowledge()
+                },
+            };
+            model::record_antigravity_model(&payload.roots, &payload.model, &gate, true);
+            response
+        }
         Event::Stop { eligible: true } => {
             let outcomes = payload
                 .roots
@@ -70,6 +76,7 @@ pub(crate) fn run(stdin: &str, limit: usize) -> Response {
                     run_invocation(&invocation, limit, &gate)
                 })
                 .collect();
+            model::record_antigravity_model(&payload.roots, &payload.model, &gate, true);
             let outcome = merge_outcomes(outcomes, limit);
             let report = blocking_report(&outcome);
             if report.is_none() && !gate.any_allowed() {
@@ -91,7 +98,10 @@ pub(crate) fn run(stdin: &str, limit: usize) -> Response {
             }
             response
         }
-        Event::Stop { eligible: false } => antigravity::stop(None),
+        Event::Stop { eligible: false } => {
+            model::record_antigravity_model(&payload.roots, &payload.model, &gate, true);
+            antigravity::stop(None)
+        }
         Event::Ignore => antigravity::acknowledge(),
     }
 }

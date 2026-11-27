@@ -19,8 +19,26 @@ const MAX_SCAN_BYTES: u64 = 2 * 1024 * 1024;
 /// Placeholder Claude Code writes on synthetic local messages rather than a real LLM turn.
 const SYNTHETIC_MODEL: &str = "<synthetic>";
 
+/// The most recent real model record found in a transcript JSONL file, along with its end byte
+/// offset and optional entry timestamp so callers can tell whether a newer real model turn was
+/// appended after a mid-session model switch (ignoring trailing `user` or `<synthetic>` entries).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TranscriptModel {
+    /// Trimmed model identifier from the latest real model entry.
+    pub model: String,
+    /// Byte offset immediately after the matching line (before its trailing `\n`, if any).
+    pub end_offset: u64,
+    /// Parsed RFC 3339 entry timestamp in Unix milliseconds, if present on the JSON record.
+    pub timestamp_ms: Option<u128>,
+}
+
 /// Returns the most recent model identifier recorded in the JSONL transcript at `path`.
 pub fn latest_model(path: &Path) -> Option<String> {
+    latest_model_entry(path).map(|entry| entry.model)
+}
+
+/// Returns the most recent real model entry recorded in the JSONL transcript at `path`.
+pub fn latest_model_entry(path: &Path) -> Option<TranscriptModel> {
     let mut file = File::open(path).ok()?;
     let len = file.metadata().ok()?.len();
     if len == 0 {
@@ -46,40 +64,54 @@ pub fn latest_model(path: &Path) -> Option<String> {
 
         if pos > 0 {
             if let Some(nl) = buf.iter().position(|&b| b == b'\n') {
-                if let Some(model) = scan_lines_reverse(&buf[nl + 1..]) {
-                    return Some(model);
+                let slice_base = pos.saturating_add(u64::try_from(nl + 1).ok()?);
+                if let Some(entry) = scan_lines_reverse(&buf[nl + 1..], slice_base) {
+                    return Some(entry);
                 }
-                carry = buf[..nl].to_vec();
+                // Keep the newline so `buf` stays a contiguous file slice starting at `pos`.
+                carry = buf[..=nl].to_vec();
             } else {
                 // One line exceeds a chunk: carry it back until we reach its start.
                 carry = buf;
             }
         } else {
-            return scan_lines_reverse(&buf);
+            return scan_lines_reverse(&buf, 0);
         }
     }
 
     if !carry.is_empty() {
-        return scan_lines_reverse(&carry);
+        return scan_lines_reverse(&carry, pos);
     }
     None
 }
 
-fn scan_lines_reverse(bytes: &[u8]) -> Option<String> {
-    let text = String::from_utf8_lossy(bytes);
-    for line in text.lines().rev() {
-        let line = line.trim();
-        if line.is_empty() || !line.contains("\"model\"") {
-            continue;
+fn scan_lines_reverse(bytes: &[u8], base_offset: u64) -> Option<TranscriptModel> {
+    let mut end = bytes.len();
+    while end > 0 {
+        let start = bytes[..end]
+            .iter()
+            .rposition(|&b| b == b'\n')
+            .map_or(0, |nl| nl + 1);
+        let line_bytes = &bytes[start..end];
+        let text = String::from_utf8_lossy(line_bytes);
+        let trimmed = text.trim();
+        if !trimmed.is_empty()
+            && trimmed.contains("\"model\"")
+            && let Some((model, timestamp_ms)) = model_from_line(trimmed)
+        {
+            let end_u64 = u64::try_from(end).ok()?;
+            return Some(TranscriptModel {
+                model,
+                end_offset: base_offset.saturating_add(end_u64),
+                timestamp_ms,
+            });
         }
-        if let Some(model) = model_from_line(line) {
-            return Some(model);
-        }
+        end = start.saturating_sub(1);
     }
     None
 }
 
-fn model_from_line(line: &str) -> Option<String> {
+fn model_from_line(line: &str) -> Option<(String, Option<u128>)> {
     let value: Value = serde_json::from_str(line).ok()?;
     let candidate = match value.get("type").and_then(Value::as_str) {
         Some("assistant") => value
@@ -97,7 +129,93 @@ fn model_from_line(line: &str) -> Option<String> {
     if trimmed.is_empty() || trimmed == SYNTHETIC_MODEL {
         return None;
     }
-    Some(trimmed.to_owned())
+    let timestamp_ms = value
+        .get("timestamp")
+        .and_then(Value::as_str)
+        .and_then(parse_rfc3339_ms);
+    Some((trimmed.to_owned(), timestamp_ms))
+}
+
+/// Parses an RFC 3339 timestamp (`YYYY-MM-DDTHH:MM:SS[.fff](Z|+HH:MM|-HH:MM)`) into Unix
+/// milliseconds. Returns `None` for any unexpected format.
+fn parse_rfc3339_ms(raw: &str) -> Option<u128> {
+    let bytes = raw.trim().as_bytes();
+    if bytes.len() < 20
+        || bytes[4] != b'-'
+        || bytes[7] != b'-'
+        || !matches!(bytes[10], b'T' | b't' | b' ')
+        || bytes[13] != b':'
+        || bytes[16] != b':'
+    {
+        return None;
+    }
+    let year: i64 = std::str::from_utf8(&bytes[0..4]).ok()?.parse().ok()?;
+    let month: u32 = std::str::from_utf8(&bytes[5..7]).ok()?.parse().ok()?;
+    let day: u32 = std::str::from_utf8(&bytes[8..10]).ok()?.parse().ok()?;
+    let hour: u32 = std::str::from_utf8(&bytes[11..13]).ok()?.parse().ok()?;
+    let min: u32 = std::str::from_utf8(&bytes[14..16]).ok()?.parse().ok()?;
+    let sec: u32 = std::str::from_utf8(&bytes[17..19]).ok()?.parse().ok()?;
+    if !(1..=12).contains(&month) || !(1..=31).contains(&day) || hour > 23 || min > 59 || sec > 60 {
+        return None;
+    }
+
+    let mut idx = 19;
+    let mut millis: i64 = 0;
+    if bytes.get(idx) == Some(&b'.') {
+        idx += 1;
+        let frac_start = idx;
+        while idx < bytes.len() && bytes[idx].is_ascii_digit() {
+            idx += 1;
+        }
+        if idx == frac_start {
+            return None;
+        }
+        let frac = &bytes[frac_start..idx];
+        let mut scale = 100i64;
+        for &digit in frac.iter().take(3) {
+            millis += i64::from(digit - b'0') * scale;
+            scale /= 10;
+        }
+    }
+
+    let offset_secs: i64 = match bytes.get(idx)? {
+        b'Z' | b'z' if idx + 1 == bytes.len() => 0,
+        sign @ (b'+' | b'-') if idx + 6 == bytes.len() && bytes[idx + 3] == b':' => {
+            let oh: i64 = std::str::from_utf8(&bytes[idx + 1..idx + 3])
+                .ok()?
+                .parse()
+                .ok()?;
+            let om: i64 = std::str::from_utf8(&bytes[idx + 4..idx + 6])
+                .ok()?
+                .parse()
+                .ok()?;
+            if oh > 23 || om > 59 {
+                return None;
+            }
+            let total = oh * 3600 + om * 60;
+            if *sign == b'+' { total } else { -total }
+        }
+        _ => return None,
+    };
+
+    let days = days_from_civil(year, month, day);
+    let secs = days
+        .checked_mul(86_400)?
+        .checked_add(i64::from(hour) * 3600 + i64::from(min) * 60 + i64::from(sec))?
+        .checked_sub(offset_secs)?;
+    let total_ms = secs.checked_mul(1_000)?.checked_add(millis)?;
+    u128::try_from(total_ms).ok()
+}
+
+fn days_from_civil(year: i64, month: u32, day: u32) -> i64 {
+    let y = year - i64::from(month <= 2);
+    let era = y.div_euclid(400);
+    let yoe = y - era * 400;
+    let m = i64::from(month);
+    let d = i64::from(day);
+    let doy = (153 * (if m > 2 { m - 3 } else { m + 9 }) + 2) / 5 + d - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    era * 146_097 + doe - 719_468
 }
 
 #[cfg(test)]
@@ -181,5 +299,57 @@ mod tests {
         let garbage = temp_file("garbage", "not json\n{\"model\":\"bare\"}\n");
         assert_eq!(latest_model(&garbage), None);
         let _ = fs::remove_file(garbage);
+    }
+
+    #[test]
+    fn end_offset_stays_stable_when_trailing_non_model_entries_are_appended() {
+        let assistant = r#"{"type":"assistant","timestamp":"2026-04-01T12:00:00.500Z","message":{"model":"claude-opus-4-6","content":[]}}"#;
+        let path = temp_file("offset", &format!("{assistant}\n"));
+        let first = latest_model_entry(&path).unwrap();
+        assert_eq!(first.model, "claude-opus-4-6");
+        assert_eq!(first.end_offset, assistant.len() as u64);
+        assert_eq!(
+            first.timestamp_ms,
+            parse_rfc3339_ms("2026-04-01T12:00:00.500Z")
+        );
+        assert!(first.timestamp_ms.is_some());
+
+        // Appending user and synthetic entries does not advance the real model entry's offset.
+        let mut content = format!("{assistant}\n");
+        content.push_str(
+            r#"{"type":"user","timestamp":"2026-04-01T12:05:00Z","message":{"role":"user","content":"hi"}}"#,
+        );
+        content.push('\n');
+        content.push_str(
+            r#"{"type":"assistant","timestamp":"2026-04-01T12:05:01Z","message":{"model":"<synthetic>","content":[]}}"#,
+        );
+        content.push('\n');
+        fs::write(&path, &content).unwrap();
+        let after_non_model = latest_model_entry(&path).unwrap();
+        assert_eq!(after_non_model, first);
+
+        // Appending a real assistant entry strictly advances the end offset.
+        content.push_str(
+            r#"{"type":"assistant","timestamp":"2026-04-01T12:06:00Z","message":{"model":"claude-sonnet-4-6","content":[]}}"#,
+        );
+        content.push('\n');
+        fs::write(&path, &content).unwrap();
+        let after_real = latest_model_entry(&path).unwrap();
+        assert_eq!(after_real.model, "claude-sonnet-4-6");
+        assert!(after_real.end_offset > first.end_offset);
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn parses_rfc3339_timestamps_with_utc_and_offsets() {
+        assert_eq!(parse_rfc3339_ms("1970-01-01T00:00:00Z"), Some(0));
+        assert_eq!(parse_rfc3339_ms("1970-01-01T00:00:01.25Z"), Some(1_250));
+        assert_eq!(parse_rfc3339_ms("1970-01-01T03:00:00+03:00"), Some(0));
+        assert_eq!(
+            parse_rfc3339_ms("1970-01-01T00:00:00-01:00"),
+            Some(3_600_000)
+        );
+        assert_eq!(parse_rfc3339_ms("not-a-timestamp"), None);
     }
 }

@@ -93,7 +93,13 @@ fn claude_project_setup_writes_hooks_pointing_at_this_binary() {
         written.contains(&format!("{json_program} hook claude")),
         "expected `{json_program} hook claude` in:\n{written}"
     );
-    for event in ["SessionStart", "PostToolUse", "Stop", "SubagentStop"] {
+    for event in [
+        "SessionStart",
+        "PostModelSwitch",
+        "PostToolUse",
+        "Stop",
+        "SubagentStop",
+    ] {
         assert!(written.contains(event), "{event}");
     }
     assert!(
@@ -150,7 +156,7 @@ fn existing_settings_survive_and_the_original_is_backed_up_once() {
     let updated = text(&file);
     assert!(updated.contains("mise exec -- hookah hook claude"));
     assert!(!updated.contains(&hookah_setup::shell_program(HOOKAH)));
-    assert_eq!(updated.matches("hook claude").count(), 4);
+    assert_eq!(updated.matches("hook claude").count(), 5);
 }
 
 #[test]

@@ -26,6 +26,7 @@ struct Payload {
     session_id: Option<String>,
     cwd: Option<PathBuf>,
     model: Option<String>,
+    to_model: Option<String>,
     transcript_path: Option<PathBuf>,
     agent_id: Option<String>,
     agent_transcript_path: Option<PathBuf>,
@@ -58,13 +59,19 @@ pub fn parse_event(stdin: &str) -> Result<Parsed, PayloadError> {
     } else {
         p.transcript_path.clone()
     };
+    let model_switch = p.hook_event_name.as_deref() == Some("PostModelSwitch");
+    let direct_model = if model_switch {
+        clean_model(p.to_model.clone()).or_else(|| clean_model(p.model.clone()))
+    } else {
+        clean_model(p.model.clone())
+    };
     let model = ModelHint {
-        model: clean_model(p.model.clone()),
+        model: direct_model,
         transcript: clean_transcript(transcript_raw, p.cwd.as_deref()),
         session: p.session_id.clone().filter(|s| !s.is_empty()),
         cwd: p.cwd.clone().filter(|c| c.is_absolute()),
         is_subagent,
-        model_switch: p.hook_event_name.as_deref() == Some("PostModelSwitch"),
+        model_switch,
     };
     let invocation = match p.hook_event_name.as_deref() {
         Some("PostToolUse") => edit(&p)?,
@@ -285,12 +292,23 @@ mod tests {
 
         let sw = os_json(
             r#"{"session_id":"s","cwd":"/w","hook_event_name":"PostModelSwitch",
-            "model":"claude-opus-4-6"}"#,
+            "from_model":"claude-sonnet-4-6","to_model":"claude-opus-4-6",
+            "transcript_path":"/w/t.jsonl"}"#,
         );
         let parsed = parse_event(&sw).unwrap();
         assert_eq!(parsed.invocation, Invocation::Ignore);
         assert_eq!(parsed.model.model.as_deref(), Some("claude-opus-4-6"));
+        assert_eq!(parsed.model.transcript, Some(abs("/w/t.jsonl")));
         assert!(parsed.model.model_switch);
         assert!(!parsed.model.is_subagent);
+
+        // Fallback to `model` if `to_model` is omitted.
+        let sw_fallback = os_json(
+            r#"{"session_id":"s","cwd":"/w","hook_event_name":"PostModelSwitch",
+            "model":"claude-haiku-4-5"}"#,
+        );
+        let parsed = parse_event(&sw_fallback).unwrap();
+        assert_eq!(parsed.model.model.as_deref(), Some("claude-haiku-4-5"));
+        assert!(parsed.model.model_switch);
     }
 }

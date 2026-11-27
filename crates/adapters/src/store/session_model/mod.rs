@@ -15,18 +15,58 @@ use serde::{Deserialize, Serialize};
 use super::cache_dir::{fnv1a, project_cache_dir};
 use crate::transcript;
 
+/// Where a resolved model identifier came from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ModelOrigin {
+    /// Cached from an earlier session event (`SessionStart`, `PostModelSwitch`, `PreInvocation`).
+    SessionCache,
+    /// Read from the latest real model entry in the session's JSONL transcript.
+    Transcript,
+}
+
+/// Resolved model identifier together with its origin.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedModel {
+    /// The active model identifier.
+    pub model: String,
+    /// Which source produced `model`.
+    pub origin: ModelOrigin,
+}
+
 /// Stored model record for one `(cwd, session_id)` pair.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 struct Record {
     model: String,
     at_ms: u128,
     /// True when written by an explicit mid-session switch (`PostModelSwitch`), so it takes
-    /// precedence over a transcript whose modification time predates the switch.
+    /// precedence over a transcript that predates the switch even if no transcript path was
+    /// provided at switch time.
     from_switch: bool,
+    /// End byte offset of the latest real model entry in the transcript when this record was
+    /// written (`Some(0)` if the transcript had no real model entry yet; `None` if no transcript
+    /// path was supplied). Trailing `user` or `<synthetic>` entries appended after a switch do
+    /// not advance this offset.
+    #[serde(default)]
+    transcript_model_offset: Option<u64>,
+}
+
+/// True if a cached session-model file already exists for `(cwd, session)`.
+pub fn exists(cwd: &Path, session: &str) -> bool {
+    !session.is_empty() && record_path(cwd, session).is_ok_and(|p| p.is_file())
 }
 
 /// Records `model` for `(cwd, session)` in the project cache. Silently ignores any error.
-pub fn record(cwd: &Path, session: &str, model: &str, from_switch: bool) {
+///
+/// When `transcript_path` is provided, also snapshots the end byte offset of the latest real model
+/// entry currently in that transcript so later trailing non-model entries (`user`, `<synthetic>`)
+/// cannot make an older assistant record override this update.
+pub fn record(
+    cwd: &Path,
+    session: &str,
+    model: &str,
+    from_switch: bool,
+    transcript_path: Option<&Path>,
+) {
     let model = model.trim();
     if session.is_empty() || model.is_empty() {
         return;
@@ -34,40 +74,89 @@ pub fn record(cwd: &Path, session: &str, model: &str, from_switch: bool) {
     let Ok(path) = record_path(cwd, session) else {
         return;
     };
-    let _ = write_record(&path, model, now_ms(), from_switch);
+    let transcript_model_offset =
+        transcript_path.map(|p| transcript::latest_model_entry(p).map_or(0, |e| e.end_offset));
+    let _ = write_record(&path, model, now_ms(), from_switch, transcript_model_offset);
 }
 
 /// Resolves the model for a hook event that did not include `model` directly.
-///
-/// - When `use_session_cache` is true (main session, not a separate subagent), checks any stored
-///   `SessionStart` / `PostModelSwitch` record for `(cwd, session)`.
-/// - An explicit `PostModelSwitch` record that is at least as new as `transcript`'s modification
-///   time beats a potentially stale asynchronous transcript write.
-/// - Otherwise reads the latest assistant entry from `transcript`, falling back to any stored
-///   session record when the transcript is missing or has no assistant message yet.
 pub fn resolve(
     cwd: &Path,
     session: Option<&str>,
     transcript_path: Option<&Path>,
     use_session_cache: bool,
 ) -> Option<String> {
+    resolve_with_origin(cwd, session, transcript_path, use_session_cache).map(|r| r.model)
+}
+
+/// Resolves the model together with the source that supplied it.
+///
+/// - When `use_session_cache` is true (main session, not a separate subagent), checks any stored
+///   session record for `(cwd, session)`.
+/// - A stored record beats a transcript entry when the transcript has not appended any real model
+///   record past the offset snapshotted when the record was written (ignoring trailing `user` or
+///   `<synthetic>` entries), or for an explicit switch without a transcript snapshot, when the
+///   latest real model entry's timestamp (or file mtime if untimestamped) is not newer than the
+///   switch.
+/// - Otherwise reads the latest real model entry from `transcript`, falling back to any stored
+///   session record when the transcript is missing or has no real model entry yet.
+pub fn resolve_with_origin(
+    cwd: &Path,
+    session: Option<&str>,
+    transcript_path: Option<&Path>,
+    use_session_cache: bool,
+) -> Option<ResolvedModel> {
     let cached = session
         .filter(|s| use_session_cache && !s.is_empty())
         .and_then(|s| record_path(cwd, s).ok())
         .and_then(|p| read_record(&p));
 
-    if let Some(ref rec) = cached
-        && rec.from_switch
-        && transcript_is_not_newer(transcript_path, rec.at_ms)
-    {
-        return Some(rec.model.clone());
-    }
+    let entry = transcript_path.and_then(transcript::latest_model_entry);
 
-    if let Some(model) = transcript_path.and_then(transcript::latest_model) {
-        return Some(model);
+    match (cached, entry) {
+        (Some(rec), Some(entry)) => {
+            if record_supersedes_entry(&rec, &entry, transcript_path) {
+                Some(ResolvedModel {
+                    model: rec.model,
+                    origin: ModelOrigin::SessionCache,
+                })
+            } else {
+                Some(ResolvedModel {
+                    model: entry.model,
+                    origin: ModelOrigin::Transcript,
+                })
+            }
+        }
+        (Some(rec), None) => Some(ResolvedModel {
+            model: rec.model,
+            origin: ModelOrigin::SessionCache,
+        }),
+        (None, Some(entry)) => Some(ResolvedModel {
+            model: entry.model,
+            origin: ModelOrigin::Transcript,
+        }),
+        (None, None) => None,
     }
+}
 
-    cached.map(|rec| rec.model)
+fn record_supersedes_entry(
+    rec: &Record,
+    entry: &transcript::TranscriptModel,
+    transcript_path: Option<&Path>,
+) -> bool {
+    if let Some(snapshot_offset) = rec.transcript_model_offset {
+        let truncated = transcript_path
+            .and_then(|p| fs::metadata(p).ok())
+            .is_some_and(|m| m.len() < snapshot_offset);
+        return !truncated && entry.end_offset <= snapshot_offset;
+    }
+    if !rec.from_switch {
+        return false;
+    }
+    if let Some(entry_ts) = entry.timestamp_ms {
+        return entry_ts <= rec.at_ms;
+    }
+    transcript_is_not_newer(transcript_path, rec.at_ms)
 }
 
 fn record_path(cwd: &Path, session: &str) -> Result<PathBuf, hookah_application::error::PortError> {
@@ -76,7 +165,13 @@ fn record_path(cwd: &Path, session: &str) -> Result<PathBuf, hookah_application:
     Ok(dir.join(format!("{key:016x}.json")))
 }
 
-fn write_record(path: &Path, model: &str, at_ms: u128, from_switch: bool) -> std::io::Result<()> {
+fn write_record(
+    path: &Path,
+    model: &str,
+    at_ms: u128,
+    from_switch: bool,
+    transcript_model_offset: Option<u64>,
+) -> std::io::Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
@@ -84,6 +179,7 @@ fn write_record(path: &Path, model: &str, at_ms: u128, from_switch: bool) -> std
         model: model.to_owned(),
         at_ms,
         from_switch,
+        transcript_model_offset,
     };
     let bytes = serde_json::to_vec(&record)?;
     let tmp = path.with_extension(format!("tmp-{}", std::process::id()));
@@ -148,41 +244,91 @@ mod tests {
     }
 
     #[test]
-    fn switch_record_beats_stale_transcript_while_newer_transcript_wins_over_start() {
+    fn switch_record_beats_trailing_non_model_entries_until_a_new_assistant_turn_arrives() {
         let dir = scratch("precedence");
-        let rec_path = dir.join("rec.json");
         let transcript = dir.join("t.jsonl");
+        let old_assistant = concat!(
+            r#"{"type":"assistant","timestamp":"2026-01-01T00:00:00Z","message":{"model":"claude-opus-4-6","content":[]}}"#,
+            "\n"
+        );
+        fs::write(&transcript, old_assistant).unwrap();
+
+        // Explicit switch snapshots the transcript's latest real model offset.
+        record(
+            &dir,
+            "ses-offset",
+            "claude-sonnet-4-6",
+            true,
+            Some(&transcript),
+        );
+        assert!(exists(&dir, "ses-offset"));
+
+        // Appending user and <synthetic> entries bumps the file's mtime, yet the switch still wins.
+        let mut content = old_assistant.to_owned();
+        content.push_str(
+            r#"{"type":"user","timestamp":"2026-01-01T00:01:00Z","message":{"role":"user","content":"hello"}}"#,
+        );
+        content.push('\n');
+        content.push_str(
+            r#"{"type":"assistant","timestamp":"2026-01-01T00:01:01Z","message":{"model":"<synthetic>","content":[]}}"#,
+        );
+        content.push('\n');
+        fs::write(&transcript, &content).unwrap();
+        let resolved = resolve_with_origin(&dir, Some("ses-offset"), Some(&transcript), true);
+        assert_eq!(
+            resolved,
+            Some(ResolvedModel {
+                model: "claude-sonnet-4-6".into(),
+                origin: ModelOrigin::SessionCache,
+            })
+        );
+
+        // Once a real assistant turn is appended after the switch, the transcript takes over.
+        content.push_str(
+            r#"{"type":"assistant","timestamp":"2026-01-01T00:02:00Z","message":{"model":"claude-haiku-4-5","content":[]}}"#,
+        );
+        content.push('\n');
+        fs::write(&transcript, &content).unwrap();
+        let resolved = resolve_with_origin(&dir, Some("ses-offset"), Some(&transcript), true);
+        assert_eq!(
+            resolved,
+            Some(ResolvedModel {
+                model: "claude-haiku-4-5".into(),
+                origin: ModelOrigin::Transcript,
+            })
+        );
+
+        if let Ok(path) = record_path(&dir, "ses-offset") {
+            let _ = fs::remove_file(path);
+        }
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn switch_without_transcript_snapshot_compares_assistant_entry_timestamp() {
+        let dir = scratch("timestamp");
+        let rec_path = record_path(&dir, "ses-ts").unwrap();
+        let transcript = dir.join("t.jsonl");
+        // Old assistant entry followed by a brand-new user entry that bumps file mtime.
         fs::write(
             &transcript,
-            r#"{"type":"assistant","message":{"model":"claude-sonnet-4-6","content":[]}}"#,
+            concat!(
+                r#"{"type":"assistant","timestamp":"2020-01-01T00:00:00Z","message":{"model":"claude-opus-4-6","content":[]}}"#,
+                "\n",
+                r#"{"type":"user","timestamp":"2099-01-01T00:00:00Z","message":{"role":"user","content":"hi"}}"#,
+                "\n",
+            ),
         )
         .unwrap();
-        let t_mtime = fs::metadata(&transcript)
-            .unwrap()
-            .modified()
-            .unwrap()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_millis();
 
-        // Explicit switch at or after transcript mtime wins over stale transcript.
-        write_record(&rec_path, "claude-opus-4-6", t_mtime + 1000, true).unwrap();
-        let rec = read_record(&rec_path).unwrap();
-        assert!(rec.from_switch);
-        assert!(transcript_is_not_newer(Some(&transcript), rec.at_ms));
-
-        // Switch older than transcript mtime yields to the newer transcript.
-        write_record(
-            &rec_path,
-            "claude-haiku-4-5",
-            t_mtime.saturating_sub(5000),
-            true,
-        )
-        .unwrap();
-        let older = read_record(&rec_path).unwrap();
-        assert!(!transcript_is_not_newer(Some(&transcript), older.at_ms));
+        write_record(&rec_path, "claude-sonnet-4-6", now_ms(), true, None).unwrap();
+        assert_eq!(
+            resolve(&dir, Some("ses-ts"), Some(&transcript), true).as_deref(),
+            Some("claude-sonnet-4-6")
+        );
 
         let _ = fs::remove_dir_all(dir);
+        let _ = fs::remove_file(rec_path);
     }
 
     #[test]
@@ -192,7 +338,7 @@ mod tests {
         fs::write(&empty_transcript, "").unwrap();
 
         let rec_path = record_path(&dir, "ses-1").unwrap();
-        write_record(&rec_path, "claude-sonnet-4-6", now_ms(), false).unwrap();
+        write_record(&rec_path, "claude-sonnet-4-6", now_ms(), false, None).unwrap();
 
         // Main session falls back to SessionStart record.
         assert_eq!(

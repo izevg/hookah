@@ -73,8 +73,8 @@ export const HookahPlugin: Plugin = async ({ client, directory }) => {
   const pendingArgs = new Map<string, unknown>()
   /** Latest model seen per session, learned from `chat.params` and `message.updated`. */
   const models = new Map<string, string>()
-  /** Top-level sessions awaiting their first model-bearing event before starting the baseline. */
-  const pendingStart = new Set<string>()
+  /** Top-level sessions started before a model was known; retried non-blockingly once learned. */
+  const needsModelStart = new Set<string>()
   /** Sessions that edited files since their last stop check. */
   const dirty = new Set<string>()
   /** Sessions whose latest turn was started by a message this plugin injected (the loop guard). */
@@ -99,13 +99,15 @@ export const HookahPlugin: Plugin = async ({ client, directory }) => {
     }
   }
 
-  const rememberModel = async (sessionID: unknown, provider: unknown, model: unknown) => {
+  const rememberModel = (sessionID: unknown, provider: unknown, model: unknown) => {
     const name = formatModel(provider, model)
     if (typeof sessionID === "string" && sessionID && name) {
       if (models.size > 64) models.clear()
       models.set(sessionID, name)
-      if (pendingStart.delete(sessionID)) {
-        await startBaseline(sessionID, name)
+      if (needsModelStart.delete(sessionID)) {
+        // Non-blocking: StartSession is idempotent when unfiltered, and starts the baseline when
+        // a model filter skipped the model-less session.created call.
+        void startBaseline(sessionID, name)
       }
     }
   }
@@ -183,7 +185,7 @@ export const HookahPlugin: Plugin = async ({ client, directory }) => {
         const modelId = typeof raw?.model === "string" ? raw.model : raw?.model?.id
         const providerId =
           (typeof raw?.model === "object" ? raw?.model?.providerID : undefined) ?? raw?.provider?.id
-        await rememberModel(raw?.sessionID, providerId, modelId)
+        rememberModel(raw?.sessionID, providerId, modelId)
       } catch {}
     },
 
@@ -201,7 +203,7 @@ export const HookahPlugin: Plugin = async ({ client, directory }) => {
         pendingArgs.delete(input.callID)
         const files = editedFiles(input.tool, args)
         if (files.length === 0) return
-        pendingStart.delete(input.sessionID)
+        needsModelStart.delete(input.sessionID)
         dirty.add(input.sessionID)
         const model = models.get(input.sessionID)
         const reply = await callHookah(
@@ -228,7 +230,7 @@ export const HookahPlugin: Plugin = async ({ client, directory }) => {
       if (event.type === "message.updated") {
         try {
           const info = (event.properties as any)?.info
-          await rememberModel(
+          rememberModel(
             info?.sessionID,
             info?.providerID ?? info?.model?.providerID,
             info?.modelID ?? info?.model?.modelID,
@@ -242,12 +244,11 @@ export const HookahPlugin: Plugin = async ({ client, directory }) => {
           // Subagent sessions work on the parent's project: they get a baseline lazily if needed.
           if (!info?.id || info.parentID) return
           const model = models.get(info.id)
-          if (model) {
-            await startBaseline(info.id, model)
-          } else {
-            if (pendingStart.size > 64) pendingStart.clear()
-            pendingStart.add(info.id)
+          if (!model) {
+            if (needsModelStart.size > 64) needsModelStart.clear()
+            needsModelStart.add(info.id)
           }
+          await startBaseline(info.id, model)
         } catch (e) {
           await log("warn", `hookah session start failed: ${e}`)
         }

@@ -457,3 +457,21 @@ fn a_development_build_never_checks_at_a_session_start() {
     std::thread::sleep(Duration::from_millis(500));
     assert_eq!(server.requests(), 0);
 }
+
+#[test]
+fn a_model_filter_does_not_suppress_session_start_update_notices() {
+    let sandbox = Sandbox::new();
+    fs::write(sandbox.config(), "models = []\n[update]\nauto = false\n").unwrap();
+    let server = release_server(&sandbox, "2.0.0");
+    let first = sandbox.session_start(&sandbox.exe(), &server);
+    assert_eq!(first.status.code(), Some(0));
+    wait_for("the state file", || {
+        fs::read_to_string(sandbox.state_file()).is_ok_and(|s| s.contains("\"available\""))
+    });
+    let second = sandbox.session_start(&sandbox.reader(), &server);
+    let json: serde_json::Value = serde_json::from_slice(&second.stdout).unwrap();
+    assert_eq!(
+        json["systemMessage"],
+        "hookah: hookah 2.0.0 is available; run `hookah update` to install it"
+    );
+}

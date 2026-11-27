@@ -17,14 +17,15 @@ use std::panic::{self, AssertUnwindSafe};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use clap::Parser;
+use clap::{Parser, ValueEnum};
 use hookah_adapters::config::env::{Host, resolve as resolve_env};
 use hookah_application::{
     CheckEdit, CheckSession, ComputeBaseline, EditRequest, Outcome, ReadStatus, StartSession,
     StopRequest,
 };
-use hookah_domain::path::display_path;
+use hookah_domain::path::{display_path, slashed};
 use hookah_domain::project::locate_project;
+use hookah_harness::antigravity;
 use hookah_harness::claude::Claude;
 use hookah_harness::codex::Codex;
 use hookah_harness::cursor::Cursor;
@@ -65,7 +66,7 @@ fn main() -> ExitCode {
         } => exit(check_changed(root.as_deref(), limit)),
         Command::Check { paths, .. } => exit(check(&paths, limit)),
         Command::Status { root, json } => exit(status(root.as_deref(), json)),
-        Command::Config { path } => exit(config(&path)),
+        Command::Config { path, model, hook } => exit(config(&path, model.as_deref(), hook)),
         Command::Detect { path } => exit(detect(&path)),
         Command::Baseline { session, root } => exit(baseline(&root, &session)),
         Command::Update { check, background } => exit(update::run(check, background)),
@@ -218,16 +219,129 @@ fn install_orca_plugin(dir: &Path) -> i32 {
     }
 }
 
-/// `hookah config`: the config files and tool environment in effect for `path`.
-fn config(path: &Path) -> i32 {
+/// `hookah config`: the config files and tool environment in effect for `path`, or with
+/// `--hook <harness>`, a dry-run explanation of how a hook payload's model is resolved and filtered.
+fn config(path: &Path, check_model: Option<&str>, hook: Option<HarnessKind>) -> i32 {
     let target = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
     let dir = if target.is_dir() {
         target
     } else {
         target.parent().map(Path::to_path_buf).unwrap_or(target)
     };
+    if let Some(harness) = hook {
+        return config_hook(harness, &dir);
+    }
     let found = resolve_env(&dir, &Host::from_process());
-    print_out(&render::config(&found));
+    print_out(&render::config(&found, check_model));
+    0
+}
+
+fn config_hook(harness: HarnessKind, fallback_dir: &Path) -> i32 {
+    let mut stdin = String::new();
+    if let Err(e) = std::io::stdin().read_to_string(&mut stdin) {
+        let _ = writeln!(std::io::stderr(), "hookah: config: cannot read stdin: {e}");
+        return 1;
+    }
+    let harness_name = harness
+        .to_possible_value()
+        .map_or_else(|| "hook".to_owned(), |v| v.get_name().to_owned());
+    let parsed = match harness {
+        HarnessKind::Antigravity => match antigravity::parse(&stdin) {
+            Ok(payload) => {
+                let (event, scopes) = match payload.event {
+                    antigravity::Event::Start => ("start", payload.roots),
+                    antigravity::Event::Edit(req) => {
+                        ("edit", vec![hooks::model::edit_dir(&req).to_path_buf()])
+                    }
+                    antigravity::Event::BeforeModel => ("before-model", payload.roots),
+                    antigravity::Event::Stop { eligible: true } => ("stop", payload.roots),
+                    antigravity::Event::Stop { eligible: false } => {
+                        ("stop (ineligible)", payload.roots)
+                    }
+                    antigravity::Event::Ignore => ("ignore", payload.roots),
+                };
+                Ok((event, payload.model, scopes))
+            }
+            Err(e) => Err(e),
+        },
+        other => {
+            let adapter: &dyn Harness = match other {
+                HarnessKind::Claude => &Claude,
+                HarnessKind::Codex => &Codex,
+                HarnessKind::Qoder => &Qoder,
+                HarnessKind::Zcode => &ZCode,
+                HarnessKind::Kimi => &Kimi,
+                HarnessKind::Cursor => &Cursor,
+                HarnessKind::Opencode => &Opencode,
+                HarnessKind::Hermes => &Hermes,
+                HarnessKind::Pi => &Pi,
+                HarnessKind::Openclaw => &Openclaw,
+                HarnessKind::Antigravity => unreachable!(),
+            };
+            adapter.parse_event(&stdin).map(|parsed| {
+                let invocation = parsed.invocation.canonical();
+                let (event, scopes) = match &invocation {
+                    Invocation::Start(req) => ("start", vec![req.cwd.clone()]),
+                    Invocation::Edit(req) => {
+                        ("edit", vec![hooks::model::edit_dir(req).to_path_buf()])
+                    }
+                    Invocation::EditBatch(reqs) => {
+                        let mut dirs = Vec::new();
+                        for req in reqs {
+                            let dir = hooks::model::edit_dir(req).to_path_buf();
+                            if !dirs.contains(&dir) {
+                                dirs.push(dir);
+                            }
+                        }
+                        ("edit", dirs)
+                    }
+                    Invocation::Stop { request, .. } => ("stop", vec![request.root.clone()]),
+                    Invocation::Ignore if parsed.model.model_switch => (
+                        "model-switch",
+                        parsed.model.cwd.clone().into_iter().collect(),
+                    ),
+                    Invocation::Ignore => {
+                        ("ignore", parsed.model.cwd.clone().into_iter().collect())
+                    }
+                };
+                (event, parsed.model, scopes)
+            })
+        }
+    };
+    let (event, hint, mut scopes) = match parsed {
+        Ok(parts) => parts,
+        Err(e) => {
+            let _ = writeln!(std::io::stderr(), "hookah: config: {e}");
+            return 1;
+        }
+    };
+    if scopes.is_empty() {
+        scopes.push(fallback_dir.to_path_buf());
+    }
+    let resolved = hooks::model::resolve_model_with_source(&hint).map(|(id, source)| {
+        let label = match source {
+            hooks::model::ModelSource::Payload => "payload".to_owned(),
+            hooks::model::ModelSource::SessionCache => "session cache".to_owned(),
+            hooks::model::ModelSource::Transcript(path) => {
+                format!("transcript: {}", slashed(&path))
+            }
+        };
+        (id, label)
+    });
+    let host = Host::from_process();
+    let evaluated: Vec<(&Path, _)> = scopes
+        .iter()
+        .map(|scope| (scope.as_path(), resolve_env(scope, &host)))
+        .collect();
+    let model_ref = resolved
+        .as_ref()
+        .map(|(id, source)| (id.as_str(), source.as_str()));
+    print_out(&render::hook_model_check(
+        &harness_name,
+        event,
+        model_ref,
+        &evaluated,
+    ));
     0
 }
 
@@ -304,10 +418,10 @@ fn run_harness(harness: &dyn Harness, stdin: &str, limit: usize) -> Response {
         Err(e) => return warning(e.to_string()),
     };
     let invocation = parsed.invocation.canonical();
-    hooks::model::record_session_model(&invocation, &parsed.model);
     let gate = hooks::model::ModelGate::new(&parsed.model);
     let invocation = hooks::model::filter_edits(invocation, &gate);
     let outcome = run_invocation(&invocation, limit, &gate);
+    hooks::model::record_session_model(&invocation, &parsed.model, &gate);
     harness.render(&invocation, &outcome)
 }
 
@@ -339,9 +453,7 @@ fn run_invocation(
             let mut outcome = StartSession::new(ports)
                 .with_dir_filter(&allow)
                 .run(request);
-            if gate.any_allowed() || gate.allows(&request.cwd) {
-                outcome.notices.extend(update::session_start_notice());
-            }
+            outcome.notices.extend(update::session_start_notice());
             outcome
         }
         Invocation::Ignore => Outcome::pass(),

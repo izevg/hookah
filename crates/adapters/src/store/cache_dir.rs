@@ -72,8 +72,12 @@ impl CachePurge {
             }
         }
         if self.shared && !self.paths.is_empty() {
-            // Remove hookah's session-models folder only when deleting our own files emptied it.
-            let _ = fs::remove_dir(self.base.join(SESSIONS_DIR));
+            // Remove hookah's session-models folder only when it is a real directory (never a
+            // symlink) and deleting our own files left it empty.
+            let sessions = self.base.join(SESSIONS_DIR);
+            if fs::symlink_metadata(&sessions).is_ok_and(|m| m.file_type().is_dir()) {
+                let _ = fs::remove_dir(&sessions);
+            }
             // Not empty means the user keeps something there; that is fine.
             let _ = fs::remove_dir(&self.base);
         }
@@ -96,18 +100,22 @@ fn purge_in(base: PathBuf, shared: bool) -> CachePurge {
             .into_iter()
             .flatten()
             .flatten()
-            .filter(|entry| is_project_dir_name(&entry.file_name()))
+            .filter(|entry| {
+                is_project_dir_name(&entry.file_name())
+                    && entry.file_type().is_ok_and(|kind| kind.is_dir())
+            })
             .map(|entry| entry.path())
-            .filter(|path| path.is_dir())
             .collect();
         // Inside a shared cache directory, delete only hookah's own `<16-hex>.json` session-model
-        // files so unrelated user files in the same folder are never touched.
+        // files inside a real (non-symlink) `session-models` directory so unrelated user files or
+        // symlink targets are never touched.
         let sessions = base.join(SESSIONS_DIR);
-        if sessions.is_dir() {
+        if fs::symlink_metadata(&sessions).is_ok_and(|meta| meta.file_type().is_dir()) {
             for entry in fs::read_dir(&sessions).into_iter().flatten().flatten() {
-                let path = entry.path();
-                if path.is_file() && is_session_model_file(&entry.file_name()) {
-                    items.push(path);
+                if entry.file_type().is_ok_and(|kind| kind.is_file())
+                    && is_session_model_file(&entry.file_name())
+                {
+                    items.push(entry.path());
                 }
             }
         }
@@ -508,6 +516,24 @@ mod tests {
             shared: false,
         };
         assert!(purge.run().is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn shared_purge_does_not_follow_a_symlinked_session_models_directory() {
+        let base = scratch("symlink-base");
+        let outside = scratch("symlink-outside");
+        let target_file = outside.join("0123456789abcdef.json");
+        fs::write(&target_file, r#"{"model":"keep"}"#).unwrap();
+        std::os::unix::fs::symlink(&outside, base.join(SESSIONS_DIR)).unwrap();
+
+        let purge = purge_in(base.clone(), true);
+        assert!(purge.paths.is_empty(), "{:?}", purge.paths);
+        purge.run().unwrap();
+        assert!(target_file.is_file());
+
+        let _ = fs::remove_dir_all(&base);
+        let _ = fs::remove_dir_all(&outside);
     }
 
     #[test]

@@ -284,9 +284,6 @@ pub fn has_model_filter_in_tree(dir: &Path, host: &Host) -> bool {
             if !restricted {
                 return false;
             }
-            if section.path.contains("{root}") || section.path.contains("{git_root}") {
-                return true;
-            }
             let pattern = expand(&section.path, &ctx);
             matches_subtree(&pattern, &dir_text, host.windows)
         }) {
@@ -342,7 +339,9 @@ fn scan_nested_model_filter(dir: &Path, host: &Host, depth: usize, visited: &mut
         let Some(name_str) = name.to_str() else {
             continue;
         };
-        if depth > 0 && (name_str == PROJECT_FILE || name_str == LOCAL_FILE) {
+        if depth > 0 && (name_str == PROJECT_FILE || name_str == LOCAL_FILE || name_str == ".git") {
+            // A nested config file or nested git checkout changes config-root inheritance, so
+            // evaluate its effective filter (which may fall back to user-level `models`).
             if !resolve(dir, host).models.filter.is_all() {
                 return true;
             }
@@ -732,5 +731,34 @@ mod tests {
         let env = resolve(&t.0, &host(&[], false));
         assert_eq!(env.warnings.len(), 1, "{:?}", env.warnings);
         assert!(env.warnings[0].contains("cannot read"));
+    }
+
+    #[test]
+    fn tree_filter_detection_handles_nested_git_roots_and_git_root_placeholders() {
+        let t = Scratch::new();
+        fs::create_dir_all(t.0.join(".git")).unwrap();
+        fs::create_dir_all(t.0.join("frontend")).unwrap();
+        fs::create_dir_all(t.0.join("backend")).unwrap();
+
+        // A [[project]] with `{git_root}/backend` does NOT match sibling `frontend`.
+        let cfg_placeholder = t.write(
+            "user-placeholder.toml",
+            "[[project]]\npath = \"{git_root}/backend\"\nmodels = [\"claude-sonnet-*\"]\n",
+        );
+        let h = host(
+            &[("HOOKAH_CONFIG", &cfg_placeholder.to_string_lossy())],
+            false,
+        );
+        assert!(!has_model_filter_in_tree(&t.0.join("frontend"), &h));
+        assert!(has_model_filter_in_tree(&t.0.join("backend"), &h));
+
+        // Unrestricted root (`models = ["*"]`) with a nested git checkout 4 levels down that
+        // inherits the user's top-level `models` filter MUST be detected.
+        t.write(PROJECT_FILE, "models = [\"*\"]\n");
+        let nested_git = t.0.join("a/b/c/d");
+        fs::create_dir_all(nested_git.join(".git")).unwrap();
+        let cfg_global = t.write("user-global.toml", "models = [\"gemini-*\"]\n");
+        let h_global = host(&[("HOOKAH_CONFIG", &cfg_global.to_string_lossy())], false);
+        assert!(has_model_filter_in_tree(&t.0, &h_global));
     }
 }

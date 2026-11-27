@@ -150,8 +150,19 @@ def _with_report(result, text):
 
 def register(ctx):
     models = {}
-    in_flight = set()
-    dirty = set()
+    in_flight = {}
+    dirty = {}
+
+    def _touch(table, sid):
+        if not sid:
+            return
+        table.pop(sid, None)
+        table[sid] = True
+        while len(table) > MAX_IN_FLIGHT:
+            victim = next(iter(table))
+            table.pop(victim, None)
+            if table is in_flight and victim not in dirty:
+                models.pop(victim, None)
 
     def _evict_models():
         while len(models) > MAX_SESSIONS:
@@ -165,8 +176,8 @@ def register(ctx):
             if victim is None:
                 victim = next(iter(models))
             models.pop(victim, None)
-            in_flight.discard(victim)
-            dirty.discard(victim)
+            in_flight.pop(victim, None)
+            dirty.pop(victim, None)
 
     def _model_for(session_id, kwargs):
         raw = kwargs.get("model")
@@ -187,14 +198,13 @@ def register(ctx):
         sid = session_id or task_id or ""
         if sid:
             models.pop(sid, None)
-            in_flight.discard(sid)
-            dirty.discard(sid)
+            in_flight.pop(sid, None)
+            dirty.pop(sid, None)
 
     def on_llm_call(session_id="", task_id="", **kwargs):
         try:
             sid = session_id or task_id or ""
-            if sid:
-                in_flight.add(sid)
+            _touch(in_flight, sid)
             _model_for(sid, kwargs)
         except Exception:
             pass
@@ -216,9 +226,8 @@ def register(ctx):
             if not files:
                 return None
             sid = session_id or task_id or ""
-            if sid:
-                dirty.add(sid)
-                in_flight.add(sid)
+            _touch(dirty, sid)
+            _touch(in_flight, sid)
             payload = {"event": "edit", "files": files, "session_id": sid or None}
             model = _model_for(sid, kwargs)
             if model:
@@ -261,8 +270,8 @@ def register(ctx):
             if reply.get("block") and reply.get("model_text"):
                 return {"action": "continue", "message": reply["model_text"]}
             if session_id:
-                dirty.discard(session_id)
-                in_flight.discard(session_id)
+                dirty.pop(session_id, None)
+                in_flight.pop(session_id, None)
                 _evict_models()
         except Exception as e:
             _warn("stop check failed: %s" % e)

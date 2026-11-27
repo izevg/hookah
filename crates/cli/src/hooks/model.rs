@@ -15,7 +15,9 @@ use std::collections::{HashMap, HashSet};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-use hookah_adapters::config::env::{Host, has_model_filter_in_tree, resolve};
+use hookah_adapters::config::env::{
+    Host, has_model_filter_in_tree, models_env_allows_all, resolve,
+};
 use hookah_adapters::store::session_model;
 use hookah_application::EditRequest;
 use hookah_domain::model::ModelFilter;
@@ -74,6 +76,11 @@ impl<'a> ModelGate<'a> {
     /// models (independent of `StartSession`'s baseline discovery depth).
     pub(crate) fn workspace_has_filter(&self, dir: &Path) -> bool {
         self.any_restricted.get() || has_model_filter_in_tree(dir, &self.host)
+    }
+
+    /// True when `HOOKAH_MODELS` explicitly disables all model filtering (for example `"*"`).
+    pub(crate) fn env_allows_all(&self) -> bool {
+        models_env_allows_all(&self.host)
     }
 
     /// Whether a hook event targeting `dir` should run for the active model.
@@ -161,7 +168,9 @@ pub(crate) fn record_session_model(
         return;
     };
     let canonical = canonical_dir(cwd);
-    if gate.workspace_has_filter(&canonical) {
+    let should_update_existing =
+        hint.model_switch && !gate.env_allows_all() && session_model::exists(harness, session);
+    if gate.workspace_has_filter(&canonical) || should_update_existing {
         session_model::record(
             harness,
             session,
@@ -173,8 +182,9 @@ pub(crate) fn record_session_model(
 }
 
 /// Persists Antigravity's reported `modelName` for the conversation when any mounted workspace
-/// (including nested projects at any depth) currently has a model filter configured, so
-/// `PostToolUse` events that omit `modelName` still resolve the active model.
+/// (including nested projects at any depth) currently has a model filter configured, or when
+/// updating an existing session record (unless `HOOKAH_MODELS="*"` disables filtering globally),
+/// so `PostToolUse` events that omit `modelName` still resolve the active model.
 pub(crate) fn record_antigravity_model(
     roots: &[PathBuf],
     hint: &ModelHint,
@@ -190,7 +200,9 @@ pub(crate) fn record_antigravity_model(
     let Some(session) = hint.session.as_deref() else {
         return;
     };
-    if roots.iter().any(|root| gate.workspace_has_filter(root)) {
+    let should_update_existing =
+        is_update && !gate.env_allows_all() && session_model::exists("antigravity", session);
+    if roots.iter().any(|root| gate.workspace_has_filter(root)) || should_update_existing {
         session_model::record(
             "antigravity",
             session,

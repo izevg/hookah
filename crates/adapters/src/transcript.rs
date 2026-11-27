@@ -32,6 +32,21 @@ pub struct TranscriptModel {
     pub timestamp_ms: Option<u128>,
 }
 
+/// Result of inspecting a transcript file for its latest real model record.
+///
+/// Distinguishes a readable transcript that has no real model records yet (`Empty`) from a
+/// missing or unreadable transcript (`Unreadable`), so callers do not snapshot `offset = 0` when
+/// the file could not be inspected.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TranscriptRead {
+    /// Found a real model record at `TranscriptModel::end_offset`.
+    Found(TranscriptModel),
+    /// The file was readable, but contained no real model records within the scanned tail.
+    Empty,
+    /// The file did not exist or could not be opened/read.
+    Unreadable,
+}
+
 /// Returns the most recent model identifier recorded in the JSONL transcript at `path`.
 pub fn latest_model(path: &Path) -> Option<String> {
     latest_model_entry(path).map(|entry| entry.model)
@@ -39,10 +54,24 @@ pub fn latest_model(path: &Path) -> Option<String> {
 
 /// Returns the most recent real model entry recorded in the JSONL transcript at `path`.
 pub fn latest_model_entry(path: &Path) -> Option<TranscriptModel> {
-    let mut file = File::open(path).ok()?;
-    let len = file.metadata().ok()?.len();
+    match latest_model_state(path) {
+        TranscriptRead::Found(entry) => Some(entry),
+        TranscriptRead::Empty | TranscriptRead::Unreadable => None,
+    }
+}
+
+/// Inspects `path` for its latest real model entry, preserving the distinction between a readable
+/// empty transcript and an unreadable/missing file.
+pub fn latest_model_state(path: &Path) -> TranscriptRead {
+    let Ok(mut file) = File::open(path) else {
+        return TranscriptRead::Unreadable;
+    };
+    let Ok(meta) = file.metadata() else {
+        return TranscriptRead::Unreadable;
+    };
+    let len = meta.len();
     if len == 0 {
-        return None;
+        return TranscriptRead::Empty;
     }
 
     let mut pos = len;
@@ -55,18 +84,22 @@ pub fn latest_model_entry(path: &Path) -> Option<TranscriptModel> {
         scanned += take;
 
         let Ok(take_usize) = usize::try_from(take) else {
-            return None;
+            return TranscriptRead::Unreadable;
         };
         let mut buf = vec![0u8; take_usize];
-        file.seek(SeekFrom::Start(pos)).ok()?;
-        file.read_exact(&mut buf).ok()?;
+        if file.seek(SeekFrom::Start(pos)).is_err() || file.read_exact(&mut buf).is_err() {
+            return TranscriptRead::Unreadable;
+        }
         buf.extend_from_slice(&carry);
 
         if pos > 0 {
             if let Some(nl) = buf.iter().position(|&b| b == b'\n') {
-                let slice_base = pos.saturating_add(u64::try_from(nl + 1).ok()?);
+                let Ok(offset_delta) = u64::try_from(nl + 1) else {
+                    return TranscriptRead::Unreadable;
+                };
+                let slice_base = pos.saturating_add(offset_delta);
                 if let Some(entry) = scan_lines_reverse(&buf[nl + 1..], slice_base) {
-                    return Some(entry);
+                    return TranscriptRead::Found(entry);
                 }
                 // Keep the newline so `buf` stays a contiguous file slice starting at `pos`.
                 carry = buf[..=nl].to_vec();
@@ -75,14 +108,19 @@ pub fn latest_model_entry(path: &Path) -> Option<TranscriptModel> {
                 carry = buf;
             }
         } else {
-            return scan_lines_reverse(&buf, 0);
+            return match scan_lines_reverse(&buf, 0) {
+                Some(entry) => TranscriptRead::Found(entry),
+                None => TranscriptRead::Empty,
+            };
         }
     }
 
-    if !carry.is_empty() {
-        return scan_lines_reverse(&carry, pos);
+    if !carry.is_empty()
+        && let Some(entry) = scan_lines_reverse(&carry, pos)
+    {
+        return TranscriptRead::Found(entry);
     }
-    None
+    TranscriptRead::Empty
 }
 
 fn scan_lines_reverse(bytes: &[u8], base_offset: u64) -> Option<TranscriptModel> {

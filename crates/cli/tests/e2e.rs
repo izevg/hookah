@@ -1293,8 +1293,27 @@ fn unfiltered_session_start_writes_no_session_model_cache() {
     assert_eq!(f.hookah(&["hook", "claude"], &sw).status.code(), Some(0));
 
     assert!(
-        !f.cache().join("sessions").exists(),
-        "unfiltered sessions must not create session cache files"
+        !f.cache().join("session-models").exists(),
+        "unfiltered sessions must not create session-models cache files"
+    );
+
+    // An unrelated [[project]] section in the user config must NOT trigger cache writes here.
+    let user_cfg = f.cache().join("unrelated-user.toml");
+    fs::create_dir_all(f.cache()).unwrap();
+    fs::write(
+        &user_cfg,
+        "[[project]]\npath = \"/somewhere/unrelated\"\nmodels = [\"claude-sonnet-*\"]\n",
+    )
+    .unwrap();
+    let with_unrelated = f.hookah_with(
+        &["hook", "claude"],
+        &sw,
+        &[("HOOKAH_CONFIG", user_cfg.to_str().unwrap())],
+    );
+    assert_eq!(with_unrelated.status.code(), Some(0));
+    assert!(
+        !f.cache().join("session-models").exists(),
+        "unrelated user config [[project]] must not create session cache files"
     );
 
     // Even when a project file restricts models, HOOKAH_MODELS="*" disables the filter and
@@ -1303,7 +1322,7 @@ fn unfiltered_session_start_writes_no_session_model_cache() {
     let sw_override = f.hookah_with(&["hook", "claude"], &sw, &[("HOOKAH_MODELS", "*")]);
     assert_eq!(sw_override.status.code(), Some(0));
     assert!(
-        !f.cache().join("sessions").exists(),
+        !f.cache().join("session-models").exists(),
         "HOOKAH_MODELS=* must not create session cache files"
     );
 }
@@ -1397,20 +1416,53 @@ fn claude_switch_survives_cwd_change_and_subagent_uses_child_transcript() {
         "{}",
         stderr(&subagent_allowed)
     );
+
+    // Switching from an unrestricted sibling directory updates the existing session record so
+    // editing back in the filtered project does NOT see the stale prior model.
+    let unrestricted_sibling = f.cache().join("unrestricted-sibling");
+    fs::create_dir_all(&unrestricted_sibling).unwrap();
+    let sw_from_sibling = serde_json::json!({
+        "session_id": "ses-cwd",
+        "cwd": unrestricted_sibling,
+        "hook_event_name": "PostModelSwitch",
+        "to_model": "claude-opus-4-6",
+        "transcript_path": parent_transcript
+    })
+    .to_string();
+    assert_eq!(
+        f.hookah(&["hook", "claude"], &sw_from_sibling)
+            .status
+            .code(),
+        Some(0)
+    );
+    let back_in_filtered = f.hookah(&["hook", "claude"], &sub_edit);
+    assert_eq!(
+        back_in_filtered.status.code(),
+        Some(0),
+        "switch from unrestricted sibling must overwrite stale cached model"
+    );
 }
 
 #[test]
 fn antigravity_caches_model_for_deeply_nested_filtered_project() {
     let f = Fixture::new("agy-deep-filter", CLEAN_LIB);
-    fs::create_dir_all(f.path("a/b/c/d/src")).unwrap();
+    // Nest 16 levels deep so both StartSession (depth 3) and the config scan depth cap are tested.
+    let deep_rel = "d/d/d/d/d/d/d/d/d/d/d/d/d/d/d/d";
+    fs::create_dir_all(f.path(&format!("{deep_rel}/src"))).unwrap();
     f.write(
-        "a/b/c/d/Cargo.toml",
+        &format!("{deep_rel}/Cargo.toml"),
         "[package]\nname = \"deep\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n[workspace]\n",
     );
-    f.write("a/b/c/d/.hookah.toml", "models = [\"gemini-4-*\"]\n");
-    f.write("a/b/c/d/src/lib.rs", "pub fn answer()->i32{43}\n");
+    f.write(
+        &format!("{deep_rel}/.hookah.toml"),
+        "models = [\"gemini-4-*\"]\n",
+    );
+    f.write(
+        &format!("{deep_rel}/src/lib.rs"),
+        "pub fn answer()->i32{43}\n",
+    );
 
-    // Unrestricted root; deep project is 4 levels down (beyond StartSession's depth-3 scan).
+    // Unrestricted root; deep project is 16 levels down.
     let start = serde_json::json!({
         "conversationId": "agy-deep",
         "workspacePaths": [f.root],
@@ -1427,12 +1479,12 @@ fn antigravity_caches_model_for_deeply_nested_filtered_project() {
         "conversationId": "agy-deep",
         "workspacePaths": [f.root],
         "stepIdx": 1,
-        "toolCall": {"name": "edit_file", "args": {"Path": "a/b/c/d/src/lib.rs"}}
+        "toolCall": {"name": "edit_file", "args": {"Path": format!("{deep_rel}/src/lib.rs")}}
     });
     let out = f.hookah(&["hook", "antigravity"], &edit.to_string());
     assert!(out.status.success(), "{}", stderr(&out));
     assert_eq!(
-        f.read("a/b/c/d/src/lib.rs"),
+        f.read(&format!("{deep_rel}/src/lib.rs")),
         "pub fn answer() -> i32 {\n    43\n}\n"
     );
 }
@@ -1518,6 +1570,29 @@ fn config_verifies_model_patterns_and_hook_payloads() {
     assert!(
         !f.cache().exists(),
         "monorepo config --hook must not create any cache directories"
+    );
+
+    // Even with 9 sibling projects where the first 8 are disabled and the 9th is enabled,
+    // Start diagnostic must NOT truncate before filtering and omit the 9th project.
+    for i in 0..9 {
+        let name = format!("p{i:02}");
+        fs::create_dir_all(f.path(&format!("{name}/src"))).unwrap();
+        f.write(
+            &format!("{name}/Cargo.toml"),
+            &format!("[package]\nname = \"{name}\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n[workspace]\n"),
+        );
+        f.write(&format!("{name}/src/lib.rs"), CLEAN_LIB);
+        let cfg = if i < 8 {
+            "models = []\n"
+        } else {
+            "models = [\"*\"]\n"
+        };
+        f.write(&format!("{name}/.hookah.toml"), cfg);
+    }
+    let many_diag = stdout(&f.hookah(&["config", "--hook", "claude"], &f.start_payload("many")));
+    assert!(
+        many_diag.contains("p08\nmodels: all") && many_diag.contains("decision: allow"),
+        "{many_diag}"
     );
 
     // Payload smoke test for Claude transcript resolution.

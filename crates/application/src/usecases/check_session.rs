@@ -32,6 +32,11 @@ use super::request::{Outcome, RunLog, StopRequest};
 use super::status::record;
 use crate::ports::Ports;
 
+struct LocatedChanges {
+    located: Vec<(hookah_domain::project::Project, std::path::PathBuf)>,
+    errors: Vec<String>,
+}
+
 /// Runs the static checks, related tests, and mutation testing for everything changed in the
 /// session.
 pub struct CheckSession<'a> {
@@ -73,19 +78,14 @@ impl<'a> CheckSession<'a> {
     /// Read-only discovery of the changed-file config directories `run` evaluates for `root`
     /// (before filtering). Falls back to `[root]` when there are no changed checkable files.
     pub fn discover_scopes(&self, root: &Path) -> Vec<std::path::PathBuf> {
-        let Ok(files) = self.ports.changes.changed_files(root) else {
+        let Ok(found) = self.collect_changed_files(root) else {
             return vec![root.to_path_buf()];
         };
         let mut scopes = Vec::new();
-        for file in &files {
-            if let Ok(manifests) = self.ports.locator.manifests_above(file)
-                && let Some(p) = locate_project(file, &manifests)
-                && p.ecosystem.can_check(file)
-            {
-                let dir = file.parent().unwrap_or(&p.root).to_path_buf();
-                if !scopes.contains(&dir) {
-                    scopes.push(dir);
-                }
+        for (project, file) in found.located {
+            let dir = file.parent().unwrap_or(&project.root).to_path_buf();
+            if !scopes.contains(&dir) {
+                scopes.push(dir);
             }
         }
         if scopes.is_empty() {
@@ -94,30 +94,43 @@ impl<'a> CheckSession<'a> {
         scopes
     }
 
+    fn collect_changed_files(&self, root: &Path) -> Result<LocatedChanges, crate::PortError> {
+        let files = self.ports.changes.changed_files(root)?;
+        let mut located = Vec::new();
+        let mut errors = Vec::new();
+        for file in files {
+            match self.ports.locator.manifests_above(&file) {
+                Err(e) => errors.push(format!("locating project: {e}")),
+                Ok(manifests) => {
+                    if let Some(p) = locate_project(&file, &manifests)
+                        && p.ecosystem.can_check(&file)
+                    {
+                        located.push((p, file));
+                    }
+                }
+            }
+        }
+        Ok(LocatedChanges { located, errors })
+    }
+
     /// Runs the stop phase. Never panics and never fails on a port error.
     pub fn run(&self, request: &StopRequest) -> Outcome {
-        let files = match self.ports.changes.changed_files(&request.root) {
-            Ok(f) => f,
+        let found = match self.collect_changed_files(&request.root) {
+            Ok(found) => found,
             Err(_) if !self.allows(&request.root) => return Outcome::pass(),
             Err(e) => return Outcome::degraded(format!("reading changes: {e}")),
         };
         let mut total = RunLog::default();
+        for err in found.errors {
+            total.fail(err);
+        }
         let mut set = ChangeSet::new();
         let mut filtered_out = false;
-        for file in &files {
-            match self.ports.locator.manifests_above(file) {
-                Err(e) => total.fail(format!("locating project: {e}")),
-                Ok(manifests) => {
-                    if let Some(p) = locate_project(file, &manifests)
-                        && p.ecosystem.can_check(file)
-                    {
-                        if self.allows(file.parent().unwrap_or(&p.root)) {
-                            set.add(&p, file);
-                        } else {
-                            filtered_out = true;
-                        }
-                    }
-                }
+        for (p, file) in &found.located {
+            if self.allows(file.parent().unwrap_or(&p.root)) {
+                set.add(p, file);
+            } else {
+                filtered_out = true;
             }
         }
 

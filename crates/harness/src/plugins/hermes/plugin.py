@@ -34,6 +34,7 @@ EDIT_TIMEOUT_S = 30
 STOP_TIMEOUT_S = 120
 START_TIMEOUT_S = 10
 MAX_SESSIONS = 256
+MAX_IN_FLIGHT = 4096
 
 log = logging.getLogger("hookah")
 
@@ -149,6 +150,23 @@ def _with_report(result, text):
 
 def register(ctx):
     models = {}
+    in_flight = set()
+    dirty = set()
+
+    def _evict_models():
+        while len(models) > MAX_SESSIONS:
+            victim = next((sid for sid in models if sid not in in_flight and sid not in dirty), None)
+            if victim is not None:
+                models.pop(victim, None)
+                continue
+            if len(models) <= MAX_IN_FLIGHT:
+                break
+            victim = next((sid for sid in models if sid not in dirty), None)
+            if victim is None:
+                victim = next(iter(models))
+            models.pop(victim, None)
+            in_flight.discard(victim)
+            dirty.discard(victim)
 
     def _model_for(session_id, kwargs):
         raw = kwargs.get("model")
@@ -157,8 +175,7 @@ def register(ctx):
             if session_id:
                 models.pop(session_id, None)
                 models[session_id] = model
-                while len(models) > MAX_SESSIONS:
-                    models.pop(next(iter(models)))
+                _evict_models()
             return model
         if session_id and session_id in models:
             model = models.pop(session_id)
@@ -170,10 +187,15 @@ def register(ctx):
         sid = session_id or task_id or ""
         if sid:
             models.pop(sid, None)
+            in_flight.discard(sid)
+            dirty.discard(sid)
 
     def on_llm_call(session_id="", task_id="", **kwargs):
         try:
-            _model_for(session_id or task_id or "", kwargs)
+            sid = session_id or task_id or ""
+            if sid:
+                in_flight.add(sid)
+            _model_for(sid, kwargs)
         except Exception:
             pass
 
@@ -194,6 +216,9 @@ def register(ctx):
             if not files:
                 return None
             sid = session_id or task_id or ""
+            if sid:
+                dirty.add(sid)
+                in_flight.add(sid)
             payload = {"event": "edit", "files": files, "session_id": sid or None}
             model = _model_for(sid, kwargs)
             if model:
@@ -235,6 +260,10 @@ def register(ctx):
                 _warn(reply["user_text"])
             if reply.get("block") and reply.get("model_text"):
                 return {"action": "continue", "message": reply["model_text"]}
+            if session_id:
+                dirty.discard(session_id)
+                in_flight.discard(session_id)
+                _evict_models()
         except Exception as e:
             _warn("stop check failed: %s" % e)
         return None

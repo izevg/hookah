@@ -27,7 +27,7 @@ use hookah_domain::model::ModelFilter;
 
 pub use runner::ProjectEnvRunner;
 
-use expand::{Context, expand, matches};
+use expand::{Context, expand, matches, matches_subtree};
 
 /// Project config file shared with the team.
 pub const PROJECT_FILE: &str = ".hookah.toml";
@@ -225,12 +225,29 @@ pub fn resolve(dir: &Path, host: &Host) -> ProjectEnv {
     out
 }
 
-/// True if `dir` itself, the user config, `HOOKAH_MODELS`, or any nested `.hookah.toml` /
-/// `.hookah.local.toml` below `dir` currently restricts models (i.e. resolves to something other
-/// than [`ModelFilter::All`]).
+/// True when `HOOKAH_MODELS` is explicitly set in the environment to allow all models (e.g. `"*"`),
+/// overriding every config file across the entire workspace.
+pub fn models_env_allows_all(host: &Host) -> bool {
+    let Some(raw) = (host.var)(MODELS_VAR) else {
+        return false;
+    };
+    let parts: Vec<String> = raw
+        .split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_owned)
+        .collect();
+    !parts.is_empty() && ModelFilter::from_patterns(parts).is_all()
+}
+
+/// True if `dir` itself, a matching `[[project]]` section of the user config, `HOOKAH_MODELS`, or
+/// any nested `.hookah.toml` / `.hookah.local.toml` below `dir` currently restricts models (i.e.
+/// resolves to something other than [`ModelFilter::All`]).
 ///
 /// When `HOOKAH_MODELS` is set in the environment it overrides every config file, so
-/// `HOOKAH_MODELS="*"` immediately returns `false` without walking the tree.
+/// `HOOKAH_MODELS="*"` immediately returns `false` without walking the tree. When the directory
+/// walk reaches its depth or entry cap without finishing, it fails safe and returns `true` so a
+/// deeply nested filtered project is never silently missed.
 pub fn has_model_filter_in_tree(dir: &Path, host: &Host) -> bool {
     if let Some(raw) = (host.var)(MODELS_VAR) {
         let parts: Vec<String> = raw
@@ -243,28 +260,40 @@ pub fn has_model_filter_in_tree(dir: &Path, host: &Host) -> bool {
             return !ModelFilter::from_patterns(parts).is_all();
         }
     }
-    if !resolve(dir, host).models.filter.is_all() {
+    let dir = dunce::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf());
+    if !resolve(&dir, host).models.filter.is_all() {
         return true;
     }
     if let Some(user) = host.user_config()
         && let Ok(text_of) = std::fs::read_to_string(&user)
         && let Ok(parsed) = file::parse(&text_of)
     {
-        if parsed
-            .models
-            .is_some_and(|list| !ModelFilter::from_patterns(list).is_all())
-        {
-            return true;
-        }
+        let (root, git_root) = roots(&dir);
+        let home = host.home();
+        let (dir_text, root_text, git_text) = (text(&dir), text(&root), text(&git_root));
+        let ctx = Context {
+            home: home.as_deref(),
+            root: &root_text,
+            git_root: &git_text,
+            var: &*host.var,
+        };
         if parsed.project.into_iter().any(|section| {
-            section
+            let restricted = section
                 .models
-                .is_some_and(|list| !ModelFilter::from_patterns(list).is_all())
+                .is_some_and(|list| !ModelFilter::from_patterns(list).is_all());
+            if !restricted {
+                return false;
+            }
+            if section.path.contains("{root}") || section.path.contains("{git_root}") {
+                return true;
+            }
+            let pattern = expand(&section.path, &ctx);
+            matches_subtree(&pattern, &dir_text, host.windows)
         }) {
             return true;
         }
     }
-    scan_nested_model_filter(dir, host, 0, &mut 0)
+    scan_nested_model_filter(&dir, host, 0, &mut 0)
 }
 
 const MAX_CONFIG_SCAN_DEPTH: usize = 16;
@@ -295,7 +324,8 @@ const SKIP_SCAN_DIRS: &[&str] = &[
 
 fn scan_nested_model_filter(dir: &Path, host: &Host, depth: usize, visited: &mut usize) -> bool {
     if depth >= MAX_CONFIG_SCAN_DEPTH || *visited >= MAX_CONFIG_SCAN_DIRS {
-        return false;
+        // Incomplete scan: fail safe rather than falsely claiming no nested filter exists.
+        return true;
     }
     let Ok(entries) = std::fs::read_dir(dir) else {
         return false;
@@ -325,7 +355,7 @@ fn scan_nested_model_filter(dir: &Path, host: &Host, depth: usize, visited: &mut
     for sub in subdirs {
         *visited += 1;
         if *visited > MAX_CONFIG_SCAN_DIRS {
-            return false;
+            return true;
         }
         if scan_nested_model_filter(&sub, host, depth + 1, visited) {
             return true;

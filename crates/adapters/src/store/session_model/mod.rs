@@ -50,11 +50,23 @@ struct Record {
     transcript_model_offset: Option<u64>,
 }
 
+/// True if a cached session-model file already exists for `(harness, session)`.
+///
+/// Purely read-only: creates no cache directories.
+pub fn exists(harness: &str, session: &str) -> bool {
+    !harness.is_empty()
+        && !session.is_empty()
+        && sessions_cache_path()
+            .ok()
+            .is_some_and(|dir| record_file(&dir, harness, session).is_file())
+}
+
 /// Records `model` for `(harness, session)` in the session cache. Silently ignores any error.
 ///
-/// When `transcript_path` is provided, also snapshots the end byte offset of the latest real model
-/// entry currently in that transcript so later trailing non-model entries (`user`, `<synthetic>`)
-/// cannot make an older assistant record override this update.
+/// When `transcript_path` is provided and readable, also snapshots the end byte offset of the
+/// latest real model entry currently in that transcript (`Some(0)` if readable and empty, `None`
+/// if missing/unreadable) so later trailing non-model entries (`user`, `<synthetic>`) or
+/// previously unreadable transcripts cannot make an older assistant record override this update.
 pub fn record(
     harness: &str,
     session: &str,
@@ -82,7 +94,11 @@ fn record_in(
     }
     let path = record_file(dir, harness, session);
     let transcript_model_offset =
-        transcript_path.map(|p| transcript::latest_model_entry(p).map_or(0, |e| e.end_offset));
+        transcript_path.and_then(|p| match transcript::latest_model_state(p) {
+            transcript::TranscriptRead::Found(entry) => Some(entry.end_offset),
+            transcript::TranscriptRead::Empty => Some(0),
+            transcript::TranscriptRead::Unreadable => None,
+        });
     let _ = write_record(&path, model, now_ms(), from_switch, transcript_model_offset);
 }
 
@@ -489,6 +505,45 @@ mod tests {
                 false,
             ),
             None
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn switch_with_unreadable_transcript_retains_switch_over_later_untimestamped_entry() {
+        let dir = scratch("unreadable-transcript");
+        let sessions = dir.join("sessions");
+        let missing = dir.join("not-yet-created.jsonl");
+
+        // Switch while the supplied transcript path does not exist yet -> offset snapshot is None.
+        record_in(
+            &sessions,
+            "claude",
+            "ses-unreadable",
+            "claude-sonnet-4-6",
+            true,
+            Some(&missing),
+        );
+
+        // Later, the transcript appears with an untimestamped pre-switch opus entry.
+        fs::write(
+            &missing,
+            r#"{"type":"assistant","message":{"model":"claude-opus-4-6","content":[]}}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            resolve_in(
+                Some(&sessions),
+                "claude",
+                Some("ses-unreadable"),
+                Some(&missing),
+                true,
+            ),
+            Some(ResolvedModel {
+                model: "claude-sonnet-4-6".into(),
+                origin: ModelOrigin::SessionCache,
+            })
         );
 
         let _ = fs::remove_dir_all(&dir);

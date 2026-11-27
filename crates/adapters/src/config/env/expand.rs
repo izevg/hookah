@@ -99,6 +99,33 @@ pub fn matches(pattern: &str, path: &str, windows: bool) -> bool {
     }
 }
 
+/// Whether `pattern` matches `dir` itself or could match some descendant directory below `dir`.
+pub fn matches_subtree(pattern: &str, dir: &str, windows: bool) -> bool {
+    if matches(pattern, dir, windows) {
+        return true;
+    }
+    let norm = |s: &str| {
+        let s = s.replace('\\', "/");
+        let s = s.trim_end_matches('/').to_string();
+        if windows { s.to_lowercase() } else { s }
+    };
+    let (pattern, dir) = (norm(pattern), norm(dir));
+    let pat: Vec<&str> = pattern.split('/').collect();
+    let base: Vec<&str> = dir.split('/').collect();
+    segments_prefix(&pat, &base)
+}
+
+/// True if `pat` can match `base` extended by zero or more trailing segments.
+fn segments_prefix(pat: &[&str], base: &[&str]) -> bool {
+    match (pat.split_first(), base.split_first()) {
+        (None, _) | (Some(_), None) => true,
+        (Some((&"**", rest)), Some(_)) => {
+            (0..=base.len()).any(|skip| segments_prefix(rest, &base[skip..]))
+        }
+        (Some((first, rest)), Some((b, tail))) => wildcard(first, b) && segments_prefix(rest, tail),
+    }
+}
+
 fn segments(pat: &[&str], path: &[&str]) -> bool {
     match pat.split_first() {
         None => path.is_empty(),
@@ -233,5 +260,21 @@ mod tests {
         assert!(matches("c:/work/corp", "C:\\Work\\Corp\\app", true));
         assert!(!matches("c:/work/corp", "C:\\Work\\Corp\\app", false));
         assert!(!matches("C:/Work/corp", "D:/Work/corp", true));
+    }
+
+    #[test]
+    fn matches_subtree_distinguishes_unrelated_paths_from_descendants() {
+        assert!(matches_subtree("/work/repo/sub", "/work/repo", false));
+        assert!(matches_subtree("/work/repo/**/child", "/work/repo", false));
+        assert!(matches_subtree("/work/r*/child", "/work/repo", false));
+        assert!(matches_subtree("/work", "/work/repo", false));
+        assert!(!matches_subtree(
+            "/somewhere/unrelated",
+            "/work/repo",
+            false
+        ));
+        assert!(!matches_subtree("/somewhere/**/child", "/work/repo", false));
+        assert!(!matches_subtree("/work/other/sub", "/work/repo", false));
+        assert!(!matches_subtree("/work/repo2/sub", "/work/repo", false));
     }
 }

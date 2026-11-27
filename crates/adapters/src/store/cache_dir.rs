@@ -61,12 +61,19 @@ pub struct CachePurge {
 }
 
 impl CachePurge {
-    /// Deletes [`CachePurge::paths`], then a shared `base` that is now empty.
+    /// Deletes [`CachePurge::paths`], then empty hookah-owned directories and a shared `base` that
+    /// is now empty.
     pub fn run(&self) -> std::io::Result<()> {
         for path in &self.paths {
-            fs::remove_dir_all(path)?;
+            if path.is_dir() {
+                fs::remove_dir_all(path)?;
+            } else {
+                fs::remove_file(path)?;
+            }
         }
         if self.shared && !self.paths.is_empty() {
+            // Remove hookah's session-models folder only when deleting our own files emptied it.
+            let _ = fs::remove_dir(self.base.join(SESSIONS_DIR));
             // Not empty means the user keeps something there; that is fine.
             let _ = fs::remove_dir(&self.base);
         }
@@ -85,7 +92,7 @@ pub fn cache_purge() -> Option<CachePurge> {
 
 fn purge_in(base: PathBuf, shared: bool) -> CachePurge {
     let paths = if shared {
-        let mut dirs: Vec<PathBuf> = fs::read_dir(&base)
+        let mut items: Vec<PathBuf> = fs::read_dir(&base)
             .into_iter()
             .flatten()
             .flatten()
@@ -93,8 +100,19 @@ fn purge_in(base: PathBuf, shared: bool) -> CachePurge {
             .map(|entry| entry.path())
             .filter(|path| path.is_dir())
             .collect();
-        dirs.sort();
-        dirs
+        // Inside a shared cache directory, delete only hookah's own `<16-hex>.json` session-model
+        // files so unrelated user files in the same folder are never touched.
+        let sessions = base.join(SESSIONS_DIR);
+        if sessions.is_dir() {
+            for entry in fs::read_dir(&sessions).into_iter().flatten().flatten() {
+                let path = entry.path();
+                if path.is_file() && is_session_model_file(&entry.file_name()) {
+                    items.push(path);
+                }
+            }
+        }
+        items.sort();
+        items
     } else {
         vec![base.clone()]
     };
@@ -105,20 +123,27 @@ fn purge_in(base: PathBuf, shared: bool) -> CachePurge {
     }
 }
 
-/// True for the 16 lowercase hex digits of [`root_hash`], or hookah's own top-level cache
-/// directories (`update`, `sessions`): the directories hookah creates inside a user-chosen cache.
+/// True for the 16 lowercase hex digits of [`root_hash`], or the updater's directory.
 fn is_project_dir_name(name: &std::ffi::OsStr) -> bool {
     name.to_str().is_some_and(|n| {
         n == UPDATE_DIR
-            || n == SESSIONS_DIR
             || (n.len() == 16 && n.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')))
     })
+}
+
+/// True for `<16 lowercase hex digits>.json`, the filenames written by `session_model`.
+fn is_session_model_file(name: &std::ffi::OsStr) -> bool {
+    name.to_str()
+        .and_then(|n| n.strip_suffix(".json"))
+        .is_some_and(|stem| {
+            stem.len() == 16 && stem.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+        })
 }
 
 /// The updater's directory inside the hookah cache.
 const UPDATE_DIR: &str = "update";
 /// The per-session model cache directory inside the hookah cache.
-const SESSIONS_DIR: &str = "sessions";
+const SESSIONS_DIR: &str = "session-models";
 
 /// The directory where the updater keeps its state and lock: `<hookah cache>/update`; created
 /// when missing.
@@ -427,6 +452,14 @@ mod tests {
         }
         fs::create_dir_all(base.join("update")).unwrap();
         fs::create_dir_all(base.join("sessions")).unwrap();
+        fs::write(base.join("sessions/notes.txt"), "user data").unwrap();
+        fs::create_dir_all(base.join("session-models")).unwrap();
+        fs::write(
+            base.join("session-models/0123456789abcdef.json"),
+            r#"{"model":"gpt-5"}"#,
+        )
+        .unwrap();
+        fs::write(base.join("session-models/keep.txt"), "user file").unwrap();
         fs::write(base.join("aaaaaaaaaaaaaaaa"), "a file named like a project").unwrap();
         fs::write(base.join("notes.txt"), "mine").unwrap();
         let purge = purge_in(base.clone(), true);
@@ -435,18 +468,20 @@ mod tests {
             [
                 base.join("0123456789abcdef"),
                 base.join("fedcba9876543210"),
-                base.join("sessions"),
+                base.join("session-models/0123456789abcdef.json"),
                 base.join("update")
             ]
         );
         purge.run().unwrap();
         assert!(base.join("notes.txt").is_file());
+        assert!(base.join("sessions/notes.txt").is_file());
+        assert!(base.join("session-models/keep.txt").is_file());
+        assert!(!base.join("session-models/0123456789abcdef.json").exists());
         assert!(base.join("0123456789abcde").is_dir());
         assert!(base.join("0123456789abcdeg").is_dir());
         assert!(base.join("aaaaaaaaaaaaaaaa").is_file());
         assert!(!base.join("0123456789abcdef").exists());
         assert!(!base.join("fedcba9876543210").exists());
-        assert!(!base.join("sessions").exists());
         assert!(!base.join("update").exists());
     }
 

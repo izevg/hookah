@@ -94,8 +94,10 @@ Static checks run again at stop to catch files changed outside edit hooks, for e
 shell `sed`. Format never runs at stop.
 
 - **Edit phase:** the harness parses the hook payload into an `EditRequest` (the edited file and
-  the display root). `CheckEdit` asks the `ProjectLocator` for the manifests above the file, and
-  the domain picks the nearest one as the `Project`. The `ToolchainDetector` yields its tools.
+  the display root) and any model metadata it carries. If a `models` filter is configured in
+  [configuration](configuration.md#filtering-by-model-models) and the active model does not match,
+  the hook exits quietly without running checks. Otherwise `CheckEdit` asks the `ProjectLocator`
+  for the manifests above the file, and the domain picks the nearest one as the `Project`. The `ToolchainDetector` yields its tools.
   The formatter runs first and may rewrite the file (reported as a notice, so the agent
   re-reads it). The other tools run through the `CommandRunner`, the detector parses their output
   into findings, and the reporting filter decides which count: the session baseline when there is

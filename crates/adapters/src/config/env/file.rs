@@ -15,6 +15,12 @@ pub struct ConfigFile {
     /// Variables for the project the file belongs to.
     #[serde(default)]
     pub env: BTreeMap<String, String>,
+    /// Optional model filter (`models = ["claude-sonnet-*", "gpt-5*"]`).
+    ///
+    /// In a project file (`.hookah.toml`, `.hookah.local.toml`) this applies to the project; in
+    /// the user config it is the global default for every project unless overridden.
+    #[serde(default)]
+    pub models: Option<Vec<String>>,
     /// Per-project sections of the user config, in file order.
     #[serde(default)]
     pub project: Vec<ProjectSection>,
@@ -32,11 +38,14 @@ pub struct UpdateSection {
     pub auto: Option<bool>,
 }
 
-/// A `[[project]]` section: variables for every project whose path matches.
+/// A `[[project]]` section: settings for every project whose path matches.
 #[derive(Debug, PartialEq, Eq, Deserialize)]
 pub struct ProjectSection {
     /// Path prefix or glob, matched over the canonical project root.
     pub path: String,
+    /// Optional model filter for matching projects.
+    #[serde(default)]
+    pub models: Option<Vec<String>>,
     /// Variables to set.
     #[serde(default)]
     pub env: BTreeMap<String, String>,
@@ -85,6 +94,21 @@ mod tests {
         );
         assert_eq!(parse("").unwrap().update.check, None);
         assert!(parse("[update]\ncheck = \"no\"\n").is_err());
+    }
+
+    #[test]
+    fn reads_models_at_top_level_and_in_project_sections() {
+        let file = parse(
+            "models = [\"claude-sonnet-*\", \"gpt-5*\"]\n[[project]]\npath = \"/x\"\nmodels = []\n",
+        )
+        .unwrap();
+        assert_eq!(
+            file.models,
+            Some(vec!["claude-sonnet-*".into(), "gpt-5*".into()])
+        );
+        assert_eq!(file.project[0].models, Some(vec![]));
+        assert!(parse("models = \"gpt-5\"\n").is_err());
+        assert!(parse("models = [1]\n").is_err());
     }
 
     #[test]

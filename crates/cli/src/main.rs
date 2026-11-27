@@ -299,10 +299,11 @@ fn hook(harness: HarnessKind, limit: usize) -> Response {
 }
 
 fn run_harness(harness: &dyn Harness, stdin: &str, limit: usize) -> Response {
-    let invocation = match harness.parse(stdin) {
-        Ok(i) => i.canonical(),
+    let parsed = match harness.parse_event(stdin) {
+        Ok(parsed) => parsed,
         Err(e) => return warning(e.to_string()),
     };
+    let invocation = hooks::model::filter_invocation(parsed.invocation.canonical(), &parsed.model);
     let outcome = run_invocation(&invocation, limit);
     harness.render(&invocation, &outcome)
 }

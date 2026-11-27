@@ -4,7 +4,7 @@ use hookah_application::EditRequest;
 use hookah_domain::path::normalize;
 use serde::Deserialize;
 
-use crate::protocol::{PayloadError, canonical_dir};
+use crate::protocol::{ModelHint, PayloadError, canonical_dir, clean_model, clean_transcript};
 
 /// The file-writing tools whose completed edit should be checked.
 pub const EDIT_TOOLS: &str =
@@ -33,6 +33,8 @@ pub struct Payload {
     pub roots: Vec<PathBuf>,
     /// User input associated with the current turn, used to bound continuations.
     pub prompt: String,
+    /// Model metadata carried by the payload, if any.
+    pub model: ModelHint,
     /// What this hook should do.
     pub event: Event,
 }
@@ -43,6 +45,8 @@ struct Input {
     conversation_id: Option<String>,
     #[serde(default)]
     workspace_paths: Vec<PathBuf>,
+    model: Option<String>,
+    transcript_path: Option<PathBuf>,
     last_user_input: Option<String>,
     tool_call: Option<ToolCall>,
     step_idx: Option<usize>,
@@ -106,10 +110,15 @@ pub fn parse(stdin: &str) -> Result<Payload, PayloadError> {
     } else {
         Event::Start
     };
+    let model = ModelHint {
+        model: clean_model(input.model),
+        transcript: clean_transcript(input.transcript_path, roots.first().map(PathBuf::as_path)),
+    };
     Ok(Payload {
         session,
         roots,
         prompt: input.last_user_input.unwrap_or_default(),
+        model,
         event,
     })
 }

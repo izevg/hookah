@@ -21,7 +21,10 @@ use std::path::PathBuf;
 use hookah_application::{EditRequest, StopRequest};
 use serde::Deserialize;
 
-use crate::protocol::{Invocation, PayloadError, display_root, resolve_path, start_invocation};
+use crate::protocol::{
+    Invocation, ModelHint, Parsed, PayloadError, clean_model, display_root, resolve_path,
+    start_invocation,
+};
 
 /// The contract version this build understands.
 pub const VERSION: u32 = 1;
@@ -32,6 +35,7 @@ struct Payload {
     event: Event,
     cwd: Option<PathBuf>,
     session_id: Option<String>,
+    model: Option<String>,
     #[serde(default)]
     files: Vec<PathBuf>,
     #[serde(default)]
@@ -48,6 +52,11 @@ enum Event {
 
 /// Parses a Pi extension payload.
 pub fn parse(stdin: &str) -> Result<Invocation, PayloadError> {
+    parse_event(stdin).map(|parsed| parsed.invocation)
+}
+
+/// Parses a Pi extension payload along with its model metadata.
+pub fn parse_event(stdin: &str) -> Result<Parsed, PayloadError> {
     let p: Payload = serde_json::from_str(stdin).map_err(|e| PayloadError(e.to_string()))?;
     if p.v != VERSION {
         return Err(PayloadError(format!(
@@ -56,20 +65,25 @@ pub fn parse(stdin: &str) -> Result<Invocation, PayloadError> {
             p.v
         )));
     }
-    match p.event {
-        Event::Start => Ok(start_invocation(p.cwd, p.session_id)),
-        Event::Edit => edit(&p),
+    let model = ModelHint {
+        model: clean_model(p.model.clone()),
+        transcript: None,
+    };
+    let invocation = match p.event {
+        Event::Start => start_invocation(p.cwd, p.session_id),
+        Event::Edit => edit(&p)?,
         Event::Stop => {
             let root = p
                 .cwd
                 .filter(|c| c.is_absolute())
                 .ok_or_else(|| PayloadError("stop event without an absolute cwd".into()))?;
-            Ok(Invocation::Stop {
+            Invocation::Stop {
                 request: StopRequest::new(root).with_session(p.session_id),
                 already_continuing: p.already_continuing,
-            })
+            }
         }
-    }
+    };
+    Ok(Parsed { invocation, model })
 }
 
 fn edit(p: &Payload) -> Result<Invocation, PayloadError> {
@@ -201,5 +215,12 @@ mod tests {
             panic!("expected edit");
         };
         assert_eq!(r.session.as_deref(), Some("ses_9"));
+    }
+
+    #[test]
+    fn extracts_optional_model_field() {
+        let json = os_json(r#"{"v":1,"event":"stop","cwd":"/w","model":"openai/gpt-5.3-codex"}"#);
+        let parsed = parse_event(&json).unwrap();
+        assert_eq!(parsed.model.model.as_deref(), Some("openai/gpt-5.3-codex"));
     }
 }

@@ -67,13 +67,17 @@ export default {
     const state = (globalThis[Symbol.for("hookah.openclaw")] ??= {
       /** Workspace directory by session key, learned from the agent-context hooks. */
       workspaces: new Map(),
+      /** Latest model identifier by session key, learned from model hooks. */
+      models: new Map(),
       /** Session keys that edited files since their last stop check. */
       dirty: new Set(),
       /** Session keys whose last stop check asked for one more pass (the loop guard). */
       continuing: new Set(),
       lastWorkspace: undefined,
+      lastModel: undefined,
     })
-    const { workspaces, dirty, continuing } = state
+    state.models ??= new Map()
+    const { workspaces, models, dirty, continuing } = state
 
     const warn = (text) => {
       try {
@@ -110,18 +114,48 @@ export default {
 
     const sessionOf = (ctx) => ctx?.sessionKey || ctx?.sessionId
     const dirOf = (ctx) => ctx?.workspaceDir || workspaces.get(sessionOf(ctx)) || state.lastWorkspace || process.cwd()
+    const formatModel = (provider, model) => {
+      const id = typeof model === "string" ? model : model?.id
+      if (typeof id !== "string" || !id) return undefined
+      const prov = typeof provider === "string" ? provider : model?.provider
+      return typeof prov === "string" && prov && !id.includes("/") ? `${prov}/${id}` : id
+    }
+    const rememberModel = (session, provider, model) => {
+      const name = formatModel(provider, model)
+      if (!name) return
+      state.lastModel = name
+      if (session) {
+        if (models.size > 64) models.clear()
+        models.set(session, name)
+      }
+    }
+    const modelOf = (event, ctx) =>
+      formatModel(event?.provider ?? ctx?.provider, event?.model ?? ctx?.model) ||
+      models.get(sessionOf(ctx) || event?.sessionKey || event?.sessionId) ||
+      state.lastModel
 
-    api.on("before_model_resolve", (_event, ctx) => {
+    api.on("before_model_resolve", (event, ctx) => {
+      const session = sessionOf(ctx)
+      rememberModel(session, event?.provider ?? ctx?.provider, event?.model ?? ctx?.model)
       if (!ctx?.workspaceDir) return
       state.lastWorkspace = ctx.workspaceDir
-      if (sessionOf(ctx)) workspaces.set(sessionOf(ctx), ctx.workspaceDir)
+      if (session) workspaces.set(session, ctx.workspaceDir)
     })
 
-    api.on("session_start", async (event) => {
+    api.on("llm_input", (event, ctx) => {
+      rememberModel(sessionOf(ctx) || event?.sessionKey || event?.sessionId, event?.provider ?? ctx?.provider, event?.model ?? ctx?.model)
+    })
+
+    api.on("session_start", async (event, ctx) => {
       try {
         const id = event.sessionKey || event.sessionId
         if (!id) return
-        await callHookah(dirOf({ sessionKey: id }), { event: "start", session_id: id, already_continuing: false }, START_TIMEOUT_MS)
+        const model = modelOf(event, ctx || { sessionKey: id })
+        await callHookah(
+          dirOf({ sessionKey: id }),
+          { event: "start", session_id: id, already_continuing: false, ...(model ? { model } : {}) },
+          START_TIMEOUT_MS,
+        )
       } catch (e) {
         warn(`session start failed: ${e}`)
       }
@@ -136,10 +170,17 @@ export default {
           if (!files.length || event.isError) return
           const cwd = event.cwd || dirOf(ctx)
           const session = sessionOf(ctx)
+          const model = modelOf(event, ctx)
           dirty.add(session)
           const reply = await callHookah(
             cwd,
-            { event: "edit", files: files.map((f) => path.resolve(cwd, f)), session_id: session, already_continuing: false },
+            {
+              event: "edit",
+              files: files.map((f) => path.resolve(cwd, f)),
+              session_id: session,
+              already_continuing: false,
+              ...(model ? { model } : {}),
+            },
             EDIT_TIMEOUT_MS,
           )
           if (!reply?.model_text) return
@@ -159,9 +200,10 @@ export default {
         if (!dirty.has(id) && !injected) return
         dirty.delete(id)
         continuing.delete(id)
+        const model = modelOf(event, ctx)
         const reply = await callHookah(
           event.cwd || dirOf(ctx),
-          { event: "stop", session_id: id, already_continuing: injected },
+          { event: "stop", session_id: id, already_continuing: injected, ...(model ? { model } : {}) },
           STOP_TIMEOUT_MS,
         )
         if (reply?.block && reply.model_text) {

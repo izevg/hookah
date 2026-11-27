@@ -60,15 +60,33 @@ function patchedFiles(patch: string): string[] {
   return [...new Set(files)]
 }
 
+/** Formats `provider/model` when both are known and `model` has no provider prefix yet. */
+function formatModel(provider: unknown, model: unknown): string | undefined {
+  if (typeof model !== "string" || !model) return undefined
+  return typeof provider === "string" && provider && !model.includes("/")
+    ? `${provider}/${model}`
+    : model
+}
+
 export const HookahPlugin: Plugin = async ({ client, directory }) => {
   /** Arguments seen in `tool.execute.before`, used when `after` does not carry them. */
   const pendingArgs = new Map<string, unknown>()
+  /** Latest model seen per session, learned from `chat.params` and `message.updated`. */
+  const models = new Map<string, string>()
   /** Sessions that edited files since their last stop check. */
   const dirty = new Set<string>()
   /** Sessions whose latest turn was started by a message this plugin injected (the loop guard). */
   const continuing = new Set<string>()
   /** Sessions with a stop check in flight. */
   const checking = new Set<string>()
+
+  const rememberModel = (sessionID: unknown, provider: unknown, model: unknown) => {
+    const name = formatModel(provider, model)
+    if (typeof sessionID === "string" && sessionID && name) {
+      if (models.size > 64) models.clear()
+      models.set(sessionID, name)
+    }
+  }
 
   const log = (level: "info" | "warn", message: string) =>
     client.app
@@ -137,6 +155,16 @@ export const HookahPlugin: Plugin = async ({ client, directory }) => {
     })
 
   return {
+    "chat.params": async (input) => {
+      try {
+        const raw = input as any
+        const modelId = typeof raw?.model === "string" ? raw.model : raw?.model?.id
+        const providerId =
+          (typeof raw?.model === "object" ? raw?.model?.providerID : undefined) ?? raw?.provider?.id
+        rememberModel(raw?.sessionID, providerId, modelId)
+      } catch {}
+    },
+
     "tool.execute.before": async (input, output) => {
       try {
         if (!editedFiles(input.tool, output.args).length) return
@@ -152,8 +180,15 @@ export const HookahPlugin: Plugin = async ({ client, directory }) => {
         const files = editedFiles(input.tool, args)
         if (files.length === 0) return
         dirty.add(input.sessionID)
+        const model = models.get(input.sessionID)
         const reply = await callHookah(
-          { event: "edit", files, session_id: input.sessionID, already_continuing: false },
+          {
+            event: "edit",
+            files,
+            session_id: input.sessionID,
+            already_continuing: false,
+            ...(model ? { model } : {}),
+          },
           EDIT_TIMEOUT_MS,
         )
         if (!reply) return
@@ -167,13 +202,30 @@ export const HookahPlugin: Plugin = async ({ client, directory }) => {
     },
 
     event: async ({ event }) => {
+      if (event.type === "message.updated") {
+        try {
+          const info = (event.properties as any)?.info
+          rememberModel(
+            info?.sessionID,
+            info?.providerID ?? info?.model?.providerID,
+            info?.modelID ?? info?.model?.modelID,
+          )
+        } catch {}
+        return
+      }
       if (event.type === "session.created") {
         try {
           const info = event.properties.info
           // Subagent sessions work on the parent's project: they get a baseline lazily if needed.
           if (!info?.id || info.parentID) return
+          const model = models.get(info.id)
           const reply = await callHookah(
-            { event: "start", session_id: info.id, already_continuing: false },
+            {
+              event: "start",
+              session_id: info.id,
+              already_continuing: false,
+              ...(model ? { model } : {}),
+            },
             START_TIMEOUT_MS,
           )
           if (reply?.user_text) await warnUser(reply.user_text)
@@ -190,8 +242,14 @@ export const HookahPlugin: Plugin = async ({ client, directory }) => {
       try {
         dirty.delete(id)
         continuing.delete(id)
+        const model = models.get(id)
         const reply = await callHookah(
-          { event: "stop", session_id: id, already_continuing: injected },
+          {
+            event: "stop",
+            session_id: id,
+            already_continuing: injected,
+            ...(model ? { model } : {}),
+          },
           STOP_TIMEOUT_MS,
         )
         if (!reply) return

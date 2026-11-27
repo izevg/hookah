@@ -131,10 +131,53 @@ impl fmt::Display for PayloadError {
 
 impl std::error::Error for PayloadError {}
 
+/// Model metadata extracted from a harness hook payload.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ModelHint {
+    /// Model identifier reported directly in the payload, if any.
+    pub model: Option<String>,
+    /// Path to the session transcript file, used as a fallback to learn the active model when
+    /// the payload omits `model`.
+    pub transcript: Option<PathBuf>,
+}
+
+/// A parsed hook payload: the invocation and any model metadata it carried.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Parsed {
+    /// What the payload asks `hookah` to do.
+    pub invocation: Invocation,
+    /// Model metadata reported by the harness.
+    pub model: ModelHint,
+}
+
+/// Trims a raw model identifier and drops empty strings.
+pub fn clean_model(model: Option<String>) -> Option<String> {
+    model.and_then(|m| {
+        let trimmed = m.trim();
+        (!trimmed.is_empty()).then(|| trimmed.to_owned())
+    })
+}
+
+/// Resolves an optional transcript path against `cwd` when relative, ignoring empty paths.
+pub fn clean_transcript(path: Option<PathBuf>, cwd: Option<&Path>) -> Option<PathBuf> {
+    let path = path.filter(|p| !p.as_os_str().is_empty())?;
+    if path.is_absolute() {
+        Some(path)
+    } else {
+        cwd.filter(|c| c.is_absolute()).map(|c| c.join(path))
+    }
+}
+
 /// A driving adapter for one agent harness.
 pub trait Harness {
-    /// Parses the raw payload read from standard input.
-    fn parse(&self, stdin: &str) -> Result<Invocation, PayloadError>;
+    /// Parses the raw payload read from standard input, returning both the invocation and any
+    /// model metadata it carried.
+    fn parse_event(&self, stdin: &str) -> Result<Parsed, PayloadError>;
+
+    /// Parses the raw payload read from standard input into an [`Invocation`].
+    fn parse(&self, stdin: &str) -> Result<Invocation, PayloadError> {
+        self.parse_event(stdin).map(|parsed| parsed.invocation)
+    }
 
     /// Renders the use case outcome in this harness's protocol.
     fn render(&self, invocation: &Invocation, outcome: &Outcome) -> Response;

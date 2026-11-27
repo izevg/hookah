@@ -952,3 +952,112 @@ fn antigravity_warns_and_allows_progress_when_feedback_storage_fails() {
     assert_eq!(stdout(&result).trim(), r#"{"decision":"allow"}"#);
     assert!(stderr(&result).contains("antigravity could not relay feedback"));
 }
+
+#[test]
+fn model_filter_gates_hooks_and_shows_in_config() {
+    let f = Fixture::new("models", CLEAN_LIB);
+    f.write("src/lib.rs", "pub fn answer() -> i32 {\n    \"nope\"\n}\n");
+
+    // Default: hookah config shows `models: all`, and manual `hookah check` always runs.
+    let cfg = stdout(&f.hookah(&["config"], ""));
+    assert!(cfg.contains("models: all\n"), "{cfg}");
+
+    f.write(
+        ".hookah.toml",
+        "models = [\"gpt-5*\", \"claude-sonnet-*\"]\n",
+    );
+    let cfg = stdout(&f.hookah(&["config"], ""));
+    assert!(
+        cfg.contains("models: gpt-5*, claude-sonnet-*  (") && cfg.contains(".hookah.toml)"),
+        "{cfg}"
+    );
+
+    // Manual `hookah check` is never gated by `models`.
+    assert_eq!(
+        f.hookah(&["check", "src/lib.rs"], "").status.code(),
+        Some(1)
+    );
+
+    // Codex edit hook: non-matching model is skipped silently; matching model blocks.
+    let codex_payload = |model: &str| {
+        serde_json::json!({
+            "cwd": f.root,
+            "hook_event_name": "PostToolUse",
+            "model": model,
+            "tool_name": "apply_patch",
+            "tool_input": {"command": "*** Begin Patch\n*** Update File: src/lib.rs\n*** End Patch"}
+        })
+        .to_string()
+    };
+    let skipped = f.hookah(&["hook", "codex"], &codex_payload("o4-mini"));
+    assert_eq!(skipped.status.code(), Some(0));
+    assert!(skipped.stdout.is_empty() && skipped.stderr.is_empty());
+
+    let matched = f.hookah(&["hook", "codex"], &codex_payload("gpt-5.3-codex"));
+    assert_eq!(matched.status.code(), Some(0));
+    let json: serde_json::Value = serde_json::from_slice(&matched.stdout).unwrap();
+    assert_eq!(json["decision"], "block");
+
+    // Claude Code edit hook without top-level `model`: reads latest model from `transcript_path`.
+    let transcript = f.cache().join("claude.jsonl");
+    fs::create_dir_all(f.cache()).unwrap();
+    fs::write(
+        &transcript,
+        concat!(
+            r#"{"type":"assistant","message":{"model":"claude-sonnet-4-6","content":[]}}"#,
+            "\n",
+            r#"{"type":"assistant","message":{"model":"claude-opus-4-6","content":[]}}"#,
+            "\n",
+        ),
+    )
+    .unwrap();
+    let claude_payload = serde_json::json!({
+        "cwd": f.root,
+        "hook_event_name": "PostToolUse",
+        "transcript_path": transcript,
+        "tool_name": "Edit",
+        "tool_input": {"file_path": f.path("src/lib.rs")}
+    })
+    .to_string();
+    let opus = f.hookah(&["hook", "claude"], &claude_payload);
+    assert_eq!(opus.status.code(), Some(0));
+    assert!(opus.stdout.is_empty() && opus.stderr.is_empty());
+
+    // Switch model in transcript to claude-sonnet-4-6 -> now blocks.
+    fs::write(
+        &transcript,
+        r#"{"type":"assistant","message":{"model":"claude-sonnet-4-6","content":[]}}"#,
+    )
+    .unwrap();
+    let sonnet = f.hookah(&["hook", "claude"], &claude_payload);
+    assert_eq!(sonnet.status.code(), Some(2));
+    assert!(stderr(&sonnet).contains("src/lib.rs:2"));
+
+    // Plugin harness (pi): skipped model returns valid quiet JSON; provider-prefixed model matches bare pattern.
+    let pi_payload = |model: &str| {
+        serde_json::json!({
+            "v": 1,
+            "event": "edit",
+            "cwd": f.root,
+            "files": ["src/lib.rs"],
+            "model": model
+        })
+        .to_string()
+    };
+    let pi_skip = f.hookah(&["hook", "pi"], &pi_payload("anthropic/claude-opus-4-6"));
+    assert_eq!(pi_skip.status.code(), Some(0));
+    assert_eq!(stdout(&pi_skip).trim(), r#"{"v":1,"block":false}"#);
+
+    let pi_hit = f.hookah(&["hook", "pi"], &pi_payload("anthropic/claude-sonnet-4-6"));
+    assert_eq!(pi_hit.status.code(), Some(0));
+    let pi_json: serde_json::Value = serde_json::from_slice(&pi_hit.stdout).unwrap();
+    assert_eq!(pi_json["block"], true);
+
+    // HOOKAH_MODELS="*" overrides the restrictive file, even when no model is reported.
+    let override_out = f.hookah_with(
+        &["hook", "claude"],
+        &f.edit_payload("src/lib.rs"),
+        &[("HOOKAH_MODELS", "*")],
+    );
+    assert_eq!(override_out.status.code(), Some(2));
+}

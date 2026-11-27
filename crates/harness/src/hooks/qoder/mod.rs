@@ -8,15 +8,15 @@ pub mod response;
 
 use hookah_application::Outcome;
 
-use crate::protocol::{Harness, Invocation, PayloadError, Response};
+use crate::protocol::{Harness, Invocation, Parsed, PayloadError, Response};
 
 /// The Qoder CLI adapter.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Qoder;
 
 impl Harness for Qoder {
-    fn parse(&self, stdin: &str) -> Result<Invocation, PayloadError> {
-        payload::parse(stdin)
+    fn parse_event(&self, stdin: &str) -> Result<Parsed, PayloadError> {
+        payload::parse_event(stdin)
     }
 
     fn render(&self, invocation: &Invocation, outcome: &Outcome) -> Response {

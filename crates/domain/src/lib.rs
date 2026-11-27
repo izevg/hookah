@@ -14,12 +14,14 @@
 //!   decides which findings are reported.
 //! - [`session`]: phases of an agent run, the files changed in it, and their roles.
 //! - [`light`]: test weight and budgets, so the stop phase helps instead of gatekeeping.
+//! - [`model`]: model selection rules that decide which AI models hooks run for.
 //! - [`status`]: the latest outcome of a check run per project, for other tools to show.
 //! - [`update`]: self-update rules: versions, release assets, the throttle, and what the user is told.
 
 pub mod error;
 pub mod finding;
 pub mod light;
+pub mod model;
 pub mod path;
 pub mod project;
 pub mod session;

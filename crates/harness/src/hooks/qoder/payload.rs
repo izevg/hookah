@@ -16,13 +16,18 @@ use std::path::PathBuf;
 use hookah_application::{EditRequest, StopRequest};
 use serde::Deserialize;
 
-use crate::protocol::{Invocation, PayloadError, display_root, resolve_path, start_invocation};
+use crate::protocol::{
+    Invocation, ModelHint, Parsed, PayloadError, clean_model, clean_transcript, display_root,
+    resolve_path, start_invocation,
+};
 
 #[derive(Deserialize)]
 struct Payload {
     hook_event_name: Option<String>,
     session_id: Option<String>,
     cwd: Option<PathBuf>,
+    model: Option<String>,
+    transcript_path: Option<PathBuf>,
     tool_name: Option<String>,
     tool_input: Option<ToolInput>,
     stop_hook_active: Option<bool>,
@@ -35,22 +40,32 @@ struct ToolInput {
 
 /// Parses a Qoder CLI hook payload.
 pub fn parse(stdin: &str) -> Result<Invocation, PayloadError> {
+    parse_event(stdin).map(|parsed| parsed.invocation)
+}
+
+/// Parses a Qoder CLI hook payload along with its model metadata.
+pub fn parse_event(stdin: &str) -> Result<Parsed, PayloadError> {
     let p: Payload = serde_json::from_str(stdin).map_err(|e| PayloadError(e.to_string()))?;
-    match p.hook_event_name.as_deref() {
-        Some("PostToolUse") => edit(&p),
-        Some("SessionStart") => Ok(start_invocation(p.cwd, p.session_id)),
+    let model = ModelHint {
+        model: clean_model(p.model.clone()),
+        transcript: clean_transcript(p.transcript_path.clone(), p.cwd.as_deref()),
+    };
+    let invocation = match p.hook_event_name.as_deref() {
+        Some("PostToolUse") => edit(&p)?,
+        Some("SessionStart") => start_invocation(p.cwd, p.session_id),
         Some("Stop") => {
             let root = p
                 .cwd
                 .filter(|c| c.is_absolute())
                 .ok_or_else(|| PayloadError("stop event without an absolute cwd".into()))?;
-            Ok(Invocation::Stop {
+            Invocation::Stop {
                 request: StopRequest::new(root).with_session(p.session_id),
                 already_continuing: p.stop_hook_active.unwrap_or(false),
-            })
+            }
         }
-        _ => Ok(Invocation::Ignore),
-    }
+        _ => Invocation::Ignore,
+    };
+    Ok(Parsed { invocation, model })
 }
 
 fn edit(p: &Payload) -> Result<Invocation, PayloadError> {

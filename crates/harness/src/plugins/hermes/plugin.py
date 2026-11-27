@@ -147,20 +147,43 @@ def _with_report(result, text):
 
 
 def register(ctx):
-    def on_session_start(session_id="", **_):
+    models = {}
+
+    def _model_for(session_id, kwargs):
+        raw = kwargs.get("model")
+        if isinstance(raw, str) and raw.strip():
+            model = raw.strip()
+            if session_id:
+                if len(models) > 64:
+                    models.clear()
+                models[session_id] = model
+            models[""] = model
+            return model
+        return models.get(session_id) or models.get("")
+
+    def on_session_start(session_id="", **kwargs):
         try:
             if session_id:
-                _call({"event": "start", "session_id": session_id}, START_TIMEOUT_S, session_id)
+                payload = {"event": "start", "session_id": session_id}
+                model = _model_for(session_id, kwargs)
+                if model:
+                    payload["model"] = model
+                _call(payload, START_TIMEOUT_S, session_id)
         except Exception as e:
             _warn("session start failed: %s" % e)
 
-    def on_result(tool_name="", args=None, result=None, session_id="", task_id="", **_):
+    def on_result(tool_name="", args=None, result=None, session_id="", task_id="", **kwargs):
         try:
             files = _edited_files(tool_name, args, result)
             if not files:
                 return None
+            sid = session_id or task_id or ""
+            payload = {"event": "edit", "files": files, "session_id": sid or None}
+            model = _model_for(sid, kwargs)
+            if model:
+                payload["model"] = model
             reply = _call(
-                {"event": "edit", "files": files, "session_id": session_id or task_id or None},
+                payload,
                 EDIT_TIMEOUT_S,
                 task_id or session_id,
             )
@@ -175,10 +198,18 @@ def register(ctx):
             _warn("edit check failed: %s" % e)
         return None
 
-    def on_verify(session_id="", attempt=0, **_):
+    def on_verify(session_id="", attempt=0, **kwargs):
         try:
+            payload = {
+                "event": "stop",
+                "session_id": session_id or None,
+                "already_continuing": bool(attempt),
+            }
+            model = _model_for(session_id, kwargs)
+            if model:
+                payload["model"] = model
             reply = _call(
-                {"event": "stop", "session_id": session_id or None, "already_continuing": bool(attempt)},
+                payload,
                 STOP_TIMEOUT_S,
                 session_id,
             )

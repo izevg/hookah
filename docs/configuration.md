@@ -1,7 +1,8 @@
 # Configuration
 
-> Partly implemented. The `[env]` table below works today; tool commands, disabled checks,
-> time budgets, report limits, and ignore globs are planned for the same files.
+> Partly implemented. The `[env]` table, `models` filtering, and `[update]` work today; tool
+> commands, disabled checks, time budgets, report limits, and ignore globs are planned for the
+> same files.
 
 ## Where configuration lives
 
@@ -112,6 +113,7 @@ file: /Users/x/.config/hookah/config.toml
 env:
   JAVA_HOME=/Library/Java/JavaVirtualMachines/temurin-17.jdk/Contents/Home  (/Users/x/.config/hookah/config.toml [[project]] path = "~/Work/Code/corp/**")
   MAVEN_ARGS=-s /Users/x/Work/Code/corp/monorepo/keycloak/ci/settings.xml  (...)
+models: all
 ```
 
 It also prints the warning for every file that did not parse.
@@ -140,6 +142,73 @@ those builds read natively keep working without any configuration: `.mvn/maven.c
 toolchains of both. `hookah` does not guess a `JAVA_HOME` from `.sdkmanrc`, `.java-version`, or
 `.tool-versions`: they name a version, not a path, and the install location depends on the
 machine, so set `JAVA_HOME` in `[env]`.
+
+## Filtering by model: `models`
+
+By default, once a harness is configured, `hookah` hooks run for every model that harness uses.
+Set `models` to restrict hooks to specific models while keeping the same harness setup:
+
+```toml
+# ~/.config/hookah/config.toml (applies to every project),
+# or .hookah.toml / .hookah.local.toml (applies to one project).
+# Place top-level keys before [env], [update], or [[project]].
+models = ["claude-sonnet-*", "gpt-5*"]
+```
+
+In the user config, a `[[project]]` section can also set its own `models` list (before
+`[project.env]`):
+
+```toml
+# ~/.config/hookah/config.toml
+models = ["claude-sonnet-*", "gpt-5*"]
+
+[[project]]
+path = "~/Work/Code/corp/**"
+models = ["*"]   # run on every model in corp repositories
+```
+
+**Precedence**, lowest to highest (each layer that specifies `models` replaces the lower one;
+omitting `models` inherits it):
+
+1. Top-level `models` in the user config (`~/.config/hookah/config.toml`): global default for
+   every project.
+2. `<project root>/.hookah.toml`: shared project setting.
+3. `<project root>/.hookah.local.toml`: personal override for one project.
+4. Matching `[[project]]` sections of the user config, in file order (later sections win).
+5. `HOOKAH_MODELS` in the environment: comma-separated list of patterns (for example
+   `HOOKAH_MODELS="claude-sonnet-*,gpt-5*"`), winning over every file. A blank value is ignored.
+
+**Matching rules:**
+
+- Matching is ASCII case-insensitive. `*` matches any sequence of characters and `?` matches any
+  single character.
+- A pattern without `/` matches either the full model identifier or the bare model name after the
+  last `/`: `claude-sonnet-*` matches both `claude-sonnet-4-6` and
+  `anthropic/claude-sonnet-4-6`.
+- A pattern containing `/` matches the full identifier only: `anthropic/claude-sonnet-*` matches
+  `anthropic/claude-sonnet-4-6` and not `openai/claude-sonnet-4-6` or `claude-sonnet-4-6`.
+- `models = ["*"]` (or `HOOKAH_MODELS="*"`) removes a narrower lower-precedence filter and runs on
+  every model, including harnesses that do not report one.
+- `models = []` matches no models and skips hooks for that scope.
+- When `models` is restricted and a harness event carries no model identifier, the event is
+  skipped silently. Manual `hookah check` calls are never filtered by `models`.
+
+**How each harness reports its model:**
+
+| Harness | Source |
+|---------|--------|
+| Codex CLI | `model` field in `SessionStart`, `PostToolUse`, and `Stop` payloads |
+| Cursor | `model` field in common hook payload fields (may be omitted by `cursor-agent`) |
+| Claude Code | `model` on `SessionStart`; latest assistant `message.model` from `transcript_path` (or `agent_transcript_path` on `SubagentStop`) on `PostToolUse` and `Stop` |
+| Pi | active `ctx.model` (`provider/id`) sent by the bundled extension (`hookah setup pi`) |
+| opencode | active session model (`provider/id`) tracked by the bundled plugin (`hookah setup opencode`) |
+| OpenClaw | active session model (`provider/id`) tracked by the bundled plugin (`hookah setup openclaw`) |
+| Hermes Agent | `model` forwarded by the bundled plugin when Hermes passes it (`hookah setup hermes`) |
+| Antigravity, Kimi Code, Qoder, ZCode | read if `model` (or a JSONL transcript) is present; currently not sent by those harnesses, so hooks are skipped when `models` is restricted |
+
+Re-run `hookah setup <harness>` (or `hookah plugin <harness>`) after upgrading `hookah` if you use
+a bundled plugin so it forwards the `model` field. `hookah config` prints the effective `models`
+line and where it came from.
 
 ## The `[update]` table: self-update
 

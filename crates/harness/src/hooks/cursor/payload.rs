@@ -21,13 +21,18 @@ use std::path::{Path, PathBuf};
 use hookah_application::{EditRequest, StopRequest};
 use serde::Deserialize;
 
-use crate::protocol::{Invocation, PayloadError, display_root, resolve_path, start_invocation};
+use crate::protocol::{
+    Invocation, ModelHint, Parsed, PayloadError, clean_model, clean_transcript, display_root,
+    resolve_path, start_invocation,
+};
 
 #[derive(Deserialize)]
 struct Payload {
     hook_event_name: Option<String>,
     conversation_id: Option<String>,
     session_id: Option<String>,
+    model: Option<String>,
+    transcript_path: Option<PathBuf>,
     workspace_roots: Option<Vec<PathBuf>>,
     file_path: Option<PathBuf>,
     status: Option<String>,
@@ -55,16 +60,23 @@ impl Payload {
 
 /// Parses a Cursor hook payload.
 pub fn parse(stdin: &str) -> Result<Invocation, PayloadError> {
+    parse_event(stdin).map(|parsed| parsed.invocation)
+}
+
+/// Parses a Cursor hook payload along with its model metadata.
+pub fn parse_event(stdin: &str) -> Result<Parsed, PayloadError> {
     let p: Payload = serde_json::from_str(stdin).map_err(|e| PayloadError(e.to_string()))?;
-    match p.hook_event_name.as_deref() {
-        Some("afterFileEdit") => edit(&p),
-        Some("sessionStart") => Ok(start_invocation(
-            p.root().map(Path::to_path_buf),
-            p.session(),
-        )),
-        Some("stop") => stop(&p),
-        _ => Ok(Invocation::Ignore),
-    }
+    let model = ModelHint {
+        model: clean_model(p.model.clone()),
+        transcript: clean_transcript(p.transcript_path.clone(), p.root()),
+    };
+    let invocation = match p.hook_event_name.as_deref() {
+        Some("afterFileEdit") => edit(&p)?,
+        Some("sessionStart") => start_invocation(p.root().map(Path::to_path_buf), p.session()),
+        Some("stop") => stop(&p)?,
+        _ => Invocation::Ignore,
+    };
+    Ok(Parsed { invocation, model })
 }
 
 fn edit(p: &Payload) -> Result<Invocation, PayloadError> {
@@ -247,5 +259,11 @@ mod tests {
         assert_eq!(parse(json).unwrap(), Invocation::Ignore);
         assert_eq!(parse("{}").unwrap(), Invocation::Ignore);
         assert!(parse("not json").is_err());
+    }
+
+    #[test]
+    fn extracts_model_from_common_fields() {
+        let parsed = parse_event(&os_json(AFTER_FILE_EDIT)).unwrap();
+        assert_eq!(parsed.model.model.as_deref(), Some("claude-sonnet"));
     }
 }

@@ -23,6 +23,8 @@ mod runner;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+use hookah_domain::model::ModelFilter;
+
 pub use runner::ProjectEnvRunner;
 
 use expand::{Context, expand, matches};
@@ -33,6 +35,8 @@ pub const PROJECT_FILE: &str = ".hookah.toml";
 pub const LOCAL_FILE: &str = ".hookah.local.toml";
 /// Environment variable that names the user config file.
 pub const CONFIG_VAR: &str = "HOOKAH_CONFIG";
+/// Environment variable that overrides the configured model filter (comma-separated patterns).
+pub const MODELS_VAR: &str = "HOOKAH_MODELS";
 
 /// An environment lookup.
 pub type VarFn = Box<dyn Fn(&str) -> Option<String> + Send + Sync>;
@@ -95,6 +99,15 @@ pub struct EnvEntry {
     pub source: String,
 }
 
+/// The effective model filter and where it came from.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct ModelSetting {
+    /// Which models hooks run for.
+    pub filter: ModelFilter,
+    /// The config file, `[[project]]` section, or environment variable that set it.
+    pub source: Option<String>,
+}
+
 /// What config says about one project.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ProjectEnv {
@@ -108,6 +121,8 @@ pub struct ProjectEnv {
     pub files: Vec<PathBuf>,
     /// The effective variables, sorted by name.
     pub entries: Vec<EnvEntry>,
+    /// The effective model filter for hook invocations.
+    pub models: ModelSetting,
     /// Problems that made a file or value be skipped.
     pub warnings: Vec<String>,
 }
@@ -141,21 +156,57 @@ pub fn resolve(dir: &Path, host: &Host) -> ProjectEnv {
         ..ProjectEnv::default()
     };
     let mut layers: Vec<(String, BTreeMap<String, String>)> = Vec::new();
+    let mut user_models: Option<ModelSetting> = None;
+    let mut models: Option<ModelSetting> = None;
     for name in [PROJECT_FILE, LOCAL_FILE] {
         let path = root.join(name);
         if let Some(parsed) = load(&path, &mut out) {
-            layers.push((text(&path), parsed.env));
+            let source = text(&path);
+            if let Some(list) = parsed.models {
+                models = Some(ModelSetting {
+                    filter: ModelFilter::from_patterns(list),
+                    source: Some(source.clone()),
+                });
+            }
+            layers.push((source, parsed.env));
         }
     }
     if let Some(user) = out.user_config.clone()
         && let Some(parsed) = load(&user, &mut out)
     {
+        if let Some(list) = parsed.models {
+            user_models = Some(ModelSetting {
+                filter: ModelFilter::from_patterns(list),
+                source: Some(text(&user)),
+            });
+        }
         for section in parsed.project {
             let pattern = expand(&section.path, &ctx);
             if matches(&pattern, &root_text, host.windows) {
                 let source = format!("{} [[project]] path = {:?}", text(&user), section.path);
+                if let Some(list) = section.models {
+                    models = Some(ModelSetting {
+                        filter: ModelFilter::from_patterns(list),
+                        source: Some(source.clone()),
+                    });
+                }
                 layers.push((source, section.env));
             }
+        }
+    }
+    out.models = models.or(user_models).unwrap_or_default();
+    if let Some(raw) = (host.var)(MODELS_VAR) {
+        let parts: Vec<String> = raw
+            .split(',')
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_owned)
+            .collect();
+        if !parts.is_empty() {
+            out.models = ModelSetting {
+                filter: ModelFilter::from_patterns(parts),
+                source: Some(MODELS_VAR.to_owned()),
+            };
         }
     }
     let mut merged: BTreeMap<String, EnvEntry> = BTreeMap::new();
@@ -460,6 +511,78 @@ mod tests {
         assert!(env.warnings[0].contains(PROJECT_FILE));
         assert!(env.warnings[0].ends_with("ignoring it"));
         assert_eq!(env.files.len(), 1);
+    }
+
+    #[test]
+    fn models_follow_precedence_and_env_override() {
+        let t = Scratch::new();
+        let user = t.write(
+            "user.toml",
+            &format!(
+                "models = [\"global-*\"]\n[[project]]\npath = {:?}\nmodels = [\"section-*\"]\n",
+                t.0.display().to_string()
+            ),
+        );
+        let cfg = user.display().to_string();
+
+        // Only user global default (when no [[project]] matches).
+        let other = Scratch::new();
+        let resolved = resolve(&other.0, &host(&[("HOOKAH_CONFIG", &cfg)], false));
+        assert_eq!(
+            resolved.models.filter,
+            ModelFilter::Only(vec!["global-*".into()])
+        );
+        assert_eq!(resolved.models.source.as_deref(), Some(cfg.as_str()));
+
+        // .hookah.toml beats user global default.
+        other.write(PROJECT_FILE, "models = [\"project-*\"]\n");
+        let resolved = resolve(&other.0, &host(&[("HOOKAH_CONFIG", &cfg)], false));
+        assert_eq!(
+            resolved.models.filter,
+            ModelFilter::Only(vec!["project-*".into()])
+        );
+        assert!(resolved.models.source.unwrap().ends_with(PROJECT_FILE));
+
+        // .hookah.local.toml beats .hookah.toml (and "*" resets to All).
+        other.write(LOCAL_FILE, "models = [\"*\"]\n");
+        let resolved = resolve(&other.0, &host(&[("HOOKAH_CONFIG", &cfg)], false));
+        assert_eq!(resolved.models.filter, ModelFilter::All);
+        assert!(resolved.models.source.unwrap().ends_with(LOCAL_FILE));
+
+        // Matching [[project]] section beats .hookah.local.toml.
+        t.write(LOCAL_FILE, "models = [\"local-*\"]\n");
+        let resolved = resolve(&t.0, &host(&[("HOOKAH_CONFIG", &cfg)], false));
+        assert_eq!(
+            resolved.models.filter,
+            ModelFilter::Only(vec!["section-*".into()])
+        );
+        assert!(resolved.models.source.unwrap().contains("[[project]]"));
+
+        // HOOKAH_MODELS beats every config file; blank HOOKAH_MODELS is ignored.
+        let resolved = resolve(
+            &t.0,
+            &host(
+                &[
+                    ("HOOKAH_CONFIG", &cfg),
+                    (MODELS_VAR, " claude-sonnet-* , gpt-5 "),
+                ],
+                false,
+            ),
+        );
+        assert_eq!(
+            resolved.models.filter,
+            ModelFilter::Only(vec!["claude-sonnet-*".into(), "gpt-5".into()])
+        );
+        assert_eq!(resolved.models.source.as_deref(), Some(MODELS_VAR));
+
+        let blank = resolve(
+            &t.0,
+            &host(&[("HOOKAH_CONFIG", &cfg), (MODELS_VAR, " , ")], false),
+        );
+        assert_eq!(
+            blank.models.filter,
+            ModelFilter::Only(vec!["section-*".into()])
+        );
     }
 
     #[test]

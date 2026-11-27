@@ -5,6 +5,7 @@ use hookah_application::{StartRequest, StopRequest};
 use hookah_harness::antigravity::{self, Event};
 use hookah_harness::protocol::{Invocation, Response, blocking_report, merge_outcomes};
 
+use crate::hooks::model;
 use crate::{run_invocation, warning};
 
 pub(crate) fn run(stdin: &str, limit: usize) -> Response {
@@ -24,12 +25,18 @@ pub(crate) fn run(stdin: &str, limit: usize) -> Response {
         Event::Start => {
             let mut response = antigravity::acknowledge();
             for root in payload.roots {
+                if !model::allows(&root, &payload.model) {
+                    continue;
+                }
                 let invocation = Invocation::Start(StartRequest::new(root, &payload.session));
                 antigravity::warn(&mut response, &run_invocation(&invocation, limit));
             }
             response
         }
         Event::Edit(request) => {
+            if !model::allows(model::edit_dir(&request), &payload.model) {
+                return antigravity::acknowledge();
+            }
             let outcome = run_invocation(&Invocation::Edit(request), limit);
             let mut response = antigravity::acknowledge();
             antigravity::warn(&mut response, &outcome);
@@ -40,18 +47,30 @@ pub(crate) fn run(stdin: &str, limit: usize) -> Response {
             }
             response
         }
-        Event::BeforeModel => match feedback().and_then(|store| store.take()) {
-            Ok(messages) if !messages.is_empty() => antigravity::inject(messages.join("\n")),
-            Ok(_) => antigravity::acknowledge(),
-            Err(error) => Response {
-                stderr: feedback_warning(error),
-                ..antigravity::acknowledge()
-            },
-        },
+        Event::BeforeModel => {
+            if !model::allows(root, &payload.model) {
+                return antigravity::acknowledge();
+            }
+            match feedback().and_then(|store| store.take()) {
+                Ok(messages) if !messages.is_empty() => antigravity::inject(messages.join("\n")),
+                Ok(_) => antigravity::acknowledge(),
+                Err(error) => Response {
+                    stderr: feedback_warning(error),
+                    ..antigravity::acknowledge()
+                },
+            }
+        }
         Event::Stop { eligible: true } => {
-            let outcomes = payload
+            let roots: Vec<_> = payload
                 .roots
                 .iter()
+                .filter(|root| model::allows(root, &payload.model))
+                .collect();
+            if roots.is_empty() {
+                return antigravity::stop(None);
+            }
+            let outcomes = roots
+                .into_iter()
                 .map(|root| {
                     let request =
                         StopRequest::new(root).with_session(Some(payload.session.clone()));

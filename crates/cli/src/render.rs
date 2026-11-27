@@ -140,6 +140,15 @@ pub fn config(found: &ProjectEnv) -> String {
             out.push_str(&format!("  {}={}  ({})\n", e.key, e.value, e.source));
         }
     }
+    let models = match found.models.filter.patterns() {
+        None => "all".to_owned(),
+        Some([]) => "none".to_owned(),
+        Some(patterns) => patterns.join(", "),
+    };
+    match found.models.source.as_deref() {
+        Some(source) => out.push_str(&format!("models: {models}  ({source})\n")),
+        None => out.push_str(&format!("models: {models}\n")),
+    }
     for w in &found.warnings {
         out.push_str(&format!("warning: {w}\n"));
     }

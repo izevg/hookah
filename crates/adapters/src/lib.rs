@@ -9,11 +9,13 @@
 //! - [`config`]: `.hookah.toml` loading and overrides on top of auto-detection.
 //! - [`ecosystems`]: the `Ecosystems` registry plus per-ecosystem toolchain detection, output
 //!   parsing, and test selection (Rust, Node, and Python).
+//! - [`transcript`]: reads the active model identifier from session transcript JSONL files.
 
 pub mod config;
 pub mod ecosystems;
 pub mod fs;
 pub mod process;
 pub mod store;
+pub mod transcript;
 pub mod update;
 pub mod vcs;

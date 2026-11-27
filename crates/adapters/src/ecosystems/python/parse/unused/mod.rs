@@ -1,5 +1,7 @@
 //! Vulture's text report of unused and unreachable code.
 
+pub(super) mod unref;
+
 use hookah_application::error::PortError;
 use hookah_application::ports::ProcessOutput;
 use hookah_domain::finding::{Finding, Location, Severity};

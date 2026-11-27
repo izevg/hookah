@@ -112,6 +112,11 @@ impl Config {
             || has_section(&self.setup_cfg, "importlinter")
     }
 
+    /// The project opts into Unref through configuration or a declared dependency.
+    pub fn unref_configured(&self) -> bool {
+        has_table(&self.pyproject, "tool.unref") || self.declares("unref")
+    }
+
     /// The project opts into Vulture by supplying its own configuration.
     pub fn vulture_configured(&self) -> bool {
         has_table(&self.pyproject, "tool.vulture")

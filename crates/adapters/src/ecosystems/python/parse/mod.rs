@@ -5,7 +5,7 @@
 //! - [`style`]: `ruff check --output-format json`, `ruff format` and `black` errors.
 //! - [`mypy`]: mypy's `-O json` lines or its `path:line:col: error: message  [code]` text.
 //! - [`imports`]: import-linter's "Broken contracts" report.
-//! - [`unused`]: Vulture unused-code diagnostics.
+//! - [`unused`]: Unref and Vulture unused-code diagnostics.
 //! - [`dynamic`]: pytest failures and mutmut survivors.
 //!
 //! Every parser follows the fail-open rule: output it cannot understand, or a tool that fails
@@ -42,6 +42,7 @@ pub fn parse(
         detect::RUFF => style::ruff_check(&root, out),
         detect::MYPY => mypy::parse(&root, out),
         detect::IMPORT_LINTER => imports::parse(&root, out),
+        detect::UNREF => unused::unref::parse(&root, out),
         detect::VULTURE => unused::parse(&root, out),
         detect::PYTEST => dynamic::pytest(&root, out),
         detect::MUTMUT => dynamic::mutmut(&root, out),
@@ -238,6 +239,85 @@ mod tests {
         );
         let e = parse(&project, &tool("flake8"), &ruff).unwrap_err();
         assert_eq!(e.message(), "unknown Python tool `flake8`");
+    }
+
+    #[test]
+    fn unref_parses_concise_findings_as_unused_code_warnings() {
+        use hookah_domain::finding::{Location, Severity};
+        use hookah_domain::project::Ecosystem;
+        use hookah_domain::toolchain::CheckKind;
+        let project = Project {
+            root: abs("/proj"),
+            ecosystem: Ecosystem::Python,
+            manifests: vec![],
+        };
+        let first = project.root.join("src/my: module.py");
+        let stdout = format!(
+            "{}:4:5: unused-function 'old'\n./src/b.py:10:11: invalid-ignore-comment 'Missing rule'\n",
+            first.display()
+        );
+        let findings = parse(&project, &tool("unref"), &testing::out(1, &stdout, "")).unwrap();
+        assert_eq!(
+            findings,
+            [
+                Finding::new(
+                    CheckKind::Unused,
+                    Severity::Warning,
+                    Location::at("src/my: module.py", 4, 5),
+                    "unused-function 'old'"
+                ),
+                Finding::new(
+                    CheckKind::Unused,
+                    Severity::Warning,
+                    Location::at("src/b.py", 10, 11),
+                    "invalid-ignore-comment 'Missing rule'"
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn unref_passes_only_for_a_clean_complete_report() {
+        use hookah_domain::project::Ecosystem;
+        let project = Project {
+            root: abs("/proj"),
+            ecosystem: Ecosystem::Python,
+            manifests: vec![],
+        };
+        let report = |out| parse(&project, &tool("unref"), &out);
+        assert!(report(testing::out(0, "", "")).unwrap().is_empty());
+        let finding = "a.py:1:5: unused-function 'dead'\n";
+        for invalid in [
+            testing::out(0, finding, ""),
+            testing::out(1, "", ""),
+            testing::out(1, "a.py:5: unused-function 'dead'\n", ""),
+            testing::out(1, &format!("{finding}unrecognized output\n"), ""),
+            testing::out(1, finding, "read failed"),
+            testing::out(2, "", "invalid configuration"),
+            ProcessOutput {
+                timed_out: true,
+                ..testing::out(0, "", "")
+            },
+        ] {
+            assert!(report(invalid).is_err());
+        }
+    }
+
+    #[test]
+    fn unref_rejects_findings_from_a_partial_scan() {
+        use hookah_domain::project::Ecosystem;
+        let project = Project {
+            root: abs("/proj"),
+            ecosystem: Ecosystem::Python,
+            manifests: vec![],
+        };
+        for code in ["invalid-syntax", "io-error"] {
+            let stdout = format!(
+                "src/a.py:1:2: {code} 'unable to scan'\nsrc/b.py:4:5: unused-function 'possibly_live'\n"
+            );
+            let error = parse(&project, &tool("unref"), &testing::out(1, &stdout, "")).unwrap_err();
+            assert!(error.message().contains(&format!("src/a.py:1:2: {code}")));
+        }
     }
 
     #[test]

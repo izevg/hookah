@@ -3,9 +3,10 @@
 //! Some harnesses (notably Claude Code and Antigravity) report the active model on lifecycle
 //! events (`SessionStart`, `PostModelSwitch`, `PreInvocation`) while omitting it on `PostToolUse`
 //! or `Stop`, where transcript writes can also lag behind the hook invocation. Keying the stored
-//! model by `(harness, session_id)` inside `<hookah cache>/sessions/` keeps it stable even when a
-//! session changes working directory, prevents collisions across harnesses, and creates no cache
-//! directories during read-only lookups. Everything fails open: cache errors are silently ignored.
+//! model by `(harness, session_id)` as `<hookah cache>/session-model-<hash>.json` keeps it stable
+//! even when a session changes working directory, prevents collisions across harnesses, avoids
+//! intermediate-directory symlink races during cache purge, and creates no cache directories
+//! during read-only lookups. Everything fails open: cache errors are silently ignored.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -13,7 +14,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
-use super::cache_dir::{fnv1a, sessions_cache_dir, sessions_cache_path};
+use super::cache_dir::{SESSION_MODEL_PREFIX, fnv1a, sessions_cache_dir, sessions_cache_path};
 use crate::transcript;
 
 /// Where a resolved model identifier came from.
@@ -225,7 +226,7 @@ fn record_file(dir: &Path, harness: &str, session: &str) -> PathBuf {
     key_bytes.push(0);
     key_bytes.extend_from_slice(session.as_bytes());
     let key = fnv1a(&key_bytes);
-    dir.join(format!("{key:016x}.json"))
+    dir.join(format!("{SESSION_MODEL_PREFIX}{key:016x}.json"))
 }
 
 fn write_record(

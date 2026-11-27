@@ -332,22 +332,19 @@ fn scan_nested_model_filter(dir: &Path, host: &Host, depth: usize, visited: &mut
         let Ok(kind) = entry.file_type() else {
             continue;
         };
-        if kind.is_symlink() {
-            continue;
-        }
         let name = entry.file_name();
         let Some(name_str) = name.to_str() else {
             continue;
         };
         if depth > 0 && (name_str == PROJECT_FILE || name_str == LOCAL_FILE || name_str == ".git") {
-            // A nested config file or nested git checkout changes config-root inheritance, so
-            // evaluate its effective filter (which may fall back to user-level `models`).
+            // A nested config file or nested git checkout (including symlinked markers) changes
+            // config-root inheritance, so evaluate its effective filter.
             if !resolve(dir, host).models.filter.is_all() {
                 return true;
             }
             continue;
         }
-        if kind.is_dir() && !SKIP_SCAN_DIRS.contains(&name_str) {
+        if !kind.is_symlink() && kind.is_dir() && !SKIP_SCAN_DIRS.contains(&name_str) {
             subdirs.push(entry.path());
         }
     }

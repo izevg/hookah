@@ -1292,9 +1292,21 @@ fn unfiltered_session_start_writes_no_session_model_cache() {
     .to_string();
     assert_eq!(f.hookah(&["hook", "claude"], &sw).status.code(), Some(0));
 
+    let has_session_model_file = || {
+        fs::read_dir(f.cache())
+            .into_iter()
+            .flatten()
+            .flatten()
+            .any(|entry| {
+                entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with("session-model-")
+            })
+    };
     assert!(
-        !f.cache().join("session-models").exists(),
-        "unfiltered sessions must not create session-models cache files"
+        !has_session_model_file(),
+        "unfiltered sessions must not create session-model cache files"
     );
 
     // An unrelated [[project]] section in the user config must NOT trigger cache writes here.
@@ -1312,7 +1324,7 @@ fn unfiltered_session_start_writes_no_session_model_cache() {
     );
     assert_eq!(with_unrelated.status.code(), Some(0));
     assert!(
-        !f.cache().join("session-models").exists(),
+        !has_session_model_file(),
         "unrelated user config [[project]] must not create session cache files"
     );
 
@@ -1322,7 +1334,7 @@ fn unfiltered_session_start_writes_no_session_model_cache() {
     let sw_override = f.hookah_with(&["hook", "claude"], &sw, &[("HOOKAH_MODELS", "*")]);
     assert_eq!(sw_override.status.code(), Some(0));
     assert!(
-        !f.cache().join("session-models").exists(),
+        !has_session_model_file(),
         "HOOKAH_MODELS=* must not create session cache files"
     );
 }
